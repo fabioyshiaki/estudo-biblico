@@ -130,7 +130,7 @@ function parseInterlinearQBlocks(rawHtml, verseNum) {
       }
     }
 
-    // Fallback para módulos <Q>palavra<X>...<x><T>...<t><q> sem <H>/<G>
+    // Fallback para módulos <Q>texto<X>...<x><T>...<t><q> sem <H>/<G>
     if (!orig.length) {
       fieldRegex.lastIndex = 0;
       const leftover = inner.replace(fieldRegex, '');
@@ -147,6 +147,28 @@ function parseInterlinearQBlocks(rawHtml, verseNum) {
   }
 
   if (!items.length) return '';
+
+  // Bloco paralelo de versículo inteiro: <Q>Português<E>Hebraico/Grego<e><q> (ex.: IMSo)
+  if (items.length === 1 && !items[0].translit.length) {
+    const topText = items[0].orig.filter(Boolean).join(' ');
+    const bottomText = items[0].gloss.filter(Boolean).join(' ');
+    if (
+      topText &&
+      bottomText &&
+      RE_LATIN.test(topText) &&
+      !RE_ANCIENT.test(topText) &&
+      RE_ANCIENT.test(bottomText)
+    ) {
+      const ancientIsRtl = hasHebrewScript(bottomText);
+      const ancientCls = ancientIsRtl ? 'v-rtl' : 'v-ltr';
+      const ancientDir = ancientIsRtl ? 'rtl' : 'ltr';
+      return (
+        `<span class="v-ltr" dir="ltr">${escapeHtml(topText)}</span>` +
+        '<span class="v-parallel-sep"></span>' +
+        `<span class="${ancientCls}" dir="${ancientDir}">${escapeHtml(bottomText)}</span>`
+      );
+    }
+  }
 
   const isRtl = hasH || hasHebrewScript(rawHtml);
   const maxX = Math.max(0, ...items.map((it) => it.translit.length));
