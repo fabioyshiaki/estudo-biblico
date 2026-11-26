@@ -2,6 +2,7 @@
 :root[data-theme="paper"] {
   --il-card-bg: #ffffff;
   --il-word-bg: #f7f4ec;
+  --il-translit-color: #964532;
   --il-t2-color: #16656c;
   --il-t3-color: #2f5597;
 }
@@ -9,6 +10,7 @@
 :root[data-theme="light"] {
   --il-card-bg: #ffffff;
   --il-word-bg: #f3f5f8;
+  --il-translit-color: #9c3b28;
   --il-t2-color: #0f6b70;
   --il-t3-color: #24519c;
 }
@@ -16,6 +18,7 @@
 :root[data-theme="sepia"] {
   --il-card-bg: #faf4e8;
   --il-word-bg: #efe6d5;
+  --il-translit-color: #8c3f26;
   --il-t2-color: #1f5f61;
   --il-t3-color: #2e4f82;
 }
@@ -23,12 +26,18 @@
 :root[data-theme="dark"] {
   --il-card-bg: #181c22;
   --il-word-bg: #222731;
+  --il-translit-color: #d9826c;
   --il-t2-color: #63c5ce;
   --il-t3-color: #82aaff;
 }
 
+.reader-content.has-interlinear {
+  max-width: 1120px;
+  padding: 14px 12px 72px;
+}
+
 .verse-item.is-interlinear {
-  padding: 10px 8px 14px;
+  padding: 8px 4px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -41,21 +50,25 @@
   vertical-align: middle;
 }
 
+.verse-item.is-q-interlinear > .verse-num {
+  display: none;
+}
+
 .verse-text .il-block {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 4px;
+  margin-top: 2px;
   text-align: left;
 }
 
 .verse-text .il-header-orig {
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   border: 1px solid var(--border);
-  font-size: 1.18em;
-  line-height: 1.75;
+  font-size: 1.15em;
+  line-height: 1.7;
   color: var(--text-main);
 }
 
@@ -66,8 +79,8 @@
 .verse-text .il-clause-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  gap: 7px;
+  padding: 8px 10px;
   border-radius: var(--radius-md);
   background: var(--il-card-bg);
   border: 1px solid var(--border);
@@ -76,8 +89,8 @@
 .verse-text .il-flow {
   display: flex;
   flex-wrap: wrap;
-  align-items: stretch;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 6px 5px;
 }
 
 .verse-text .il-flow[dir="rtl"] {
@@ -90,13 +103,44 @@
   justify-content: flex-start;
 }
 
+.verse-text .il-q-flow {
+  gap: 12px 10px;
+}
+
+.verse-text .il-vnum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-verse-num);
+  font-family: var(--font-ui);
+  font-size: 0.74em;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.verse-text .il-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 2px;
+  text-align: center;
+}
+
 .verse-text .il-word {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  min-width: 40px;
-  padding: 5px 8px;
+  min-width: 34px;
+  padding: 3px 6px;
   border-radius: var(--radius-sm);
   background: var(--il-word-bg);
   border: 1px solid var(--border);
@@ -107,7 +151,7 @@
   display: block;
   font-size: 1.12em;
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 1.35;
   color: var(--text-main);
 }
 
@@ -116,16 +160,41 @@
   opacity: 0.45;
 }
 
-.verse-text .il-gloss {
+.verse-text .il-translit {
   display: block;
-  margin-top: 3px;
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
-  font-size: 0.72em;
+  font-size: 0.7em;
+  line-height: 1.24;
+  color: var(--il-translit-color);
+}
+
+.verse-text .il-translit-2 {
+  opacity: 0.82;
+}
+
+.verse-text .il-gloss,
+.verse-text .il-gloss-lit {
+  display: block;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.71em;
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 1.26;
   color: var(--text-muted);
+}
+
+.verse-text .il-gloss-ctx {
+  display: block;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.73em;
+  font-weight: 500;
+  line-height: 1.26;
+  color: var(--il-t2-color);
 }
 
 .verse-text .il-trans-list {
@@ -140,8 +209,8 @@
 
 .verse-text .il-trans {
   font-family: var(--font-ui);
-  font-size: 0.86em;
-  line-height: 1.48;
+  font-size: 0.85em;
+  line-height: 1.46;
   color: var(--text-main);
 }
 
@@ -157,9 +226,15 @@
   padding-left: 10px;
   border-left: 3px solid var(--accent-soft);
   font-family: var(--font-ui);
-  font-size: 0.88em;
-  line-height: 1.5;
+  font-size: 0.86em;
+  line-height: 1.48;
   color: var(--text-main);
+}
+
+.verse-text .v-strong,
+.verse-text .v-morph {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 /* FIM interlinear.css */
