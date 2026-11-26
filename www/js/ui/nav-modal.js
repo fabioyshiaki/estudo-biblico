@@ -14,6 +14,22 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function normalizeSearch(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function matchesBibleQuery(mod, terms) {
+  if (!terms.length) return true;
+  const haystack = normalizeSearch(
+    `${mod.abbr || ''} ${mod.title || ''} ${mod.language || ''} ${mod.fileName || ''}`
+  );
+  return terms.every((term) => haystack.includes(term));
+}
+
 export function closeModal() {
   const root = document.getElementById('modal-root');
   if (root) {
@@ -79,27 +95,76 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   const modal = openModalShell({ title: 'Selecionar Bíblia' });
   if (!modal || !modal.body) return;
 
-  function renderList() {
+  if (!store.getBibles().length) {
+    modal.body.innerHTML = `
+      <div class="empty-state">
+        <h2>Nenhuma Bíblia registrada</h2>
+        <p>Adicione um arquivo .bbl.mybible ou uma pasta em Configurações → Fontes.</p>
+        <button type="button" class="primary-btn" id="btn-go-sources">Configurar Fontes</button>
+      </div>
+    `;
+    modal.body.querySelector('#btn-go-sources')?.addEventListener('click', () => {
+      closeModal();
+      if (onOpenSources) onOpenSources();
+    });
+    return;
+  }
+
+  let searchQuery = '';
+
+  modal.body.innerHTML = `
+    <div class="picker-search-wrap">
+      <div class="search-input-box">
+        <input
+          type="search"
+          id="bible-search-input"
+          class="search-input"
+          placeholder="Buscar por abreviação ou descrição..."
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+        />
+        <button type="button" id="bible-search-clear" class="search-clear-btn hidden" aria-label="Limpar busca">&times;</button>
+      </div>
+      <div class="picker-meta" id="bible-picker-meta"></div>
+    </div>
+    <div class="module-list" id="bible-picker-list"></div>
+    <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
+      <button type="button" class="secondary-btn" id="btn-manage-sources">Gerenciar fontes</button>
+    </div>
+  `;
+
+  const inputEl = modal.body.querySelector('#bible-search-input');
+  const clearBtn = modal.body.querySelector('#bible-search-clear');
+  const metaEl = modal.body.querySelector('#bible-picker-meta');
+  const listEl = modal.body.querySelector('#bible-picker-list');
+
+  function renderRows() {
     const bibles = store.getBibles();
     const active = store.getActiveBible();
     const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+    const sortLabel = sortBy === 'title' ? 'Descrição' : 'Abreviação';
 
-    if (!bibles.length) {
-      modal.body.innerHTML = `
-        <div class="empty-state">
-          <h2>Nenhuma Bíblia registrada</h2>
-          <p>Adicione um arquivo .bbl.mybible ou uma pasta em Configurações → Fontes.</p>
-          <button type="button" class="primary-btn" id="btn-go-sources">Configurar Fontes</button>
-        </div>
-      `;
-      modal.body.querySelector('#btn-go-sources')?.addEventListener('click', () => {
-        closeModal();
-        if (onOpenSources) onOpenSources();
-      });
+    const norm = normalizeSearch(searchQuery);
+    const terms = norm ? norm.split(/\s+/).filter(Boolean) : [];
+    const filtered = bibles.filter((m) => matchesBibleQuery(m, terms));
+
+    clearBtn?.classList.toggle('hidden', !searchQuery.length);
+
+    if (metaEl) {
+      metaEl.textContent = terms.length
+        ? `${filtered.length} de ${bibles.length} Bíblia(s) • Ordem: ${sortLabel}`
+        : `${bibles.length} Bíblia(s) • Ordem: ${sortLabel}`;
+    }
+
+    if (!listEl) return;
+
+    if (!filtered.length) {
+      listEl.innerHTML = `<div class="picker-empty">Nenhuma Bíblia encontrada para "${escapeHtml(searchQuery.trim())}".</div>`;
       return;
     }
 
-    const rows = bibles.map((m) => {
+    listEl.innerHTML = filtered.map((m) => {
       const isActive = active && active.path === m.path;
       const mainLabel = sortBy === 'title' ? (m.title || m.abbr) : (m.abbr || m.title);
       const secondaryLabel = sortBy === 'title'
@@ -125,45 +190,53 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
         </div>
       `;
     }).join('');
-
-    modal.body.innerHTML = `
-      <div class="module-list">${rows}</div>
-      <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
-        <button type="button" class="secondary-btn" id="btn-manage-sources">Gerenciar fontes</button>
-      </div>
-    `;
-
-    modal.body.querySelectorAll('[data-select-path]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        store.setActiveModule(btn.dataset.selectPath);
-        closeModal();
-      });
-    });
-
-    modal.body.querySelectorAll('[data-fav-id]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        try {
-          const res = await nativeBridge.setModuleFavorite(
-            Number(btn.dataset.favId),
-            btn.dataset.favNext === '1'
-          );
-          if (res && Array.isArray(res.modules)) {
-            store.setModulesOnly(res.modules);
-          }
-          renderList();
-        } catch (err) {
-          eventBus.emit(EVENTS.TOAST, err.message || 'Erro ao favoritar módulo.');
-        }
-      });
-    });
-
-    modal.body.querySelector('#btn-manage-sources')?.addEventListener('click', () => {
-      closeModal();
-      if (onOpenSources) onOpenSources();
-    });
   }
 
-  renderList();
+  inputEl?.addEventListener('input', (ev) => {
+    searchQuery = ev.target.value || '';
+    renderRows();
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    searchQuery = '';
+    if (inputEl) {
+      inputEl.value = '';
+      inputEl.focus();
+    }
+    renderRows();
+  });
+
+  listEl?.addEventListener('click', async (ev) => {
+    const favBtn = ev.target.closest('[data-fav-id]');
+    if (favBtn) {
+      try {
+        const res = await nativeBridge.setModuleFavorite(
+          Number(favBtn.dataset.favId),
+          favBtn.dataset.favNext === '1'
+        );
+        if (res && Array.isArray(res.modules)) {
+          store.setModulesOnly(res.modules);
+        }
+        renderRows();
+      } catch (err) {
+        eventBus.emit(EVENTS.TOAST, err.message || 'Erro ao favoritar módulo.');
+      }
+      return;
+    }
+
+    const selectBtn = ev.target.closest('[data-select-path]');
+    if (selectBtn) {
+      store.setActiveModule(selectBtn.dataset.selectPath);
+      closeModal();
+    }
+  });
+
+  modal.body.querySelector('#btn-manage-sources')?.addEventListener('click', () => {
+    closeModal();
+    if (onOpenSources) onOpenSources();
+  });
+
+  renderRows();
 }
 
 export async function openLocationPickerModal() {
