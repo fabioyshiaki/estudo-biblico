@@ -1,0 +1,61 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: 2. Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 2.5. Validar sintaxe de todos os arquivos JS
+        run: |
+          if [ -d "www/js" ]; then
+            find www/js -name "*.js" -print0 | xargs -0 -r -n 1 node --check
+          else
+            echo "Pasta www/js ainda não existe — validação ignorada."
+          fi
+
+      - name: 3. Configurar Java 17 (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 4. Instalar dependências do Capacitor
+        run: npm install
+
+      - name: 5. Gerar projeto Android (se ainda não existir)
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+
+      - name: 6. Aplicar camada nativa customizada (Java + Manifest)
+        run: |
+          cp -rf native-android/. android/
+
+      - name: 7. Sincronizar pasta www com o Android
+        run: npx cap sync android
+
+      - name: 8. Compilar APK Debug instalável
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: 9. Publicar APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: estudo-biblico-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
