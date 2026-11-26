@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="./css/base.css" />
   <link rel="stylesheet" href="./css/reader.css" />
   <link rel="stylesheet" href="./css/interlinear.css" />
+  <link rel="stylesheet" href="./css/linguistic.css" />
   <link rel="stylesheet" href="./css/modals.css" />
   <link rel="stylesheet" href="./css/modals-content.css" />
 </head>
@@ -15,12 +16,21 @@
   <div class="app-shell" id="app-shell">
     <header class="topbar" id="topbar">
       <div class="topbar-left">
-        <button type="button" class="pill-btn pill-bible" id="btn-bible-picker" aria-label="Selecionar Bíblia">
-          <span id="label-active-bible">Bíblia</span>
-        </button>
-        <button type="button" class="pill-btn pill-nav" id="btn-nav-picker" aria-label="Selecionar livro e capítulo">
-          <span id="label-active-ref">Gênesis 1</span>
-        </button>
+        <div class="nav-group nav-group-bible">
+          <button type="button" class="step-arrow-btn" id="btn-prev-bible" aria-label="Bíblia anterior">&lsaquo;</button>
+          <button type="button" class="pill-btn pill-bible" id="btn-bible-picker" aria-label="Selecionar Bíblia">
+            <span id="label-active-bible">Bíblia</span>
+          </button>
+          <button type="button" class="step-arrow-btn" id="btn-next-bible" aria-label="Próxima Bíblia">&rsaquo;</button>
+        </div>
+
+        <div class="nav-group nav-group-book">
+          <button type="button" class="step-arrow-btn" id="btn-prev-book" aria-label="Livro anterior">&lsaquo;</button>
+          <button type="button" class="pill-btn pill-nav" id="btn-nav-picker" aria-label="Selecionar livro e capítulo">
+            <span id="label-active-ref">Gênesis 1</span>
+          </button>
+          <button type="button" class="step-arrow-btn" id="btn-next-book" aria-label="Próximo livro">&rsaquo;</button>
+        </div>
       </div>
       <div class="topbar-right">
         <button type="button" class="icon-btn" id="btn-settings" aria-label="Configurações e Fontes" title="Configurações e Fontes">
