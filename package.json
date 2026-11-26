@@ -1,0 +1,11 @@
+{
+  "name": "estudo-biblico",
+  "version": "0.1.0",
+  "description": "Aplicativo Android modular de estudo bíblico (Base v0.1 - MySword)",
+  "private": true,
+  "dependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/core": "^6.1.0"
+  }
+}
