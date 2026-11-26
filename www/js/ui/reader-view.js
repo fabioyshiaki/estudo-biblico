@@ -121,6 +121,7 @@ function updateChrome(bible, bookId, chapter, navLimits = {}) {
 function renderEmptyState({ title, message, primaryLabel, primaryAction, secondaryLabel, secondaryAction }) {
   const container = document.getElementById('reader-content');
   if (!container) return;
+  container.classList.remove('has-interlinear');
   currentVerses = [];
   selectedVerseNum = null;
 
@@ -220,6 +221,7 @@ export async function renderReader({ resetScroll = true } = {}) {
     currentVerses = verses;
     selectedVerseNum = null;
 
+    const hasInterlinear = verses.some((v) => v.html.includes('il-block'));
     const parts = [];
     parts.push(`
       <header class="chapter-header">
@@ -235,9 +237,16 @@ export async function renderReader({ resetScroll = true } = {}) {
           parts.push(`<h2 class="section-heading">${escapeHtml(h)}</h2>`);
         }
       }
-      const isInterlinear = v.html.includes('class="il-block"');
+      const isInterlinear = v.html.includes('il-block');
+      const isQInterlinear = v.html.includes('il-q-flow');
+      const itemClasses = [
+        'verse-item',
+        isInterlinear ? 'is-interlinear' : '',
+        isQInterlinear ? 'is-q-interlinear' : ''
+      ].filter(Boolean).join(' ');
+
       parts.push(
-        `<div class="verse-item${isInterlinear ? ' is-interlinear' : ''}" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
+        `<div class="${itemClasses}" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
           `<span class="verse-num">${v.verse}</span>` +
           `<span class="verse-text">${v.html}</span>` +
         `</div>`
@@ -248,6 +257,7 @@ export async function renderReader({ resetScroll = true } = {}) {
 
     const container = document.getElementById('reader-content');
     if (container) {
+      container.classList.toggle('has-interlinear', hasInterlinear);
       container.innerHTML = parts.join('');
     }
 
