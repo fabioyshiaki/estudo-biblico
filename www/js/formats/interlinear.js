@@ -11,6 +11,7 @@ const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F]/;
 const RE_ANCIENT = /[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]/;
 const RE_LATIN = /[A-Za-z\u00C0-\u024F]/;
 const RE_INTERLINEAR_Q = /<Q(?:\s+[^>]*)?>[\s\S]*?(?:<\/Q>|<q>)/;
+const RE_INTERLINEAR_LAYER = /<(?:H|G|X|E)(?:\s+[^>]*)?>/;
 const RE_STRUCTURED_ROW = /<R(?:\s+[^>]*)?>[\s\S]*?<T1(?:\s+[^>]*)?>/;
 const RE_PAIR_TAG = /<(heb|grk|gk|arm|orig)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>\s*<(hbint|grint|gkint|arint|int|trans)(?:\s+[^>]*)?>([\s\S]*?)<\/\3>/gi;
 const RE_ANCIENT_RUN = /([\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF][\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u0001\u0003\u00040-9\s\u05BE\u05C0\u05C3\u05F3\u05F4׃:־'’·;,.-]*[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u05C3:]|[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]+)/g;
@@ -57,15 +58,17 @@ export function hasHebrewScript(str) {
 
 export function isBilingualAncientText(str) {
   const s = String(str || '');
+  const plain = s.replace(/<[^>]*>/g, ' ');
   if (
     isLinguisticClauseHtml(s) ||
     isSupFontInterlinear(s) ||
-    RE_INTERLINEAR_Q.test(s) ||
     RE_STRUCTURED_ROW.test(s)
   ) {
     return true;
   }
-  const plain = s.replace(/<[^>]*>/g, ' ');
+  if (RE_INTERLINEAR_Q.test(s)) {
+    return RE_ANCIENT.test(plain) || RE_INTERLINEAR_LAYER.test(s);
+  }
   return RE_ANCIENT.test(plain) && RE_LATIN.test(plain);
 }
 
