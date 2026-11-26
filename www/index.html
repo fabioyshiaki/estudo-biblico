@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="paper">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Estudo Bíblico</title>
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/base.css" />
+  <link rel="stylesheet" href="./css/reader.css" />
+  <link rel="stylesheet" href="./css/modals.css" />
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <header class="topbar" id="topbar">
+      <div class="topbar-left">
+        <button type="button" class="pill-btn pill-bible" id="btn-bible-picker" aria-label="Selecionar Bíblia">
+          <span id="label-active-bible">Bíblia</span>
+        </button>
+        <button type="button" class="pill-btn pill-nav" id="btn-nav-picker" aria-label="Selecionar livro e capítulo">
+          <span id="label-active-ref">Gênesis 1</span>
+        </button>
+      </div>
+      <div class="topbar-right">
+        <button type="button" class="icon-btn" id="btn-settings" aria-label="Configurações e Fontes" title="Configurações e Fontes">
+          &#9881;
+        </button>
+      </div>
+    </header>
+
+    <main class="reader-shell" id="reader-shell">
+      <div class="reader-scroll" id="reader-scroll">
+        <article class="reader-content" id="reader-content">
+          <div class="empty-state">
+            <p>Carregando leitor...</p>
+          </div>
+        </article>
+      </div>
+    </main>
+
+    <footer class="bottom-nav" id="bottom-nav">
+      <button type="button" class="nav-step-btn" id="btn-prev-chapter" aria-label="Capítulo anterior">
+        &larr; Anterior
+      </button>
+      <div class="chapter-meta" id="chapter-meta">—</div>
+      <button type="button" class="nav-step-btn" id="btn-next-chapter" aria-label="Próximo capítulo">
+        Próximo &rarr;
+      </button>
+    </footer>
+  </div>
+
+  <div class="modal-root" id="modal-root" aria-hidden="true"></div>
+  <div class="toast-box" id="toast-box" aria-live="polite"></div>
+  <div class="boot-error hidden" id="boot-error" role="alert"></div>
+
+  <script type="module">
+    function showBootError(title, detail) {
+      const box = document.getElementById('boot-error');
+      if (!box) return;
+      box.classList.remove('hidden');
+      box.innerHTML =
+        '<strong>' + title + '</strong>' +
+        '<pre>' + String(detail || 'Erro desconhecido') + '</pre>';
+    }
+
+    window.addEventListener('error', (ev) => {
+      showBootError('Erro de execução', ev.message + ' (' + (ev.filename || '') + ':' + (ev.lineno || 0) + ')');
+    });
+
+    window.addEventListener('unhandledrejection', (ev) => {
+      const reason = ev.reason && ev.reason.stack ? ev.reason.stack : ev.reason;
+      showBootError('Promessa rejeitada', reason);
+    });
+
+    import('./js/core/app.js').catch((err) => {
+      showBootError('Falha ao inicializar módulo principal', err && err.stack ? err.stack : err);
+    });
+  </script>
+</body>
+</html>
