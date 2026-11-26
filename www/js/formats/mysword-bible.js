@@ -4,6 +4,10 @@ import {
   isBilingualAncientText,
   formatInterlinearHtml
 } from './interlinear.js';
+import {
+  isTothtTaggedText,
+  formatTothtHtml
+} from './linguistic-totht.js';
 
 function escapeHtml(str) {
   return String(str || '')
@@ -80,7 +84,7 @@ export function formatMySwordScripture(rawText, options = {}) {
   const showStrongs = Boolean(options.showStrongs);
   const showMorph = Boolean(options.showMorph);
 
-  // Decodifica entidades numéricas não-ASCII (hebraico, grego, aramaico, ponto médio) sem abrir brecha de tags
+  // Decodifica entidades numéricas não-ASCII sem abrir brecha de tags
   let text = decodeNumericEntities(String(rawText || '').replace(/\r\n/g, '\n'));
 
   // Remove blocos perigosos antes de qualquer conversão
@@ -103,6 +107,20 @@ export function formatMySwordScripture(rawText, options = {}) {
     footnotes.push(clean);
     return `\u0001${idx}\u0001`;
   });
+
+  // Módulos morfológicos completos tipo Tyndale TOTHT (<Hb>...<W>...<WT...><T><ST><Lemma><Tr></T>)
+  if (isTothtTaggedText(text)) {
+    let tothtHtml = formatTothtHtml(decodeCommonEntities(text), options.verseNum);
+    tothtHtml = tothtHtml.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
+      const idx = Number(idxStr);
+      return `<button type="button" class="v-fn-btn" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">*</button>`;
+    });
+    return {
+      html: tothtHtml,
+      headings,
+      footnotes
+    };
+  }
 
   // Remove referências cruzadas e tags customizadas com "=" (ex.: <v=Gn 1:1>, <RX ...>)
   text = text
@@ -141,7 +159,7 @@ export function formatMySwordScripture(rawText, options = {}) {
   let safe = '';
 
   if (isBilingualAncientText(text)) {
-    // Modo bilíngue/interlinear: língua antiga (hebraico, aramaico, grego) acima da tradução
+    // Modo bilíngue/interlinear: língua antiga acima da tradução
     safe = formatInterlinearHtml(decodeCommonEntities(text), options.verseNum);
   } else {
     safe = escapeHtml(text);
