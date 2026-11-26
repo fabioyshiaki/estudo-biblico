@@ -1,0 +1,210 @@
+:root,
+:root[data-theme="paper"] {
+  --bh-clause-border: #8d6ca8;
+  --bh-clause-bg: #ffffff;
+  --bh-phrase-border: #cfc7b8;
+  --bh-phrase-bg: #faf7f0;
+  --bh-word-border: #c29b7a;
+  --bh-word-bg: #ffffff;
+  --bh-id-color: #9b5220;
+  --bh-pfunc-color: #2c5f8a;
+  --bh-gloss-color: #8f4730;
+}
+
+:root[data-theme="light"] {
+  --bh-clause-border: #7d5ca0;
+  --bh-clause-bg: #ffffff;
+  --bh-phrase-border: #ccd4df;
+  --bh-phrase-bg: #f6f8fb;
+  --bh-word-border: #bf9878;
+  --bh-word-bg: #ffffff;
+  --bh-id-color: #9e4b1c;
+  --bh-pfunc-color: #1f5c99;
+  --bh-gloss-color: #8c3d28;
+}
+
+:root[data-theme="sepia"] {
+  --bh-clause-border: #8a6494;
+  --bh-clause-bg: #faf4e8;
+  --bh-phrase-border: #cbb99a;
+  --bh-phrase-bg: #f2e8d5;
+  --bh-word-border: #b38962;
+  --bh-word-bg: #fcf7ee;
+  --bh-id-color: #8a441a;
+  --bh-pfunc-color: #2b547d;
+  --bh-gloss-color: #7d3c24;
+}
+
+:root[data-theme="dark"] {
+  --bh-clause-border: #7e4b96;
+  --bh-clause-bg: #14171c;
+  --bh-phrase-border: #3d4554;
+  --bh-phrase-bg: #1b2028;
+  --bh-word-border: #754c38;
+  --bh-word-bg: #15181e;
+  --bh-id-color: #e09152;
+  --bh-pfunc-color: #73aee8;
+  --bh-gloss-color: #cf7d65;
+}
+
+.verse-text .bh-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.verse-text .bh-clause {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bh-clause-bg);
+  border: 1px solid var(--bh-clause-border);
+}
+
+.verse-text .bh-cd {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 6px;
+  font-family: var(--font-ui);
+  font-size: 0.72em;
+  line-height: 1.35;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.verse-text .bh-cd-desc {
+  color: var(--text-main);
+  opacity: 0.88;
+}
+
+.verse-text .bh-cd-id {
+  font-weight: 700;
+  color: var(--bh-id-color);
+}
+
+.verse-text .bh-cd-dots {
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.verse-text .bh-cd-sep {
+  opacity: 0.45;
+}
+
+.verse-text .bh-phrases {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.verse-text .bh-phrases[dir="rtl"] {
+  direction: rtl;
+  justify-content: flex-start;
+}
+
+.verse-text .bh-phrases[dir="ltr"] {
+  direction: ltr;
+  justify-content: flex-start;
+}
+
+.verse-text .bh-phrase {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 7px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--bh-phrase-bg);
+  border: 1px solid var(--bh-phrase-border);
+}
+
+.verse-text .bh-pd {
+  text-align: center;
+  font-family: var(--font-ui);
+  line-height: 1.28;
+}
+
+.verse-text .bh-ptyp {
+  font-size: 0.72em;
+  color: var(--text-main);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.verse-text .bh-ptyp.is-det {
+  font-weight: 700;
+  font-style: normal;
+}
+
+.verse-text .bh-ptyp.is-undet {
+  font-style: italic;
+}
+
+.verse-text .bh-pfunc {
+  margin-top: 2px;
+  font-size: 0.69em;
+  font-weight: 600;
+  color: var(--bh-pfunc-color);
+}
+
+.verse-text .bh-words {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 4px;
+}
+
+.verse-text .bh-words[dir="rtl"] {
+  direction: rtl;
+}
+
+.verse-text .bh-words[dir="ltr"] {
+  direction: ltr;
+}
+
+.verse-text .bh-word {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 30px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--bh-word-bg);
+  border: 1px solid var(--bh-word-border);
+  text-align: center;
+}
+
+.verse-text .bh-orig {
+  display: block;
+  font-size: 1.06em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-main);
+}
+
+.verse-text .bh-orig-empty {
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+.verse-text .bh-gloss {
+  display: block;
+  margin-top: 2px;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.69em;
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--bh-gloss-color);
+}
+
+/* FIM linguistic.css */
