@@ -1,4 +1,9 @@
 import { nativeBridge } from '../bridge/native-bridge.js';
+import {
+  hasHebrewScript,
+  isBilingualAncientText,
+  formatInterlinearHtml
+} from './interlinear.js';
 
 function escapeHtml(str) {
   return String(str || '')
@@ -32,6 +37,20 @@ function getRowField(row, targetLower) {
   return undefined;
 }
 
+function decodeCommonEntities(str) {
+  return String(str || '')
+    .replace(/&(?:amp;)?nbsp;/gi, ' ')
+    .replace(/&(?:amp;)?mdash;/gi, '—')
+    .replace(/&(?:amp;)?ndash;/gi, '–')
+    .replace(/&(?:amp;)?hellip;/gi, '…')
+    .replace(/&(?:amp;)?ldquo;/gi, '“')
+    .replace(/&(?:amp;)?rdquo;/gi, '”')
+    .replace(/&(?:amp;)?lsquo;/gi, '‘')
+    .replace(/&(?:amp;)?rsquo;/gi, '’')
+    .replace(/&(?:amp;)?laquo;/gi, '«')
+    .replace(/&(?:amp;)?raquo;/gi, '»');
+}
+
 export function formatMySwordScripture(rawText, options = {}) {
   const showStrongs = Boolean(options.showStrongs);
   const showMorph = Boolean(options.showMorph);
@@ -49,121 +68,135 @@ export function formatMySwordScripture(rawText, options = {}) {
     return '';
   });
 
-  // Extrai notas de rodapé (<RF>...</Rf>)
+  // Extrai notas de rodapé (<RF>...</Rf>) usando marcador numérico neutro
   const footnotes = [];
   text = text.replace(/<RF(?:\s+[^>]*)?>([\s\S]*?)<\/?Rf>/gi, (_, inner) => {
     const clean = stripTagsPlain(inner);
     if (!clean) return '';
     const idx = footnotes.length;
     footnotes.push(clean);
-    return `\u0001FN_${idx}\u0001`;
+    return `\u0001${idx}\u0001`;
   });
 
-  // Escapa HTML bruto para que apenas tags convertidas explicitamente virem DOM real
-  let safe = escapeHtml(text);
+  // Remove referências cruzadas e tags customizadas com "=" (ex.: <v=Gn 1:1>, <RX ...>)
+  text = text
+    .replace(/<RX(?:(?!>|<).)*>/gi, '')
+    .replace(/<\/?[a-zA-Z][a-zA-Z0-9_:-]*=(?:(?!>|<).)*\/?>/g, '');
 
-  // Selos de módulos paralelos customizados (ex.: <SELOACF>ACF</seloacf>, <SELOKJF>KJF</selokjf>)
-  safe = safe.replace(
-    /&lt;SELO[A-Za-z0-9_-]*(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?SELO[A-Za-z0-9_-]*&gt;/gi,
-    (_, inner) => {
-      const label = stripEscapedTags(inner);
-      if (!label) return '';
-      return `<span class="v-parallel-sep"></span><span class="v-badge">${label}</span> `;
-    }
-  );
-
-  // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt> ou <VT>Gn 1:1</vt>)
-  safe = safe.replace(
-    /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
-    (_, inner) => {
-      const refText = stripEscapedTags(inner);
-      return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
-    }
-  );
-
-  // Tags semânticas oficiais do MySword
-  safe = safe
-    .replace(/&lt;FR&gt;/g, '<span class="v-red">')
-    .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
-    .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
-    .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
-    .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
-    .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
-    .replace(/&lt;FU&gt;/g, '<u>')
-    .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
-    .replace(/&lt;CM&gt;|&lt;CL&gt;/gi, '<br>')
-    .replace(/&lt;PI\d?&gt;|&lt;PF\d?&gt;/gi, '<br><span class="v-indent"></span>');
-
-  // Tags HTML básicas usadas em módulos MySword
-  safe = safe
-    .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
-    .replace(/&lt;p(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
-    .replace(/&lt;\/p&gt;/gi, '')
-    .replace(/&lt;div(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
-    .replace(/&lt;\/div&gt;/gi, '')
-    .replace(/&lt;(?:b|strong)&gt;/gi, '<strong>')
-    .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
-    .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
-    .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
-    .replace(/&lt;u&gt;/gi, '<u>')
-    .replace(/&lt;\/u&gt;/gi, '</u>')
-    .replace(/&lt;sup&gt;/gi, '<sup>')
-    .replace(/&lt;\/sup&gt;/gi, '</sup>')
-    .replace(/&lt;sub&gt;/gi, '<sub>')
-    .replace(/&lt;\/sub&gt;/gi, '</sub>');
-
-  // Códigos Strong (<WG...>, <WH...>) e Morfologia (<WT...>)
+  // Captura ou remove códigos Strong (<WG>/<WH>) e Morfologia (<WT>)
+  const strongTokens = [];
   if (showStrongs) {
-    safe = safe.replace(
-      /&lt;W([GH])(\d+[a-z]?)&gt;/gi,
-      (_, lang, code) =>
-        `<span class="v-strong" data-strong="${lang.toUpperCase()}${code}">${lang.toUpperCase()}${code}</span>`
-    );
+    text = text.replace(/<W([GH])(\d+[a-z]?)>/gi, (_, lang, code) => {
+      const idx = strongTokens.length;
+      strongTokens.push(`${lang.toUpperCase()}${code}`);
+      return `\u0003${idx}\u0003`;
+    });
   } else {
-    safe = safe.replace(/&lt;W[GH]\d+[a-z]?&gt;/gi, '');
+    text = text.replace(/<W[GH]\d+[a-z]?>/gi, '');
   }
 
+  const morphTokens = [];
   if (showMorph) {
+    text = text.replace(/<WT([^<>]+)>/gi, (_, morph) => {
+      const clean = String(morph || '').trim();
+      if (!clean) return '';
+      const idx = morphTokens.length;
+      morphTokens.push(clean);
+      return `\u0004${idx}\u0004`;
+    });
+  } else {
+    text = text.replace(/<WT[^<>]+>/gi, '');
+  }
+
+  let safe = '';
+
+  if (isBilingualAncientText(text)) {
+    // Modo bilíngue/interlinear: língua antiga (hebraico, aramaico, grego) acima da tradução
+    safe = formatInterlinearHtml(decodeCommonEntities(text));
+  } else {
+    safe = escapeHtml(text);
+
+    // Selos de módulos paralelos customizados (ex.: <SELOACF>ACF</seloacf>, <SELOKJF>KJF</selokjf>)
     safe = safe.replace(
-      /&lt;WT(?:(?!&gt;|&lt;).)+&gt;/gi,
-      (match) => {
-        const morph = match.slice(6, -4).trim();
-        return morph ? `<span class="v-morph" data-morph="${morph}">${morph}</span>` : '';
+      /&lt;SELO[A-Za-z0-9_-]*(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?SELO[A-Za-z0-9_-]*&gt;/gi,
+      (_, inner) => {
+        const label = stripEscapedTags(inner);
+        if (!label) return '';
+        return `<span class="v-parallel-sep"></span><span class="v-badge">${label}</span> `;
       }
     );
-  } else {
-    safe = safe.replace(/&lt;WT(?:(?!&gt;|&lt;).)+&gt;/gi, '');
+
+    // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt>)
+    safe = safe.replace(
+      /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
+      (_, inner) => {
+        const refText = stripEscapedTags(inner);
+        return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
+      }
+    );
+
+    // Tags semânticas oficiais do MySword
+    safe = safe
+      .replace(/&lt;FR&gt;/g, '<span class="v-red">')
+      .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
+      .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
+      .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
+      .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
+      .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
+      .replace(/&lt;FU&gt;/g, '<u>')
+      .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
+      .replace(/&lt;CM&gt;|&lt;CL&gt;|&lt;CI&gt;/gi, '<br>')
+      .replace(/&lt;PI\d?&gt;|&lt;PF\d?&gt;/gi, '<br><span class="v-indent"></span>');
+
+    // Tags HTML básicas usadas em módulos MySword
+    safe = safe
+      .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+      .replace(/&lt;p(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+      .replace(/&lt;\/p&gt;/gi, '')
+      .replace(/&lt;div(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+      .replace(/&lt;\/div&gt;/gi, '')
+      .replace(/&lt;(?:b|strong)&gt;/gi, '<strong>')
+      .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
+      .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
+      .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
+      .replace(/&lt;u&gt;/gi, '<u>')
+      .replace(/&lt;\/u&gt;/gi, '</u>')
+      .replace(/&lt;sup&gt;/gi, '<sup>')
+      .replace(/&lt;\/sup&gt;/gi, '</sup>')
+      .replace(/&lt;sub&gt;/gi, '<sub>')
+      .replace(/&lt;\/sub&gt;/gi, '</sub>');
+
+    // Remove qualquer tag customizada restante (com espaço ou "=")
+    safe = safe.replace(
+      /&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
+      ''
+    );
+
+    safe = decodeCommonEntities(safe)
+      .replace(/\n+/g, '<br>')
+      .replace(/(?:<br>\s*)+<span class="v-parallel-sep"><\/span>/g, '<span class="v-parallel-sep"></span>')
+      .replace(/(<br>\s*){3,}/g, '<br><br>')
+      .replace(/^(?:<span class="v-parallel-sep"><\/span>|<br>\s*)+/, '')
+      .replace(/(<br>\s*)+$/, '')
+      .trim();
+
+    if (hasHebrewScript(safe)) {
+      safe = `<span class="v-rtl" dir="rtl">${safe}</span>`;
+    }
   }
 
-  // Remove referências cruzadas (<RX ...>) e qualquer tag customizada restante (ex.: </acf>, </kjf>, <vt>, <font>, <span>)
-  safe = safe
-    .replace(/&lt;RX(?:(?!&gt;|&lt;).)*&gt;/gi, '')
-    .replace(/&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:\s+(?:(?!&gt;|&lt;).)*)?\/?&gt;/g, '');
+  // Restaura Strong, Morfologia e Notas de rodapé
+  safe = safe.replace(/\u0003(\d+)\u0003/g, (_, idxStr) => {
+    const code = strongTokens[Number(idxStr)] || '';
+    return code ? `<span class="v-strong" data-strong="${code}">${code}</span>` : '';
+  });
 
-  // Decodifica entidades tipográficas comuns sem abrir brecha de HTML
-  safe = safe
-    .replace(/&amp;nbsp;/gi, ' ')
-    .replace(/&amp;mdash;/gi, '—')
-    .replace(/&amp;ndash;/gi, '–')
-    .replace(/&amp;hellip;/gi, '…')
-    .replace(/&amp;ldquo;/gi, '“')
-    .replace(/&amp;rdquo;/gi, '”')
-    .replace(/&amp;lsquo;/gi, '‘')
-    .replace(/&amp;rsquo;/gi, '’')
-    .replace(/&amp;laquo;/gi, '«')
-    .replace(/&amp;raquo;/gi, '»');
+  safe = safe.replace(/\u0004(\d+)\u0004/g, (_, idxStr) => {
+    const morph = morphTokens[Number(idxStr)] || '';
+    return morph ? `<span class="v-morph" data-morph="${escapeHtml(morph)}">${escapeHtml(morph)}</span>` : '';
+  });
 
-  // Normaliza quebras de linha e espaçamento entre traduções paralelas
-  safe = safe
-    .replace(/\n+/g, '<br>')
-    .replace(/(?:<br>\s*)+<span class="v-parallel-sep"><\/span>/g, '<span class="v-parallel-sep"></span>')
-    .replace(/(<br>\s*){3,}/g, '<br><br>')
-    .replace(/^(?:<span class="v-parallel-sep"><\/span>|<br>\s*)+/, '')
-    .replace(/(<br>\s*)+$/, '')
-    .trim();
-
-  // Restaura botões discretos de notas de rodapé
-  safe = safe.replace(/\u0001FN_(\d+)\u0001/g, (_, idxStr) => {
+  safe = safe.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
     const idx = Number(idxStr);
     return `<button type="button" class="v-fn-btn" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">*</button>`;
   });
