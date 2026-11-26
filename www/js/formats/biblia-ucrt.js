@@ -31,6 +31,10 @@ const UCRT_CSS = `
   --ucrt-strong-bg: rgba(43, 76, 155, 0.10);
   --ucrt-fs-fg: #0f7068;
   --ucrt-fs-bg: rgba(15, 112, 104, 0.10);
+  --ucrt-topic-fg: #7c4d0f;
+  --ucrt-topic-bg: rgba(124, 77, 15, 0.12);
+  --ucrt-fl-fg: #334155;
+  --ucrt-fl-bg: rgba(51, 65, 85, 0.12);
   --ucrt-flag-fg: #5c5346;
   --ucrt-flag-bg: rgba(92, 83, 70, 0.12);
 }
@@ -64,6 +68,10 @@ const UCRT_CSS = `
   --ucrt-strong-bg: rgba(38, 72, 161, 0.10);
   --ucrt-fs-fg: #0d736b;
   --ucrt-fs-bg: rgba(13, 115, 107, 0.10);
+  --ucrt-topic-fg: #854d0e;
+  --ucrt-topic-bg: rgba(133, 77, 14, 0.12);
+  --ucrt-fl-fg: #334155;
+  --ucrt-fl-bg: rgba(51, 65, 85, 0.12);
   --ucrt-flag-fg: #475569;
   --ucrt-flag-bg: rgba(71, 85, 105, 0.12);
 }
@@ -97,6 +105,10 @@ const UCRT_CSS = `
   --ucrt-strong-bg: rgba(45, 76, 143, 0.10);
   --ucrt-fs-fg: #156960;
   --ucrt-fs-bg: rgba(21, 105, 96, 0.11);
+  --ucrt-topic-fg: #75460e;
+  --ucrt-topic-bg: rgba(117, 70, 14, 0.13);
+  --ucrt-fl-fg: #4a3f32;
+  --ucrt-fl-bg: rgba(74, 63, 50, 0.13);
   --ucrt-flag-fg: #5e4f3c;
   --ucrt-flag-bg: rgba(94, 79, 60, 0.13);
 }
@@ -130,6 +142,10 @@ const UCRT_CSS = `
   --ucrt-strong-bg: rgba(147, 180, 255, 0.13);
   --ucrt-fs-fg: #5cd6c9;
   --ucrt-fs-bg: rgba(92, 214, 201, 0.13);
+  --ucrt-topic-fg: #f3c877;
+  --ucrt-topic-bg: rgba(243, 200, 119, 0.14);
+  --ucrt-fl-fg: #cbd5e1;
+  --ucrt-fl-bg: rgba(203, 213, 225, 0.15);
   --ucrt-flag-fg: #cbd5e1;
   --ucrt-flag-bg: rgba(203, 213, 225, 0.14);
 }
@@ -354,6 +370,32 @@ const UCRT_CSS = `
   font-weight: 700;
   line-height: 1.42;
 }
+
+.verse-text .ucrt-topic {
+  display: inline-block;
+  padding: 0 5px;
+  margin: 0 1px;
+  border-radius: 4px;
+  background: var(--ucrt-topic-bg);
+  color: var(--ucrt-topic-fg);
+  font-family: var(--font-ui);
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1.42;
+}
+
+.verse-text .ucrt-fl {
+  display: inline-block;
+  padding: 0 5px;
+  margin: 0 1px;
+  border-radius: 4px;
+  background: var(--ucrt-fl-bg);
+  color: var(--ucrt-fl-fg);
+  font-family: var(--font-ui);
+  font-size: 0.83em;
+  font-weight: 700;
+  line-height: 1.42;
+}
 `;
 
 const UCRT_BOOK_CODES =
@@ -366,13 +408,19 @@ const UCRT_BOOK_CODES =
   'Cl|Col|Ts|Th|Tm|Ti|Tt|Tit|Fm|Phm|Hb|Heb|Tg|Jas|Pe|Jd|Jud|Ap|Rev' +
   ')\\.?';
 
-const UCRT_PLAIN_SYM_TOKEN = '(?:&lt;rp\\s+|&lt;a\\s+|=&gt;|&gt;|[+*%=#$])';
+const UCRT_PLAIN_SYM_TOKEN = '(?:&lt;rp\\.?\\s*|&lt;a(?:\\.\\s*|\\s+)|=&gt;|&gt;|[+*%=#$])';
 const UCRT_PLAIN_REF_RE = new RegExp(
   `(^|[\\s(\\[;,])((?:${UCRT_PLAIN_SYM_TOKEN}){0,5})(${UCRT_BOOK_CODES}\\s+\\d+:\\d+(?:\\s*[-–—]\\s*\\d+(?::\\d+)?)?(?:\\s*,\\s*\\d+(?:\\s*[-–—]\\s*\\d+)?)*)(?=$|[\\s.,;:()\\]])`,
   'g'
 );
 
-const UCRT_TAG_SYM_TOKEN = '(?:\\u0005LT(?:rp|a)\\u0006\\s+|\\u0005GT\\u0006|=&gt;|&gt;|[+*%=#$])';
+const UCRT_TAG_SYM_TOKEN = '(?:\\u0005LT(?:rp\\.?|a\\.?)\\u0006\\s*|\\u0005GT\\u0006|=&gt;|&gt;|[+*%=#$])';
+
+const UCRT_CONT_ITEM = '(?:\\s*[;,]\\s*|\\s+)\\d+(?::\\d+)?(?:\\s*[-–—]\\s*\\d+(?::\\d+)?)?';
+const UCRT_CONT_TAIL_RE = new RegExp(
+  `(<span class="ucrt-ref\\b[^>]*data-ref=")([^"]*)("[^>]*>)([\\s\\S]*?)(<\\/span>)((?:${UCRT_CONT_ITEM})+)(?=$|\\s*[.,;:()\\]]|\\s+(?:g|h|n|mg)\\b)`,
+  'g'
+);
 
 function ensureUcrtStyles() {
   if (typeof document === 'undefined') return;
@@ -455,7 +503,7 @@ function formatInlineScripture(rawText) {
 function decodeSymbolForLogic(symHtml) {
   return String(symHtml || '')
     .replace(/\u0005GT\u0006/g, '>')
-    .replace(/\u0005LT(rp|a)\u0006/g, '<$1')
+    .replace(/\u0005LT(rp\.?|a\.?)\u0006/g, '<$1')
     .replace(/&gt;/gi, '>')
     .replace(/&lt;/gi, '<');
 }
@@ -517,7 +565,7 @@ function transformPlainTextSegments(html, transformFn) {
     const part = parts[i];
     if (!part) continue;
     if (part.startsWith('<')) {
-      if (/^<span\b[^>]*\bucrt-(?:ref|strong|fs|flag)\b/i.test(part)) {
+      if (/^<span\b[^>]*\bucrt-(?:ref|strong|fs|flag|topic|fl)\b/i.test(part)) {
         skipDepth++;
       } else if (skipDepth > 0 && /^<span\b/i.test(part)) {
         skipDepth++;
@@ -536,11 +584,13 @@ function transformPlainTextSegments(html, transformFn) {
 function formatUcrtBody(rawBody, symbolsUsed) {
   let refCount = 0;
 
-  // Protege entidades/símbolos literais da UCRT (&gt;, &lt;a, &lt;rp, <a, <rp) antes de escapar HTML
+  // Protege entidades/símbolos literais da UCRT (&gt;, &lt;rp., &lt;rp, &lt;a., &lt;a, <rp., <rp, <a) antes de escapar HTML
   const protectedRaw = String(rawBody || '')
     .replace(/&(?:amp;)?gt;/gi, '\u0005GT\u0006')
-    .replace(/&(?:amp;)?lt;(rp|a)(?=\s)/gi, '\u0005LT$1\u0006')
-    .replace(/(^|[\s,;(\[])<(rp|a)(?=\s+(?:[123]\s*)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ<])/g, '$1\u0005LT$2\u0006');
+    .replace(/&(?:amp;)?lt;(rp)(\.?)/gi, '\u0005LT$1$2\u0006')
+    .replace(/&(?:amp;)?lt;(a)(\.?)(?=\s|[+*%=#$A-ZÁÀÂÃÉÊÍÓÔÕÚÇ123<])/gi, '\u0005LT$1$2\u0006')
+    .replace(/(^|[\s,;(\[])<(rp)(\.?)(?=\s*[+*%=#$]*(?:[123]\s*)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ<])/g, '$1\u0005LT$2$3\u0006')
+    .replace(/(^|[\s,;(\[])<(a)(\.?)(?=(?:\.\s*|\s+)[+*%=#$]*(?:[123]\s*)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ<])/g, '$1\u0005LT$2$3\u0006');
 
   let safe = escapeHtml(protectedRaw);
 
@@ -598,12 +648,12 @@ function formatUcrtBody(rawBody, symbolsUsed) {
     ''
   );
 
-  // Restaura marcadores literais protegidos (> , <a , <rp)
+  // Restaura marcadores literais protegidos (> , <rp. , <rp , <a. , <a)
   safe = safe
     .replace(/\u0005GT\u0006/g, '&gt;')
-    .replace(/\u0005LT(rp|a)\u0006/g, '&lt;$1');
+    .replace(/\u0005LT(rp\.?|a\.?)\u0006/g, '&lt;$1');
 
-  // Captura referências bíblicas restantes em texto puro (com símbolos $, %, =, >, *+, +$, %+*, ou sem tag)
+  // Captura referências bíblicas restantes em texto puro e códigos especiais (FS, T####, F/L)
   safe = transformPlainTextSegments(safe, (chunk) => {
     let out = chunk.replace(UCRT_PLAIN_REF_RE, (full, lead, symRaw, refRaw) => {
       const refText = cleanSpaces(refRaw);
@@ -615,15 +665,41 @@ function formatUcrtBody(rawBody, symbolsUsed) {
     // Destaca códigos de Figuras de Linguagem (FS148, FS16, FS171G2)
     out = out.replace(/(^|[\s(;,])(FS\d+[A-Z0-9]*)\b/g, (_, lead, fsCode) => {
       symbolsUsed.add('FS');
-      return `${lead}<span class="ucrt-fs">${fsCode}</span>`;
+      return `${lead}<span class="ucrt-fs" title="Figura de Linguagem (Bullinger)">${fsCode}</span>`;
+    });
+
+    // Destaca Números de Tópicos da UCRT (T1708, T1441, T123x)
+    out = out.replace(/(^|[\s(;,])(T\d{1,5}x?)\b/g, (_, lead, topicCode) => {
+      symbolsUsed.add('T');
+      if (topicCode.endsWith('x')) symbolsUsed.add('Tx');
+      const title = topicCode.endsWith('x')
+        ? 'Tópico UCRT com textos usados em doutrinas falsas'
+        : 'Número de Tópico do Índice Tópico da UCRT';
+      return `${lead}<span class="ucrt-topic" title="${title}">${topicCode}</span>`;
+    });
+
+    // Destaca indicador F/L (First/Last em Isaías)
+    out = out.replace(/(^|[\s(;,])(F\/L)(?=$|[\s.,;:()\]])/g, (_, lead, flCode) => {
+      symbolsUsed.add('F/L');
+      return `${lead}<span class="ucrt-fl" title="First/Last — Unidade de Isaías (caps. 1–39 e 40–66)">${flCode}</span>`;
     });
 
     return out;
   });
 
-  // Destaca marcadores curtos g / h / n logo após uma referência (ex.: Tg 1:23 g, Ap 22:6 g, n)
+  // Incorpora números/intervalos de continuação soltos logo após uma passagem (ex.: Jr 26 ; 35-36 / Jr 34 , 37-39, 52 / 2Cr 36:11-21 25)
+  UCRT_CONT_TAIL_RE.lastIndex = 0;
+  safe = safe.replace(UCRT_CONT_TAIL_RE, (_, p1, refVal, p3, inner, p5, tailRaw) => {
+    const normTail = tailRaw
+      .replace(/\s*([;,])\s*/g, '$1 ')
+      .replace(/\s*([-–—])\s*/g, '$1')
+      .replace(/\s+/g, ' ');
+    return `${p1}${refVal}${normTail}${p3}${inner}${normTail}${p5}`;
+  });
+
+  // Destaca marcadores curtos g / h / n / mg logo após uma referência
   safe = safe.replace(
-    /(<span class="ucrt-ref\b[^>]*>[\s\S]*?<\/span>)\s+((?:g|h|n)(?:\s*,\s*(?:g|h|n))?)(?=$|[\s.,;:()\]])/g,
+    /(<span class="ucrt-ref\b[^>]*>[\s\S]*?<\/span>)\s+((?:g|h|n|mg)(?:\s*,\s*(?:g|h|n|mg))?)(?=$|[\s.,;:()\]])/g,
     (_, refSpan, flagsRaw) => {
       const flags = flagsRaw.split(/\s*,\s*/).filter(Boolean);
       const renderedFlags = flags
@@ -633,7 +709,9 @@ function formatUcrtBody(rawBody, symbolsUsed) {
             ? 'Mesma palavra no grego original'
             : f === 'h'
               ? 'Mesma palavra no hebraico original'
-              : 'Há nota explicativa nesta passagem';
+              : f === 'mg'
+                ? 'Leitura marginal (KJV/AV)'
+                : 'Há nota explicativa nesta passagem';
           return `<span class="ucrt-flag" title="${title}">${f}</span>`;
         })
         .join('');
@@ -643,7 +721,7 @@ function formatUcrtBody(rawBody, symbolsUsed) {
 
   // Detecta se a caixa é composta quase só por referências
   const plainWithoutRefs = safe
-    .replace(/<span class="ucrt-(?:ref|flag)\b[\s\S]*?<\/span>/g, '')
+    .replace(/<span class="ucrt-(?:ref|flag|topic|fl|fs)\b[\s\S]*?<\/span>/g, '')
     .replace(/<[^>]*>/g, '')
     .replace(/[\s.,;:()\-–—]+/g, '')
     .trim();
@@ -691,13 +769,22 @@ function buildLegendText(symbolsUsed, hasChrono) {
     lines.push('• [Índigo] <a — Alusão a outra passagem bíblica.');
   }
   if (symbolsUsed.has('<rp')) {
-    lines.push('• [Índigo] <rp — Citação do Pentateuco nos livros proféticos.');
+    lines.push('• [Índigo] <rp — Citação ou referência ao Pentateuco nos profetas e livros históricos.');
   }
   if (symbolsUsed.has('#')) {
     lines.push('• [Índigo] # — Passagem paralela estrita.');
   }
   if (symbolsUsed.has('BG')) {
     lines.push('• [Violeta] nota — Referência acompanhada de nota explicativa importante na UCRT.');
+  }
+  if (symbolsUsed.has('T')) {
+    lines.push('• [Bronze] T + número (ex.: T1708) — Número de Tópico do Índice Tópico da UCRT (agrupa referências de um mesmo tema).');
+  }
+  if (symbolsUsed.has('Tx')) {
+    lines.push('• [Bronze] T + número + x — Tópico com textos de prova usados para apoiar doutrinas falsas.');
+  }
+  if (symbolsUsed.has('F/L')) {
+    lines.push('• [Ardósia] F/L — "First/Last": relaciona a 1ª parte (Is 1–39) à 2ª parte (Is 40–66) para demonstrar a unidade de Isaías.');
   }
   if (symbolsUsed.has('g')) {
     lines.push('• [Etiqueta] g — Mesma palavra no grego original.');
@@ -707,6 +794,9 @@ function buildLegendText(symbolsUsed, hasChrono) {
   }
   if (symbolsUsed.has('n')) {
     lines.push('• [Etiqueta] n — Há uma nota explicativa na passagem indicada.');
+  }
+  if (symbolsUsed.has('mg')) {
+    lines.push('• [Etiqueta] mg — Leitura marginal (nota alternativa das edições da KJV/AV).');
   }
   if (symbolsUsed.has('+S#')) {
     lines.push('• [Azul] +S# — Número Strong com todas as ocorrências relevantes/paralelas.');
