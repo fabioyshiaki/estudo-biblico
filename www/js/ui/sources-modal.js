@@ -287,6 +287,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
 
   function renderReadingTab() {
     const prefs = store.getPrefs();
+    const sortBy = prefs.bibleSortBy === 'title' ? 'title' : 'abbr';
     const themes = [
       { id: 'paper', label: 'Papel' },
       { id: 'light', label: 'Claro' },
@@ -307,6 +308,13 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
       </div>
 
       <div class="settings-card">
+        <div class="setting-row">
+          <span>Organizar Bíblias por</span>
+          <div class="browser-actions" style="margin: 0;">
+            <button type="button" class="${sortBy === 'abbr' ? 'primary-btn' : 'secondary-btn'}" data-set-bible-sort="abbr">Abreviação</button>
+            <button type="button" class="${sortBy === 'title' ? 'primary-btn' : 'secondary-btn'}" data-set-bible-sort="title">Descrição</button>
+          </div>
+        </div>
         <div class="setting-row">
           <span>Tamanho da fonte (${prefs.fontSize}px)</span>
           <div class="browser-actions" style="margin: 0;">
@@ -335,6 +343,13 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
     modal.body.querySelectorAll('[data-set-theme]').forEach((btn) => {
       btn.addEventListener('click', () => {
         store.updatePrefs({ theme: btn.dataset.setTheme });
+        renderReadingTab();
+      });
+    });
+
+    modal.body.querySelectorAll('[data-set-bible-sort]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        store.updatePrefs({ bibleSortBy: btn.dataset.setBibleSort });
         renderReadingTab();
       });
     });
