@@ -1,6 +1,7 @@
 const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F]/;
 const RE_ANCIENT = /[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]/;
 const RE_LATIN = /[A-Za-z\u00C0-\u024F]/;
+const RE_INTERLINEAR_Q = /<Q(?:\s+[^>]*)?>[\s\S]*?(?:<\/Q>|<q>)/;
 const RE_STRUCTURED_ROW = /<R(?:\s+[^>]*)?>[\s\S]*?<T1(?:\s+[^>]*)?>/;
 const RE_PAIR_TAG = /<(heb|grk|gk|arm|orig)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>\s*<(hbint|grint|gkint|arint|int|trans)(?:\s+[^>]*)?>([\s\S]*?)<\/\3>/gi;
 const RE_ANCIENT_RUN = /([\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF][\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u0001\u0003\u00040-9\s\u05BE\u05C0\u05C3\u05F3\u05F4׃:־'’·;,.-]*[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u05C3:]|[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]+)/g;
@@ -47,7 +48,7 @@ export function hasHebrewScript(str) {
 
 export function isBilingualAncientText(str) {
   const s = String(str || '');
-  if (RE_STRUCTURED_ROW.test(s)) return true;
+  if (RE_INTERLINEAR_Q.test(s) || RE_STRUCTURED_ROW.test(s)) return true;
   const plain = s.replace(/<[^>]*>/g, ' ');
   return RE_ANCIENT.test(plain) && RE_LATIN.test(plain);
 }
@@ -82,16 +83,96 @@ function renderFlow(cards, isRtl) {
   return `<div class="il-flow" dir="${isRtl ? 'rtl' : 'ltr'}">${cards.join('')}</div>`;
 }
 
+function parseInterlinearQBlocks(rawHtml, verseNum) {
+  const blockRegex = /<Q(?:\s+[^>]*)?>([\s\S]*?)(?:<\/Q>|<q>)/g;
+  const fieldRegex = /<H(?:\s+[^>]*)?>([\s\S]*?)(?:<\/H>|<h>)|<G(?:\s+[^>]*)?>([\s\S]*?)(?:<\/G>|<g>)|<X(?:\s+[^>]*)?>([\s\S]*?)(?:<\/X>|<x>)|<E(?:\s+[^>]*)?>([\s\S]*?)(?:<\/E>|<e>)|<T(?:\s+[^>]*)?>([\s\S]*?)(?:<\/T>|<t>)/g;
+
+  const items = [];
+  let hasH = false;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(rawHtml)) !== null) {
+    const inner = blockMatch[1] || '';
+    const orig = [];
+    const translit = [];
+    const gloss = [];
+    fieldRegex.lastIndex = 0;
+    let fm;
+
+    while ((fm = fieldRegex.exec(inner)) !== null) {
+      if (fm[1] !== undefined) {
+        hasH = true;
+        orig.push(stripAllTagsKeepSpaces(fm[1]));
+      } else if (fm[2] !== undefined) {
+        orig.push(stripAllTagsKeepSpaces(fm[2]));
+      } else if (fm[3] !== undefined) {
+        translit.push(stripAllTagsKeepSpaces(fm[3]));
+      } else if (fm[4] !== undefined) {
+        gloss.push(stripAllTagsKeepSpaces(fm[4]));
+      } else if (fm[5] !== undefined) {
+        gloss.push(stripAllTagsKeepSpaces(fm[5]));
+      }
+    }
+
+    if (orig.length || translit.length || gloss.length) {
+      items.push({ orig, translit, gloss });
+    }
+  }
+
+  if (!items.length) return '';
+
+  const isRtl = hasH || hasHebrewScript(rawHtml);
+  const maxX = Math.max(0, ...items.map((it) => it.translit.length));
+  const maxE = Math.max(0, ...items.map((it) => it.gloss.length));
+  const stacks = [];
+
+  if (verseNum) {
+    stacks.push(`<span class="il-vnum">${verseNum}</span>`);
+  }
+
+  for (const it of items) {
+    const lines = [];
+    const origText = it.orig.filter(Boolean).join(' ');
+    const origDir = hasHebrewScript(origText) ? ' dir="rtl"' : '';
+    lines.push(
+      origText
+        ? `<span class="il-orig"${origDir}>${escapeHtml(origText)}</span>`
+        : '<span class="il-orig il-orig-empty">&middot;</span>'
+    );
+
+    for (let i = 0; i < maxX; i++) {
+      const val = it.translit[i] || '';
+      const cls = i === 0 ? 'il-translit' : 'il-translit il-translit-2';
+      lines.push(`<span class="${cls}" dir="ltr">${val ? escapeHtml(val) : '&nbsp;'}</span>`);
+    }
+
+    for (let i = 0; i < maxE; i++) {
+      const val = it.gloss[i] || '';
+      const cls = i === 0 ? 'il-gloss-lit' : 'il-gloss-ctx';
+      lines.push(`<span class="${cls}" dir="ltr">${val ? escapeHtml(val) : '&nbsp;'}</span>`);
+    }
+
+    stacks.push(`<span class="il-stack">${lines.join('')}</span>`);
+  }
+
+  const blocks = [];
+  const firstQ = rawHtml.search(/<Q(?:\s+[^>]*)?>/);
+  if (firstQ > 0) {
+    const headerText = stripAllTagsKeepSpaces(rawHtml.slice(0, firstQ));
+    if (headerText) blocks.push(renderHeaderOrig(headerText));
+  }
+
+  blocks.push(`<div class="il-flow il-q-flow" dir="${isRtl ? 'rtl' : 'ltr'}">${stacks.join('')}</div>`);
+  return `<div class="il-block il-q-block">${blocks.join('')}</div>`;
+}
+
 function parseStructuredRows(rawHtml) {
   const firstRowIdx = rawHtml.search(/<R(?:\s+[^>]*)?>/);
   if (firstRowIdx < 0) return '';
 
   const blocks = [];
-  const headerRaw = rawHtml.slice(0, firstRowIdx);
-  const headerText = stripAllTagsKeepSpaces(headerRaw);
-  if (headerText) {
-    blocks.push(renderHeaderOrig(headerText));
-  }
+  const headerText = stripAllTagsKeepSpaces(rawHtml.slice(0, firstRowIdx));
+  if (headerText) blocks.push(renderHeaderOrig(headerText));
 
   const rowRegex = /<R(?:\s+[^>]*)?>([\s\S]*?)(?:<\/R>|<r>)/g;
   let rowMatch;
@@ -136,15 +217,12 @@ function parseStructuredRows(rawHtml) {
     for (const key of ['2', '3', '4']) {
       if (!cells.has(key)) continue;
       const html = formatClauseInlineHtml(cells.get(key));
-      if (html) {
-        transParts.push(`<div class="il-trans il-trans-${key}">${html}</div>`);
-      }
+      if (html) transParts.push(`<div class="il-trans il-trans-${key}">${html}</div>`);
     }
 
     if (transParts.length) {
       cardParts.push(`<div class="il-trans-list">${transParts.join('')}</div>`);
     }
-
     if (cardParts.length) {
       blocks.push(`<div class="il-clause-card">${cardParts.join('')}</div>`);
     }
@@ -188,18 +266,14 @@ function tokenizeInline(rawHtml) {
     while ((m = RE_ANCIENT_RUN.exec(seg)) !== null) {
       if (m.index > lastIdx) {
         const before = cleanText(seg.slice(lastIdx, m.index));
-        if (before) {
-          tokens.push({ kind: RE_LATIN.test(before) ? 'latin' : 'other', text: before });
-        }
+        if (before) tokens.push({ kind: RE_LATIN.test(before) ? 'latin' : 'other', text: before });
       }
       tokens.push({ kind: 'ancient', text: cleanText(m[0]) });
       lastIdx = m.index + m[0].length;
     }
     if (lastIdx < seg.length) {
       const tail = cleanText(seg.slice(lastIdx));
-      if (tail) {
-        tokens.push({ kind: RE_LATIN.test(tail) ? 'latin' : 'other', text: tail });
-      }
+      if (tail) tokens.push({ kind: RE_LATIN.test(tail) ? 'latin' : 'other', text: tail });
     }
   }
 
@@ -222,23 +296,9 @@ function buildFromTokens(tokens, wrapOuter = true) {
     }
   }
 
-  let origFirst = 0;
-  let glossFirst = 0;
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const a = tokens[i];
-    const b = tokens[i + 1];
-    if (a.kind === 'ancient' && !isLongAncient(a.text) && b.kind === 'latin' && !isLongLatin(b.text)) {
-      origFirst++;
-    } else if (a.kind === 'latin' && !isLongLatin(a.text) && b.kind === 'ancient' && !isLongAncient(b.text)) {
-      glossFirst++;
-    }
-  }
-  const reverseOrder = glossFirst > origFirst;
-
   for (let i = 0; i < tokens.length; i++) {
     const cur = tokens[i];
     const next = tokens[i + 1];
-
     if (cur.kind === 'other') continue;
 
     if (cur.kind === 'ancient' && isLongAncient(cur.text)) {
@@ -247,16 +307,9 @@ function buildFromTokens(tokens, wrapOuter = true) {
       continue;
     }
 
-    if (!reverseOrder && cur.kind === 'ancient' && next && next.kind === 'latin' && !isLongLatin(next.text)) {
+    if (cur.kind === 'ancient' && next && next.kind === 'latin' && !isLongLatin(next.text)) {
       if (hasHebrewScript(cur.text)) flowRtl = true;
       flowCards.push(renderWordCard(cur.text, next.text));
-      i++;
-      continue;
-    }
-
-    if (reverseOrder && cur.kind === 'latin' && !isLongLatin(cur.text) && next && next.kind === 'ancient' && !isLongAncient(next.text)) {
-      if (hasHebrewScript(next.text)) flowRtl = true;
-      flowCards.push(renderWordCard(next.text, cur.text));
       i++;
       continue;
     }
@@ -276,7 +329,12 @@ function buildFromTokens(tokens, wrapOuter = true) {
   return wrapOuter ? `<div class="il-block">${inner}</div>` : inner;
 }
 
-export function formatInterlinearHtml(rawHtml) {
+export function formatInterlinearHtml(rawHtml, verseNum = null) {
+  if (RE_INTERLINEAR_Q.test(rawHtml)) {
+    const qHtml = parseInterlinearQBlocks(rawHtml, verseNum);
+    if (qHtml) return qHtml;
+  }
+
   if (RE_STRUCTURED_ROW.test(rawHtml)) {
     const structured = parseStructuredRows(rawHtml);
     if (structured) return structured;
