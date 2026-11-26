@@ -184,9 +184,9 @@ function formatStandardInlineHtml(rawSegment) {
     .replace(/&lt;sub&gt;/gi, '<sub>')
     .replace(/&lt;\/sub&gt;/gi, '</sub>');
 
-  // Remove qualquer tag customizada restante (ex.: <Q>, <E>, <C>, <H1>, <h>, <BLN4>, <OHB>)
+  // Remove qualquer tag customizada restante (ex.: <w*>, </w*>, <Q>, <E>, <C>, <H1>, <h>, <BLN4>, <OHB>)
   safe = safe.replace(
-    /&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
+    /&lt;\/?[a-zA-Z][a-zA-Z0-9_:*.-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
     ''
   );
 
