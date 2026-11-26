@@ -118,7 +118,7 @@ function updateChrome(bible, bookId, chapter, navLimits = {}) {
   }
   if (metaLabel) {
     metaLabel.textContent = bible
-      ? `${bible.abbr \vert{}\vert{} bible.title} •${formatReference(bookId, chapter)}`
+      ? `${bible.abbr || bible.title} • ${formatReference(bookId, chapter)}`
       : 'Nenhuma fonte configurada';
   }
 
@@ -241,7 +241,7 @@ export async function renderReader({ resetScroll = true } = {}) {
     const parts = [];
     parts.push(`
       <header class="chapter-header">
-        <h1 class="chapter-title">${escapeHtml(getBookName(targetBook))}${targetChapter}</h1>
+        <h1 class="chapter-title">${escapeHtml(getBookName(targetBook))} ${targetChapter}</h1>
         <p class="chapter-subtitle">${escapeHtml(bible.title)}</p>
       </header>
       <div class="verse-list">
@@ -264,135 +264,112 @@ export async function renderReader({ resetScroll = true } = {}) {
       parts.push(
         `<div class="${itemClasses}" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
           `<span class="verse-num">${v.verse}</span>` +
-          `<span class="verse-text">${v.html}</span>` + `</div>` ); }  parts.push('</div>');  const container = document.getElementById('reader-content'); if (container) { container.classList.toggle('has-interlinear', hasInterlinear); container.innerHTML = parts.join(''); }  if (resetScroll) { const scrollBox = document.getElementById('reader-scroll'); if (scrollBox) { scrollBox.scrollTo({ top: 0, behavior: 'auto' }); } } } catch (err) { if (seq !== renderSeq) return; updateChrome(bible, state.book, state.chapter, lockedLimits); renderEmptyState({ title: 'Erro ao ler capítulo', message: err && err.message ? err.message : String(err), primaryLabel: 'Verificar fontes', primaryAction: 'sources' }); } }  export function stepBible(delta) { const bibles = store.getBibles(); if (bibles.length < 2) return;  const active = store.getActiveBible(); const idx = active ? bibles.findIndex((m) => m.path === active.path) : -1; const nextIdx = idx + Number(delta \vert{}\vert{} 0); if (nextIdx < 0 \vert{}\vert{} nextIdx >= bibles.length) return;  store.setActiveModule(bibles[nextIdx].path); }  export async function stepBook(delta) { const bible = store.getActiveBible(); if (!bible) return;  const state = store.getState(); const books = await loadBooksForBible(bible); if (!books.length) return;  const bookIdx = books.indexOf(state.book); if (bookIdx < 0) return;  const nextIdx = bookIdx + Number(delta \vert{}\vert{} 0); if (nextIdx < 0 \vert{}\vert{} nextIdx >= books.length) return;  const nextBook = books[nextIdx]; const nextChapters = await loadChaptersForBible(bible, nextBook); if (!nextChapters.length) return;  store.setLocation(nextBook, nextChapters[0]); }  export async function stepChapter(delta) { const bible = store.getActiveBible(); if (!bible) return;  const state = store.getState(); const books = await loadBooksForBible(bible); if (!books.length) return;  const bookIdx = books.indexOf(state.book); if (bookIdx < 0) return;  const chapters = await loadChaptersForBible(bible, state.book); const chapIdx = chapters.indexOf(state.chapter);  if (delta > 0) { if (chapIdx >= 0 && chapIdx + 1 < chapters.length) { store.setLocation(state.book, chapters[chapIdx + 1]); return; } if (bookIdx + 1 < books.length) { const nextBook = books[bookIdx + 1]; const nextChapters = await loadChaptersForBible(bible, nextBook); if (nextChapters.length) { store.setLocation(nextBook, nextChapters[0]); } } return; }  if (delta < 0) { if (chapIdx > 0) { store.setLocation(state.book, chapters[chapIdx - 1]); return; } if (bookIdx > 0) { const prevBook = books[bookIdx - 1]; const prevChapters = await loadChaptersForBible(bible, prevBook); if (prevChapters.length) { store.setLocation(prevBook, prevChapters[prevChapters.length - 1]); } } } }  // FIM reader-view.js ```  ---  ### Arquivo 3 de 4 *   **Ação:** EDITAR arquivo existente (apague todo o conteúdo atual e cole o código completo abaixo) *   **Caminho completo:** `www/js/core/app.js`  ```javascript import { nativeBridge } from '../bridge/native-bridge.js'; import { store } from './store.js'; import { eventBus, EVENTS } from './events.js'; import { initReaderView, renderReader, stepBible, stepBook, stepChapter } from '../ui/reader-view.js'; import { openBiblePickerModal, openLocationPickerModal, openFootnoteModal } from '../ui/nav-modal.js'; import { openSettingsModal } from '../ui/sources-modal.js';  let toastTimer = null;  function applyVisualPrefs(prefs) { const root = document.documentElement; root.setAttribute('data-theme', prefs.theme \vert{}\vert{} 'paper'); root.style.setProperty('--reader-font-size', `${Number(prefs.fontSize) || 19}px`);
-  root.style.setProperty('--reader-line-height', String(Number(prefs.lineHeight) || 1.72));
-  root.style.setProperty(
-    '--reader-font-family',
-    prefs.fontFamily === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)'
-  );
-  root.style.setProperty('--reader-align', prefs.justifyText ? 'justify' : 'left');
-}
+          `<span class="verse-text">${v.html}</span>` +
+        `</div>`
+      );
+    }
 
-function showToast(message) {
-  const box = document.getElementById('toast-box');
-  if (!box || !message) return;
-  box.textContent = String(message);
-  box.classList.add('visible');
-  if (toastTimer) window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => {
-    box.classList.remove('visible');
-  }, 3200);
-}
+    parts.push('</div>');
 
-async function syncPermissionAndData() {
-  const perm = await nativeBridge.checkStoragePermission();
-  store.setPermission(Boolean(perm && perm.granted));
+    const container = document.getElementById('reader-content');
+    if (container) {
+      container.classList.toggle('has-interlinear', hasInterlinear);
+      container.innerHTML = parts.join('');
+    }
 
-  const [srcRes, modRes] = await Promise.all([
-    nativeBridge.listSources(),
-    nativeBridge.listModules('bible')
-  ]);
-
-  store.setSourcesAndModules(
-    (srcRes && srcRes.sources) || [],
-    (modRes && modRes.modules) || []
-  );
-}
-
-function bindShellEvents() {
-  document.getElementById('btn-prev-bible')?.addEventListener('click', () => {
-    stepBible(-1);
-  });
-
-  document.getElementById('btn-next-bible')?.addEventListener('click', () => {
-    stepBible(1);
-  });
-
-  document.getElementById('btn-bible-picker')?.addEventListener('click', () => {
-    openBiblePickerModal({
-      onOpenSources: () => openSettingsModal({ initialTab: 'sources' })
+    if (resetScroll) {
+      const scrollBox = document.getElementById('reader-scroll');
+      if (scrollBox) {
+        scrollBox.scrollTo({ top: 0, behavior: 'auto' });
+      }
+    }
+  } catch (err) {
+    if (seq !== renderSeq) return;
+    updateChrome(bible, state.book, state.chapter, lockedLimits);
+    renderEmptyState({
+      title: 'Erro ao ler capítulo',
+      message: err && err.message ? err.message : String(err),
+      primaryLabel: 'Verificar fontes',
+      primaryAction: 'sources'
     });
-  });
-
-  document.getElementById('btn-prev-book')?.addEventListener('click', () => {
-    stepBook(-1);
-  });
-
-  document.getElementById('btn-next-book')?.addEventListener('click', () => {
-    stepBook(1);
-  });
-
-  document.getElementById('btn-nav-picker')?.addEventListener('click', () => {
-    openLocationPickerModal();
-  });
-
-  document.getElementById('btn-settings')?.addEventListener('click', () => {
-    openSettingsModal({ initialTab: 'sources' });
-  });
-
-  document.getElementById('btn-prev-chapter')?.addEventListener('click', () => {
-    stepChapter(-1);
-  });
-
-  document.getElementById('btn-next-chapter')?.addEventListener('click', () => {
-    stepChapter(1);
-  });
+  }
 }
 
-function bindStateEvents() {
-  eventBus.on(EVENTS.TOAST, showToast);
+export function stepBible(delta) {
+  const bibles = store.getBibles();
+  if (bibles.length < 2) return;
 
-  eventBus.on(EVENTS.PREFS_CHANGED, (prefs) => {
-    applyVisualPrefs(prefs);
-    renderReader({ resetScroll: false });
-  });
+  const active = store.getActiveBible();
+  const idx = active ? bibles.findIndex((m) => m.path === active.path) : -1;
+  const nextIdx = idx + Number(delta || 0);
+  if (nextIdx < 0 || nextIdx >= bibles.length) return;
 
-  eventBus.on(EVENTS.SOURCES_UPDATED, () => {
-    renderReader({ resetScroll: false });
-  });
+  store.setActiveModule(bibles[nextIdx].path);
+}
 
-  eventBus.on(EVENTS.MODULE_CHANGED, () => {
-    renderReader({ resetScroll: true });
-  });
+export async function stepBook(delta) {
+  const bible = store.getActiveBible();
+  if (!bible) return;
 
-  eventBus.on(EVENTS.LOCATION_CHANGED, () => {
-    renderReader({ resetScroll: true });
-  });
+  const state = store.getState();
+  const books = await loadBooksForBible(bible);
+  if (!books.length) return;
 
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState !== 'visible') return;
-    const prev = store.getState().hasStoragePermission;
-    const res = await nativeBridge.checkStoragePermission();
-    const next = Boolean(res && res.granted);
-    if (next !== prev) {
-      store.setPermission(next);
-      renderReader({ resetScroll: false });
+  const bookIdx = books.indexOf(state.book);
+  if (bookIdx < 0) return;
+
+  const nextIdx = bookIdx + Number(delta || 0);
+  if (nextIdx < 0 || nextIdx >= books.length) return;
+
+  const nextBook = books[nextIdx];
+  const nextChapters = await loadChaptersForBible(bible, nextBook);
+  if (!nextChapters.length) return;
+
+  store.setLocation(nextBook, nextChapters[0]);
+}
+
+export async function stepChapter(delta) {
+  const bible = store.getActiveBible();
+  if (!bible) return;
+
+  const state = store.getState();
+  const books = await loadBooksForBible(bible);
+  if (!books.length) return;
+
+  const bookIdx = books.indexOf(state.book);
+  if (bookIdx < 0) return;
+
+  const chapters = await loadChaptersForBible(bible, state.book);
+  const chapIdx = chapters.indexOf(state.chapter);
+
+  if (delta > 0) {
+    if (chapIdx >= 0 && chapIdx + 1 < chapters.length) {
+      store.setLocation(state.book, chapters[chapIdx + 1]);
+      return;
     }
-  });
-}
-
-async function bootstrap() {
-  applyVisualPrefs(store.getPrefs());
-
-  initReaderView({
-    onOpenSources: () => openSettingsModal({ initialTab: 'sources' }),
-    onOpenFootnote: (ref, text) => openFootnoteModal(ref, text),
-    onRequestPermission: async () => {
-      await nativeBridge.requestStoragePermission();
-      showToast('Conceda o acesso nas configurações do Android e retorne ao app.');
+    if (bookIdx + 1 < books.length) {
+      const nextBook = books[bookIdx + 1];
+      const nextChapters = await loadChaptersForBible(bible, nextBook);
+      if (nextChapters.length) {
+        store.setLocation(nextBook, nextChapters[0]);
+      }
     }
-  });
+    return;
+  }
 
-  bindShellEvents();
-  bindStateEvents();
-
-  await syncPermissionAndData();
-  await renderReader({ resetScroll: true });
+  if (delta < 0) {
+    if (chapIdx > 0) {
+      store.setLocation(state.book, chapters[chapIdx - 1]);
+      return;
+    }
+    if (bookIdx > 0) {
+      const prevBook = books[bookIdx - 1];
+      const prevChapters = await loadChaptersForBible(bible, prevBook);
+      if (prevChapters.length) {
+        store.setLocation(prevBook, prevChapters[prevChapters.length - 1]);
+      }
+    }
+  }
 }
 
-bootstrap().catch((err) => {
-  showToast(err && err.message ? err.message : 'Erro ao iniciar aplicativo.');
-  console.error('[app] Falha no bootstrap:', err);
-});
-
-// FIM app.js
+// FIM reader-view.js
