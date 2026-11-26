@@ -127,7 +127,7 @@ function restoreFootnotes(html, footnoteLabels = []) {
     .replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
       const idx = Number(idxStr);
       const label = footnoteLabels[idx] || '*';
-      const extraCls = footnoteLabels[idx] ? ' v-fn-chip' : '';
+      const extraCls = label.length > 2 ? ' v-fn-chip' : '';
       return `<button type="button" class="v-fn-btn${extraCls}" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">${escapeHtml(label)}</button>`;
     });
 }
@@ -244,6 +244,21 @@ export function formatMySwordScripture(rawText, options = {}) {
     footnoteLabels.push(extractAttrLabel(attrs));
     return `\u0001${idx}\u0001`;
   });
+
+  // 1b. Extrai referências/notas embutidas em <a class="ref" href="r...">a</a> (ex.: NAA)
+  text = text.replace(
+    /(?:<sup>\s*)?(?:<i>\s*)?<a\b[^>]*\bhref\s*=\s*(?:"r([\s\S]*?)"|'r([\s\S]*?)')[^>]*>([\s\S]*?)<\/a>(?:\s*<\/i>)?(?:\s*<\/sup>)?/gi,
+    (_, dblContent, sglContent, labelRaw) => {
+      const rawContent = dblContent !== undefined ? dblContent : sglContent;
+      const clean = stripTagsPlain(rawContent).replace(/^☰\s*/, '').trim();
+      if (!clean) return '';
+      const label = stripTagsPlain(labelRaw) || '*';
+      const idx = footnotes.length;
+      footnotes.push(clean);
+      footnoteLabels.push(label);
+      return `\u0001${idx}\u0001`;
+    }
+  );
 
   // 2. Extrai títulos de seção (<TS>...</Ts> ou <TS1>...</Ts>), preservando notas embutidas como botão
   const headings = [];
