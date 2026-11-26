@@ -94,8 +94,8 @@
   align-items: center;
   justify-content: flex-start;
   gap: 2px;
-  min-width: 52px;
-  padding: 5px 8px 6px;
+  min-width: 56px;
+  padding: 6px 8px 7px;
   text-align: center;
 }
 
@@ -123,7 +123,7 @@
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
-  font-size: 0.69em;
+  font-size: 0.72em;
   line-height: 1.24;
   color: var(--shb-translit-color);
 }
@@ -138,7 +138,7 @@
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
-  font-size: 0.67em;
+  font-size: 0.70em;
   line-height: 1.22;
   color: var(--shb-le-color);
 }
@@ -158,7 +158,7 @@
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
-  font-size: 0.73em;
+  font-size: 0.75em;
   font-weight: 600;
   line-height: 1.26;
   color: var(--shb-gloss-color);
@@ -176,7 +176,7 @@
   color: var(--shb-gram-color);
   font-style: italic;
   font-weight: 400;
-  font-size: 0.68em;
+  font-size: 0.70em;
 }
 
 .verse-text .shb-extra {
@@ -184,7 +184,7 @@
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
-  font-size: 0.65em;
+  font-size: 0.68em;
   line-height: 1.2;
   color: var(--shb-gram-color);
 }
@@ -206,40 +206,46 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: 2px 4px;
-  min-height: 1.15em;
+  min-height: 1.25em;
   font-family: var(--font-ui);
-  font-size: 0.62em;
+  font-size: 0.72em;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 
 .verse-text .shb-lex-row.is-empty {
   opacity: 0.25;
 }
 
-.verse-text .shb-tag {
+.verse-text .shb-lex-row .shb-tag {
+  font-size: 1em;
+  line-height: 1.25;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
   font-weight: 500;
 }
 
-.verse-text .shb-tag--strong {
+.verse-text .shb-lex-row .shb-tag--strong {
   color: var(--shb-strong-color);
   font-weight: 600;
 }
 
-.verse-text .shb-tag--morph {
+.verse-text .shb-lex-row .shb-tag--morph {
   color: var(--shb-morph-color);
-  font-weight: 500;
+  font-weight: 600;
 }
 
-.verse-text .shb-tag--bdb {
+.verse-text .shb-lex-row .shb-tag--bdb {
   color: var(--shb-bdb-color);
 }
 
-.verse-text .shb-tag--twot {
+.verse-text .shb-lex-row .shb-tag--twot {
   color: var(--shb-twot-color);
 }
 
-.verse-text .shb-tag--ges {
+.verse-text .shb-lex-row .shb-tag--ges {
   color: var(--shb-ges-color);
 }
 
@@ -248,7 +254,7 @@
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
-  font-size: 0.58em;
+  font-size: 0.62em;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
   color: var(--shb-freq-color);
