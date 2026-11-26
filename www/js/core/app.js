@@ -1,7 +1,13 @@
 import { nativeBridge } from '../bridge/native-bridge.js';
 import { store } from './store.js';
 import { eventBus, EVENTS } from './events.js';
-import { initReaderView, renderReader, stepChapter } from '../ui/reader-view.js';
+import {
+  initReaderView,
+  renderReader,
+  stepBible,
+  stepBook,
+  stepChapter
+} from '../ui/reader-view.js';
 import {
   openBiblePickerModal,
   openLocationPickerModal,
@@ -50,10 +56,26 @@ async function syncPermissionAndData() {
 }
 
 function bindShellEvents() {
+  document.getElementById('btn-prev-bible')?.addEventListener('click', () => {
+    stepBible(-1);
+  });
+
+  document.getElementById('btn-next-bible')?.addEventListener('click', () => {
+    stepBible(1);
+  });
+
   document.getElementById('btn-bible-picker')?.addEventListener('click', () => {
     openBiblePickerModal({
       onOpenSources: () => openSettingsModal({ initialTab: 'sources' })
     });
+  });
+
+  document.getElementById('btn-prev-book')?.addEventListener('click', () => {
+    stepBook(-1);
+  });
+
+  document.getElementById('btn-next-book')?.addEventListener('click', () => {
+    stepBook(1);
   });
 
   document.getElementById('btn-nav-picker')?.addEventListener('click', () => {
@@ -128,3 +150,5 @@ bootstrap().catch((err) => {
   showToast(err && err.message ? err.message : 'Erro ao iniciar aplicativo.');
   console.error('[app] Falha no bootstrap:', err);
 });
+
+// FIM app.js
