@@ -130,6 +130,17 @@ function parseInterlinearQBlocks(rawHtml, verseNum) {
       }
     }
 
+    // Fallback para módulos <Q>palavra<X>...<x><T>...<t><q> sem <H>/<G>
+    if (!orig.length) {
+      fieldRegex.lastIndex = 0;
+      const leftover = inner.replace(fieldRegex, '');
+      const plainOrig = stripAllTagsKeepSpaces(leftover);
+      if (plainOrig) {
+        if (hasHebrewScript(plainOrig)) hasH = true;
+        orig.push(plainOrig);
+      }
+    }
+
     if (orig.length || translit.length || gloss.length) {
       items.push({ orig, translit, gloss });
     }
@@ -384,5 +395,3 @@ export function formatInterlinearHtml(rawHtml, verseNum = null) {
 
   return buildFromTokens(tokenizeInline(rawHtml), true);
 }
-
-// FIM interlinear.js
