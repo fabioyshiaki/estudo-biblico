@@ -49,7 +49,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: calc(var(--safe-top) + 8px) 12px 8px;
+  padding: calc(var(--safe-top) + 8px) 10px 8px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
   z-index: 20;
@@ -67,14 +67,58 @@ button {
   flex: 1 1 auto;
 }
 
+.nav-group {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.nav-group-bible {
+  flex: 0 1 230px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.nav-group-book {
+  flex: 0 1 220px;
+  background: var(--bg-subtle);
+  color: var(--text-main);
+}
+
+.step-arrow-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 40px;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+  color: inherit;
+  transition: background 0.14s ease, opacity 0.14s ease;
+}
+
+.step-arrow-btn:not(:disabled):active {
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.step-arrow-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .pill-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 40px;
-  padding: 0 14px;
-  border-radius: 999px;
-  font-size: 15px;
+  padding: 0 8px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -82,16 +126,24 @@ button {
   transition: background 0.15s ease;
 }
 
+.pill-btn > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pill-bible {
-  max-width: 150px;
-  background: var(--accent-soft);
   color: var(--accent);
+  border-left: 1px solid rgba(128, 128, 128, 0.18);
+  border-right: 1px solid rgba(128, 128, 128, 0.18);
 }
 
 .pill-nav {
-  max-width: 240px;
-  background: var(--bg-subtle);
   color: var(--text-main);
+  border-left: 1px solid rgba(128, 128, 128, 0.18);
+  border-right: 1px solid rgba(128, 128, 128, 0.18);
 }
 
 .icon-btn {
@@ -213,3 +265,5 @@ button {
   word-break: break-word;
   margin-top: 8px;
 }
+
+/* FIM base.css */
