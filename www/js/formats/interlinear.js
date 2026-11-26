@@ -1,3 +1,8 @@
+import {
+  isLinguisticClauseHtml,
+  formatLinguisticClauseHtml
+} from './linguistic-bh.js';
+
 const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F]/;
 const RE_ANCIENT = /[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]/;
 const RE_LATIN = /[A-Za-z\u00C0-\u024F]/;
@@ -48,7 +53,9 @@ export function hasHebrewScript(str) {
 
 export function isBilingualAncientText(str) {
   const s = String(str || '');
-  if (RE_INTERLINEAR_Q.test(s) || RE_STRUCTURED_ROW.test(s)) return true;
+  if (isLinguisticClauseHtml(s) || RE_INTERLINEAR_Q.test(s) || RE_STRUCTURED_ROW.test(s)) {
+    return true;
+  }
   const plain = s.replace(/<[^>]*>/g, ' ');
   return RE_ANCIENT.test(plain) && RE_LATIN.test(plain);
 }
@@ -330,6 +337,11 @@ function buildFromTokens(tokens, wrapOuter = true) {
 }
 
 export function formatInterlinearHtml(rawHtml, verseNum = null) {
+  if (isLinguisticClauseHtml(rawHtml)) {
+    const bhHtml = formatLinguisticClauseHtml(rawHtml);
+    if (bhHtml) return bhHtml;
+  }
+
   if (RE_INTERLINEAR_Q.test(rawHtml)) {
     const qHtml = parseInterlinearQBlocks(rawHtml, verseNum);
     if (qHtml) return qHtml;
