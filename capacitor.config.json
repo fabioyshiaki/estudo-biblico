@@ -1,0 +1,10 @@
+{
+  "appId": "com.fabio.estudobiblico",
+  "appName": "Estudo Bíblico",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  }
+}
