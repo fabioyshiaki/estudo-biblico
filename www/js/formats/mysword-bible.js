@@ -15,6 +15,13 @@ function stripTagsPlain(str) {
     .trim();
 }
 
+function stripEscapedTags(str) {
+  return String(str || '')
+    .replace(/&lt;(?:(?!&gt;).)*&gt;/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getRowField(row, targetLower) {
   if (!row || typeof row !== 'object') return undefined;
   for (const key of Object.keys(row)) {
@@ -36,7 +43,7 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   // Extrai títulos de seção (<TS>...</Ts> ou <TS1>...</Ts>)
   const headings = [];
-  text = text.replace(/<TS\d?>([\s\S]*?)<Ts>/gi, (_, inner) => {
+  text = text.replace(/<TS\d?>([\s\S]*?)<\/?Ts\d?>/gi, (_, inner) => {
     const clean = stripTagsPlain(inner);
     if (clean) headings.push(clean);
     return '';
@@ -44,7 +51,7 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   // Extrai notas de rodapé (<RF>...</Rf>)
   const footnotes = [];
-  text = text.replace(/<RF(?:\s+[^>]*)?>([\s\S]*?)<Rf>/gi, (_, inner) => {
+  text = text.replace(/<RF(?:\s+[^>]*)?>([\s\S]*?)<\/?Rf>/gi, (_, inner) => {
     const clean = stripTagsPlain(inner);
     if (!clean) return '';
     const idx = footnotes.length;
@@ -52,36 +59,58 @@ export function formatMySwordScripture(rawText, options = {}) {
     return `\u0001FN_${idx}\u0001`;
   });
 
-  // Escapa HTML bruto para evitar quebra de DOM ou injeção
+  // Escapa HTML bruto para que apenas tags convertidas explicitamente virem DOM real
   let safe = escapeHtml(text);
 
-  // Tags semânticas do MySword
+  // Selos de módulos paralelos customizados (ex.: <SELOACF>ACF</seloacf>, <SELOKJF>KJF</selokjf>)
+  safe = safe.replace(
+    /&lt;SELO[A-Za-z0-9_-]*(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?SELO[A-Za-z0-9_-]*&gt;/gi,
+    (_, inner) => {
+      const label = stripEscapedTags(inner);
+      if (!label) return '';
+      return `<span class="v-parallel-sep"></span><span class="v-badge">${label}</span> `;
+    }
+  );
+
+  // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt> ou <VT>Gn 1:1</vt>)
+  safe = safe.replace(
+    /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
+    (_, inner) => {
+      const refText = stripEscapedTags(inner);
+      return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
+    }
+  );
+
+  // Tags semânticas oficiais do MySword
   safe = safe
     .replace(/&lt;FR&gt;/g, '<span class="v-red">')
-    .replace(/&lt;Fr&gt;/g, '</span>')
+    .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
     .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
-    .replace(/&lt;Fi&gt;/g, '</em>')
+    .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
     .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
-    .replace(/&lt;Fo&gt;/g, '</span>')
+    .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
     .replace(/&lt;FU&gt;/g, '<u>')
-    .replace(/&lt;Fu&gt;/g, '</u>')
+    .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
     .replace(/&lt;CM&gt;|&lt;CL&gt;/gi, '<br>')
     .replace(/&lt;PI\d?&gt;|&lt;PF\d?&gt;/gi, '<br><span class="v-indent"></span>');
 
-  // Tags HTML simples comuns em módulos MySword (ex.: Bíblias paralelas com <br> e <b>)
+  // Tags HTML básicas usadas em módulos MySword
   safe = safe
     .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
-    .replace(/&lt;p(?:\s+[^&]*)?&gt;/gi, '<br>')
+    .replace(/&lt;p(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
     .replace(/&lt;\/p&gt;/gi, '')
-    .replace(/&lt;b&gt;/gi, '<strong>')
-    .replace(/&lt;\/b&gt;/gi, '</strong>')
-    .replace(/&lt;i&gt;/gi, '<em>')
-    .replace(/&lt;\/i&gt;/gi, '</em>')
+    .replace(/&lt;div(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+    .replace(/&lt;\/div&gt;/gi, '')
+    .replace(/&lt;(?:b|strong)&gt;/gi, '<strong>')
+    .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
+    .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
+    .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
+    .replace(/&lt;u&gt;/gi, '<u>')
+    .replace(/&lt;\/u&gt;/gi, '</u>')
     .replace(/&lt;sup&gt;/gi, '<sup>')
     .replace(/&lt;\/sup&gt;/gi, '</sup>')
     .replace(/&lt;sub&gt;/gi, '<sub>')
-    .replace(/&lt;\/sub&gt;/gi, '</sub>')
-    .replace(/&lt;\/?font(?:\s+[^&]*)?&gt;/gi, '');
+    .replace(/&lt;\/sub&gt;/gi, '</sub>');
 
   // Códigos Strong (<WG...>, <WH...>) e Morfologia (<WT...>)
   if (showStrongs) {
@@ -96,23 +125,40 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   if (showMorph) {
     safe = safe.replace(
-      /&lt;WT([^&]+)&gt;/gi,
-      (_, morph) => `<span class="v-morph" data-morph="${morph}">${morph}</span>`
+      /&lt;WT(?:(?!&gt;|&lt;).)+&gt;/gi,
+      (match) => {
+        const morph = match.slice(6, -4).trim();
+        return morph ? `<span class="v-morph" data-morph="${morph}">${morph}</span>` : '';
+      }
     );
   } else {
-    safe = safe.replace(/&lt;WT[^&]+&gt;/gi, '');
+    safe = safe.replace(/&lt;WT(?:(?!&gt;|&lt;).)+&gt;/gi, '');
   }
 
-  // Referências cruzadas (<RX ...>) e demais tags curtas não mapeadas do MySword
+  // Remove referências cruzadas (<RX ...>) e qualquer tag customizada restante (ex.: </acf>, </kjf>, <vt>, <font>, <span>)
   safe = safe
-    .replace(/&lt;RX[^&]*&gt;/gi, '')
-    .replace(/&lt;\/?[A-Z]{1,3}\d?(?:\s+[^&]*)?&gt;/g, '');
+    .replace(/&lt;RX(?:(?!&gt;|&lt;).)*&gt;/gi, '')
+    .replace(/&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:\s+(?:(?!&gt;|&lt;).)*)?\/?&gt;/g, '');
 
-  // Preserva quebras de linha reais e limpa excessos de <br>
+  // Decodifica entidades tipográficas comuns sem abrir brecha de HTML
+  safe = safe
+    .replace(/&amp;nbsp;/gi, ' ')
+    .replace(/&amp;mdash;/gi, '—')
+    .replace(/&amp;ndash;/gi, '–')
+    .replace(/&amp;hellip;/gi, '…')
+    .replace(/&amp;ldquo;/gi, '“')
+    .replace(/&amp;rdquo;/gi, '”')
+    .replace(/&amp;lsquo;/gi, '‘')
+    .replace(/&amp;rsquo;/gi, '’')
+    .replace(/&amp;laquo;/gi, '«')
+    .replace(/&amp;raquo;/gi, '»');
+
+  // Normaliza quebras de linha e espaçamento entre traduções paralelas
   safe = safe
     .replace(/\n+/g, '<br>')
+    .replace(/(?:<br>\s*)+<span class="v-parallel-sep"><\/span>/g, '<span class="v-parallel-sep"></span>')
     .replace(/(<br>\s*){3,}/g, '<br><br>')
-    .replace(/^(<br>\s*)+/, '')
+    .replace(/^(?:<span class="v-parallel-sep"><\/span>|<br>\s*)+/, '')
     .replace(/(<br>\s*)+$/, '')
     .trim();
 
@@ -182,3 +228,5 @@ export const myswordBibleAdapter = {
     });
   }
 };
+
+// FIM mysword-bible.js
