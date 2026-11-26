@@ -1,8 +1,11 @@
 const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F\uFB1D-\uFB4F]/;
 const RE_SHEBANQ = /\u300C(?:\s*\u300E[^\u300E\u300F]*\u300F)?\s*<w>[\s\S]*?<w>[\s\S]*?\u300D/i;
+const RE_INTERLINEAR_MN = /\u300C\s*<Mn>[\s\S]*?<\/Mn>[\s\S]*?\u300D/i;
 const RE_RECORD = /\u300C([\s\S]*?)\u300D/g;
 const RE_BRACKET_MARKER = /^<([^<>]+)>$/;
 const RE_BHSE_LEX = /<(S1H|S2H|BDB|TWOT|GES)\.?([^<>]+)>/gi;
+const RE_STRONG_TAG = /<W([GH])(\d+[a-z]?)>/gi;
+const RE_MORPH_TAG = /<WT([^<>]+)>/gi;
 
 function escapeHtml(str) {
   return String(str || '')
@@ -16,8 +19,15 @@ function cleanText(str) {
   return String(str || '').replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function extractTagContent(str, tagName) {
+  const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
+  const m = re.exec(String(str || ''));
+  return m ? cleanText(m[1]) : '';
+}
+
 export function isShebanqBhsText(str) {
-  return RE_SHEBANQ.test(String(str || ''));
+  const s = String(str || '');
+  return RE_SHEBANQ.test(s) || RE_INTERLINEAR_MN.test(s);
 }
 
 function parseFreqAndLex(rawField) {
@@ -62,7 +72,68 @@ function parseBhseLexicals(rawLexField) {
   return { strongs, bdbs, twots, ges };
 }
 
+function parseInterlinearMnRecord(inner) {
+  const surface = extractTagContent(inner, 'Mn');
+  const translit = extractTagContent(inner, 'Th');
+  const phonetic = extractTagContent(inner, 'Le');
+  const gloss = extractTagContent(inner, 'Pt');
+
+  const haRaw = extractTagContent(inner, 'Ha');
+  const gaRaw = extractTagContent(inner, 'Ga');
+  const hgkList = [];
+  if (haRaw) pushUnique(hgkList, /^HGK/i.test(haRaw) ? haRaw.toUpperCase() : `HGK${haRaw}`);
+  if (gaRaw) pushUnique(hgkList, /^GGK/i.test(gaRaw) ? gaRaw.toUpperCase() : `GGK${gaRaw}`);
+
+  const strongs = [];
+  RE_STRONG_TAG.lastIndex = 0;
+  let sm;
+  while ((sm = RE_STRONG_TAG.exec(inner)) !== null) {
+    const code = `${sm[1].toUpperCase()}${sm[2]}`;
+    if (code !== 'H0' && code !== 'G0') pushUnique(strongs, code);
+  }
+
+  const morphs = [];
+  let lemma = '';
+  RE_MORPH_TAG.lastIndex = 0;
+  let mm;
+  while ((mm = RE_MORPH_TAG.exec(inner)) !== null) {
+    const rawMorph = String(mm[1] || '');
+    const lemmaMatch = /\bl="([^"]+)"/i.exec(rawMorph);
+    if (lemmaMatch && !lemma) {
+      lemma = cleanText(lemmaMatch[1]);
+    }
+    const cleanMorph = cleanText(rawMorph.replace(/\s+l="[^"]*"/gi, ''));
+    if (cleanMorph) pushUnique(morphs, cleanMorph);
+  }
+
+  if (!surface && !gloss && !translit) return null;
+
+  return {
+    mode: 'interlinear_mn',
+    wordId: '',
+    surfaceDisplay: surface,
+    strongs,
+    morphs,
+    translit,
+    phonetic,
+    hgkList,
+    gloss,
+    lemma,
+    extra: '',
+    freq: '',
+    sheCode: '',
+    bdbs: [],
+    twots: [],
+    ges: [],
+    endsWord: true
+  };
+}
+
 function parseShebanqRecord(inner) {
+  if (/<Mn>[\s\S]*?<\/Mn>/i.test(inner)) {
+    return parseInterlinearMnRecord(inner);
+  }
+
   const parts = inner.split(/<w>/i);
 
   const isBhseV5 =
@@ -95,15 +166,18 @@ function parseShebanqRecord(inner) {
     const sheCode = /^SHE[1-9]\d*$/i.test(sheRaw) ? sheRaw.toUpperCase() : '';
 
     return {
-      isBhseV5: true,
+      mode: 'bhse_v5',
       wordId,
       translit,
+      phonetic: '',
       gloss,
       extra: '',
       lemma: lemma || '',
       freq: '',
       sheCode,
       strongs: lex.strongs,
+      morphs: [],
+      hgkList: [],
       bdbs: lex.bdbs,
       twots: lex.twots,
       ges: lex.ges,
@@ -134,15 +208,18 @@ function parseShebanqRecord(inner) {
   }
 
   return {
-    isBhseV5: false,
+    mode: 'shebanq_v4',
     wordId,
     translit,
+    phonetic: '',
     gloss,
     extra,
     lemma,
     freq,
     sheCode: '',
     strongs: [],
+    morphs: [],
+    hgkList: [],
     bdbs: [],
     twots: [],
     ges: [],
@@ -151,27 +228,28 @@ function parseShebanqRecord(inner) {
   };
 }
 
-function renderGloss(rawGloss) {
+function renderGloss(rawGloss, extraCls = '') {
   const txt = cleanText(rawGloss);
+  const clsSuffix = extraCls ? ` ${extraCls}` : '';
   if (!txt) {
-    return '<span class="shb-gloss is-empty" dir="ltr">&nbsp;</span>';
+    return `<span class="shb-gloss is-empty${clsSuffix}" dir="ltr">&nbsp;</span>`;
   }
 
   const markerMatch = RE_BRACKET_MARKER.exec(txt);
   if (markerMatch) {
-    return `<span class="shb-gloss is-gram" dir="ltr">[${escapeHtml(markerMatch[1])}]</span>`;
+    return `<span class="shb-gloss is-gram${clsSuffix}" dir="ltr">[${escapeHtml(markerMatch[1])}]</span>`;
   }
 
   if (/^\[[^\]]+\]$/.test(txt)) {
-    return `<span class="shb-gloss is-gram" dir="ltr">${escapeHtml(txt)}</span>`;
+    return `<span class="shb-gloss is-gram${clsSuffix}" dir="ltr">${escapeHtml(txt)}</span>`;
   }
 
-  return `<span class="shb-gloss" dir="ltr">${escapeHtml(txt)}</span>`;
+  return `<span class="shb-gloss${clsSuffix}" dir="ltr">${escapeHtml(txt)}</span>`;
 }
 
 function renderLexRow(items, cls, dataAttr) {
   if (!items || !items.length) {
-    return `<div class="shb-lex-row is-empty" dir="ltr">&nbsp;</div>`;
+    return '<div class="shb-lex-row is-empty" dir="ltr">&nbsp;</div>';
   }
   const chips = items
     .map((code) => `<span class="shb-tag ${cls}" data-${dataAttr}="${escapeHtml(code)}">${escapeHtml(code)}</span>`)
@@ -185,6 +263,37 @@ function renderMorpheme(item) {
     ? `<span class="shb-orig" dir="${origDir}">${escapeHtml(item.surfaceDisplay)}</span>`
     : '<span class="shb-orig is-elided" dir="ltr" title="Morfema elidido">&middot;</span>';
 
+  const attrs = [
+    item.wordId ? `data-word-id="${escapeHtml(item.wordId)}"` : '',
+    item.lemma ? `data-lemma="${escapeHtml(item.lemma)}"` : '',
+    item.sheCode ? `data-she="${escapeHtml(item.sheCode)}"` : ''
+  ].filter(Boolean).join(' ');
+
+  // Layout alinhado para Interlinear Br 2023+ (「<Mn>...<WH><WT><Th><Le><Ha><Pt>」)
+  if (item.mode === 'interlinear_mn') {
+    const thHtml = item.translit
+      ? `<span class="shb-translit shb-th" dir="ltr">${escapeHtml(item.translit)}</span>`
+      : '<span class="shb-translit shb-th is-empty" dir="ltr">&nbsp;</span>';
+
+    const leHtml = item.phonetic
+      ? `<span class="shb-phonetic" dir="ltr">${escapeHtml(item.phonetic)}</span>`
+      : '<span class="shb-phonetic is-empty" dir="ltr">&nbsp;</span>';
+
+    const ptHtml = renderGloss(item.gloss, 'shb-pt');
+
+    return (
+      `<div class="shb-morph is-mn"${attrs ? ` ${attrs}` : ''}>` +
+        origHtml +
+        renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong') +
+        renderLexRow(item.morphs, 'v-morph shb-tag--morph', 'morph') +
+        thHtml +
+        leHtml +
+        renderLexRow(item.hgkList, 'shb-tag--bdb', 'hgk') +
+        ptHtml +
+      '</div>'
+    );
+  }
+
   const translitHtml = item.translit
     ? `<span class="shb-translit" dir="ltr">${escapeHtml(item.translit)}</span>`
     : '<span class="shb-translit is-empty" dir="ltr">&nbsp;</span>';
@@ -196,14 +305,8 @@ function renderMorpheme(item) {
     ? `<span class="shb-lemma" dir="${lemmaDir}">${escapeHtml(item.lemma)}</span>`
     : '<span class="shb-lemma is-empty" dir="ltr">&nbsp;</span>';
 
-  const attrs = [
-    item.wordId ? `data-word-id="${escapeHtml(item.wordId)}"` : '',
-    item.lemma ? `data-lemma="${escapeHtml(item.lemma)}"` : '',
-    item.sheCode ? `data-she="${escapeHtml(item.sheCode)}"` : ''
-  ].filter(Boolean).join(' ');
-
   // Layout alinhado em camadas fixas para BHSE v5
-  if (item.isBhseV5) {
+  if (item.mode === 'bhse_v5') {
     const lexBlock =
       '<div class="shb-lex-block">' +
         renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong') +
