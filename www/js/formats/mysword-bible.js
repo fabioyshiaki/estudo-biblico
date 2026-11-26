@@ -324,7 +324,9 @@ export function formatMySwordScripture(rawText, options = {}) {
   if (RE_SELO_TAG.test(text)) {
     safe = formatParallelSeloHtml(text);
   } else if (isBilingualAncientText(text)) {
-    safe = formatInterlinearHtml(decodeCommonEntities(text), options.verseNum);
+    // Desembrulha links <a href='sH...'>palavra</a> para preservar o texto original no interlinear
+    const unwrapped = text.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1');
+    safe = formatInterlinearHtml(decodeCommonEntities(unwrapped), options.verseNum);
   } else {
     safe = formatStandardInlineHtml(text);
     if (hasHebrewScript(safe)) {
