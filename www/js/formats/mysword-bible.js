@@ -33,6 +33,8 @@ const NAMED_ENTITIES = {
   aelig: 'æ', AElig: 'Æ', oelig: 'œ', OElig: 'Œ'
 };
 
+const RE_SELO_TAG = /<SELO[A-Za-z0-9_-]*(?:\s+(?:(?!>|<).)*)?>([\s\S]*?)<\/?SELO[A-Za-z0-9_-]*>/gi;
+
 function escapeHtml(str) {
   return String(str || '')
     .replace(/&/g, '&amp;')
@@ -128,6 +130,97 @@ function restoreFootnotes(html, footnoteLabels = []) {
       const extraCls = footnoteLabels[idx] ? ' v-fn-chip' : '';
       return `<button type="button" class="v-fn-btn${extraCls}" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">${escapeHtml(label)}</button>`;
     });
+}
+
+function formatStandardInlineHtml(rawSegment) {
+  let safe = escapeHtml(rawSegment);
+
+  // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt>)
+  safe = safe.replace(
+    /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
+    (_, inner) => {
+      const refText = stripEscapedTags(inner);
+      return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
+    }
+  );
+
+  // Tags semânticas oficiais do MySword
+  safe = safe
+    .replace(/&lt;FR&gt;/g, '<span class="v-red">')
+    .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
+    .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
+    .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
+    .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
+    .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
+    .replace(/&lt;FU&gt;/g, '<u>')
+    .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
+    .replace(/&lt;CM&gt;|&lt;CL&gt;|&lt;CI&gt;/gi, '<br>')
+    .replace(/&lt;PI\d?&gt;|&lt;PF\d?&gt;/gi, '<br><span class="v-indent"></span>');
+
+  // Tags HTML básicas usadas em módulos MySword
+  safe = safe
+    .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+    .replace(/&lt;p(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+    .replace(/&lt;\/p&gt;/gi, '')
+    .replace(/&lt;div(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+    .replace(/&lt;\/div&gt;/gi, '')
+    .replace(/&lt;(?:b|strong)&gt;/gi, '<strong>')
+    .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
+    .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
+    .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
+    .replace(/&lt;u&gt;/gi, '<u>')
+    .replace(/&lt;\/u&gt;/gi, '</u>')
+    .replace(/&lt;sup&gt;/gi, '<sup>')
+    .replace(/&lt;\/sup&gt;/gi, '</sup>')
+    .replace(/&lt;sub&gt;/gi, '<sub>')
+    .replace(/&lt;\/sub&gt;/gi, '</sub>');
+
+  // Remove qualquer tag customizada restante (ex.: <Q>, <E>, <C>, <H1>, <h>, <BLN4>, <OHB>)
+  safe = safe.replace(
+    /&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
+    ''
+  );
+
+  return decodeCommonEntities(safe)
+    .replace(/\n+/g, '<br>')
+    .replace(/(<br>\s*){3,}/g, '<br><br>')
+    .replace(/^(?:<br>\s*)+/, '')
+    .replace(/(<br>\s*)+$/, '')
+    .trim();
+}
+
+function formatParallelSeloHtml(rawText) {
+  const matches = [];
+  RE_SELO_TAG.lastIndex = 0;
+  let m;
+  while ((m = RE_SELO_TAG.exec(rawText)) !== null) {
+    matches.push({
+      start: m.index,
+      end: RE_SELO_TAG.lastIndex,
+      label: stripTagsPlain(m[1])
+    });
+  }
+
+  if (!matches.length) return '';
+
+  const blocks = [];
+  for (let i = 0; i < matches.length; i++) {
+    const cur = matches[i];
+    const nextStart = i + 1 < matches.length ? matches[i + 1].start : rawText.length;
+    const bodyRaw = rawText.slice(cur.end, nextStart);
+    const bodyHtml = formatStandardInlineHtml(bodyRaw);
+    if (!cur.label && !bodyHtml) continue;
+
+    const isRtl = hasHebrewScript(bodyHtml);
+    const badgeHtml = cur.label ? `<span class="v-badge">${escapeHtml(cur.label)}</span> ` : '';
+    const lineHtml = isRtl
+      ? `<span class="v-rtl" dir="rtl">${badgeHtml}${bodyHtml}</span>`
+      : `<span class="v-ltr" dir="ltr">${badgeHtml}${bodyHtml}</span>`;
+
+    blocks.push(lineHtml);
+  }
+
+  return blocks.join('<span class="v-parallel-sep"></span>');
 }
 
 export function formatMySwordScripture(rawText, options = {}) {
@@ -226,75 +319,14 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   let safe = '';
 
-  if (isBilingualAncientText(text)) {
+  // Módulos paralelos com selos (<SELON4>, <SELOTR>, <SELOOHB>, <SELOACF>, etc.)
+  RE_SELO_TAG.lastIndex = 0;
+  if (RE_SELO_TAG.test(text)) {
+    safe = formatParallelSeloHtml(text);
+  } else if (isBilingualAncientText(text)) {
     safe = formatInterlinearHtml(decodeCommonEntities(text), options.verseNum);
   } else {
-    safe = escapeHtml(text);
-
-    // Selos de módulos paralelos customizados
-    safe = safe.replace(
-      /&lt;SELO[A-Za-z0-9_-]*(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?SELO[A-Za-z0-9_-]*&gt;/gi,
-      (_, inner) => {
-        const label = stripEscapedTags(inner);
-        if (!label) return '';
-        return `<span class="v-parallel-sep"></span><span class="v-badge">${label}</span> `;
-      }
-    );
-
-    // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt>)
-    safe = safe.replace(
-      /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
-      (_, inner) => {
-        const refText = stripEscapedTags(inner);
-        return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
-      }
-    );
-
-    // Tags semânticas oficiais do MySword
-    safe = safe
-      .replace(/&lt;FR&gt;/g, '<span class="v-red">')
-      .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
-      .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
-      .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
-      .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
-      .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
-      .replace(/&lt;FU&gt;/g, '<u>')
-      .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
-      .replace(/&lt;CM&gt;|&lt;CL&gt;|&lt;CI&gt;/gi, '<br>')
-      .replace(/&lt;PI\d?&gt;|&lt;PF\d?&gt;/gi, '<br><span class="v-indent"></span>');
-
-    // Tags HTML básicas usadas em módulos MySword
-    safe = safe
-      .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
-      .replace(/&lt;p(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
-      .replace(/&lt;\/p&gt;/gi, '')
-      .replace(/&lt;div(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
-      .replace(/&lt;\/div&gt;/gi, '')
-      .replace(/&lt;(?:b|strong)&gt;/gi, '<strong>')
-      .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
-      .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
-      .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
-      .replace(/&lt;u&gt;/gi, '<u>')
-      .replace(/&lt;\/u&gt;/gi, '</u>')
-      .replace(/&lt;sup&gt;/gi, '<sup>')
-      .replace(/&lt;\/sup&gt;/gi, '</sup>')
-      .replace(/&lt;sub&gt;/gi, '<sub>')
-      .replace(/&lt;\/sub&gt;/gi, '</sub>');
-
-    // Remove qualquer tag customizada restante
-    safe = safe.replace(
-      /&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
-      ''
-    );
-
-    safe = decodeCommonEntities(safe)
-      .replace(/\n+/g, '<br>')
-      .replace(/(?:<br>\s*)+<span class="v-parallel-sep"><\/span>/g, '<span class="v-parallel-sep"></span>')
-      .replace(/(<br>\s*){3,}/g, '<br><br>')
-      .replace(/^(?:<span class="v-parallel-sep"><\/span>|<br>\s*)+/, '')
-      .replace(/(<br>\s*)+$/, '')
-      .trim();
-
+    safe = formatStandardInlineHtml(text);
     if (hasHebrewScript(safe)) {
       safe = `<span class="v-rtl" dir="rtl">${safe}</span>`;
     }
