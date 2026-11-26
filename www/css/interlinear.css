@@ -1,0 +1,165 @@
+:root,
+:root[data-theme="paper"] {
+  --il-card-bg: #ffffff;
+  --il-word-bg: #f7f4ec;
+  --il-t2-color: #16656c;
+  --il-t3-color: #2f5597;
+}
+
+:root[data-theme="light"] {
+  --il-card-bg: #ffffff;
+  --il-word-bg: #f3f5f8;
+  --il-t2-color: #0f6b70;
+  --il-t3-color: #24519c;
+}
+
+:root[data-theme="sepia"] {
+  --il-card-bg: #faf4e8;
+  --il-word-bg: #efe6d5;
+  --il-t2-color: #1f5f61;
+  --il-t3-color: #2e4f82;
+}
+
+:root[data-theme="dark"] {
+  --il-card-bg: #181c22;
+  --il-word-bg: #222731;
+  --il-t2-color: #63c5ce;
+  --il-t3-color: #82aaff;
+}
+
+.verse-item.is-interlinear {
+  padding: 10px 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.verse-item.is-interlinear > .verse-num {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  vertical-align: middle;
+}
+
+.verse-text .il-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  text-align: left;
+}
+
+.verse-text .il-header-orig {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  font-size: 1.18em;
+  line-height: 1.75;
+  color: var(--text-main);
+}
+
+.verse-text .il-header-orig[dir="rtl"] {
+  text-align: right;
+}
+
+.verse-text .il-clause-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--il-card-bg);
+  border: 1px solid var(--border);
+}
+
+.verse-text .il-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.verse-text .il-flow[dir="rtl"] {
+  direction: rtl;
+  justify-content: flex-start;
+}
+
+.verse-text .il-flow[dir="ltr"] {
+  direction: ltr;
+  justify-content: flex-start;
+}
+
+.verse-text .il-word {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 40px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--il-word-bg);
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+.verse-text .il-orig {
+  display: block;
+  font-size: 1.12em;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.verse-text .il-orig-empty {
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+.verse-text .il-gloss {
+  display: block;
+  margin-top: 3px;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.72em;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
+.verse-text .il-trans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  direction: ltr;
+  text-align: left;
+}
+
+.verse-text .il-trans {
+  font-family: var(--font-ui);
+  font-size: 0.86em;
+  line-height: 1.48;
+  color: var(--text-main);
+}
+
+.verse-text .il-trans-2 {
+  color: var(--il-t2-color);
+}
+
+.verse-text .il-trans-3 {
+  color: var(--il-t3-color);
+}
+
+.verse-text .il-clause {
+  padding-left: 10px;
+  border-left: 3px solid var(--accent-soft);
+  font-family: var(--font-ui);
+  font-size: 0.88em;
+  line-height: 1.5;
+  color: var(--text-main);
+}
+
+/* FIM interlinear.css */
