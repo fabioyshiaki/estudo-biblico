@@ -235,11 +235,12 @@ export async function renderReader({ resetScroll = true } = {}) {
           parts.push(`<h2 class="section-heading">${escapeHtml(h)}</h2>`);
         }
       }
+      const isInterlinear = v.html.includes('class="il-block"');
       parts.push(
-        `<p class="verse-item" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
+        `<div class="verse-item${isInterlinear ? ' is-interlinear' : ''}" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
           `<span class="verse-num">${v.verse}</span>` +
           `<span class="verse-text">${v.html}</span>` +
-        `</p>`
+        `</div>`
       );
     }
 
@@ -311,3 +312,5 @@ export async function stepChapter(delta) {
     }
   }
 }
+
+// FIM reader-view.js
