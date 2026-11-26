@@ -149,4 +149,227 @@ export function formatMySwordScripture(rawText, options = {}) {
     const idx = footnotes.length;
     footnotes.push(clean);
     footnoteLabels.push(extractAttrLabel(attrs));
-    return `\u0001
+    return `\u0001${idx}\u0001`;
+  });
+
+  // 2. Extrai títulos de seção (<TS>...</Ts> ou <TS1>...</Ts>), preservando notas embutidas como botão
+  const headings = [];
+  text = text.replace(/<TS\d?>([\s\S]*?)<\/?Ts\d?>/gi, (_, inner) => {
+    const embeddedTokens = [];
+    const withoutTokens = String(inner || '').replace(/\u0001(\d+)\u0001/g, (__, idxStr) => {
+      embeddedTokens.push(`\u0002${idxStr}\u0002`);
+      return '';
+    });
+
+    const clean = stripTagsPlain(withoutTokens)
+      .replace(/^(?:\|\||[|•·\-–—])+\s*/, '')
+      .replace(/\s*(?:\|\||[|•·\-–—])+$/, '')
+      .trim();
+    if (clean) headings.push(clean);
+    return embeddedTokens.join('');
+  });
+
+  // Módulos morfológicos completos tipo Tyndale TOTHT
+  if (isTothtTaggedText(text)) {
+    const tothtHtml = formatTothtHtml(decodeCommonEntities(text), options.verseNum);
+    return {
+      html: restoreFootnotes(tothtHtml, footnoteLabels),
+      headings,
+      footnotes
+    };
+  }
+
+  // Módulos BHS Enhanced / SHEBANQ
+  if (isShebanqBhsText(text)) {
+    const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum);
+    return {
+      html: restoreFootnotes(shebanqHtml, footnoteLabels),
+      headings,
+      footnotes
+    };
+  }
+
+  // Remove referências cruzadas, marcadores de versículo (<Gn#1#1>, <ot.1.1.1>) e tags customizadas com "="
+  text = text
+    .replace(/<RX(?:(?!>|<).)*>/gi, '')
+    .replace(/<[A-Za-z0-9]{1,8}[#.]\d+[#.]\d+(?:[#.]\d+)*>/g, '')
+    .replace(/<\/?[a-zA-Z][a-zA-Z0-9_:-]*=(?:(?!>|<).)*\/?>/g, '');
+
+  // Captura ou remove códigos Strong simples e compostos
+  const strongTokens = [];
+  if (showStrongs) {
+    text = text.replace(/<W([GH])(\d[^<>]*)>/gi, (_, lang, rest) => {
+      const cleaned = String(rest).replace(/\uFF0B/g, '+').trim();
+      if (!cleaned || cleaned === '0') return '';
+      const normalized = `${lang.toUpperCase()}${cleaned}`;
+      const idx = strongTokens.length;
+      strongTokens.push(normalized);
+      return ` \u0003${idx}\u0003`;
+    });
+  } else {
+    text = text.replace(/<W[GH]\d[^<>]*>/gi, '');
+  }
+
+  // Captura ou remove tags de Morfologia (<WT...>)
+  const morphTokens = [];
+  if (showMorph) {
+    text = text.replace(/<WT([^<>]+)>/gi, (_, morph) => {
+      const clean = String(morph || '').replace(/\s+l="[^"]*"/gi, '').trim();
+      if (!clean) return '';
+      const idx = morphTokens.length;
+      morphTokens.push(clean);
+      return ` \u0004${idx}\u0004`;
+    });
+  } else {
+    text = text.replace(/<WT[^<>]+>/gi, '');
+  }
+
+  let safe = '';
+
+  if (isBilingualAncientText(text)) {
+    safe = formatInterlinearHtml(decodeCommonEntities(text), options.verseNum);
+  } else {
+    safe = escapeHtml(text);
+
+    // Selos de módulos paralelos customizados
+    safe = safe.replace(
+      /&lt;SELO[A-Za-z0-9_-]*(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?SELO[A-Za-z0-9_-]*&gt;/gi,
+      (_, inner) => {
+        const label = stripEscapedTags(inner);
+        if (!label) return '';
+        return `<span class="v-parallel-sep"></span><span class="v-badge">${label}</span> `;
+      }
+    );
+
+    // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt>)
+    safe = safe.replace(
+      /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
+      (_, inner) => {
+        const refText = stripEscapedTags(inner);
+        return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
+      }
+    );
+
+    // Tags semânticas oficiais do MySword
+    safe = safe
+      .replace(/&lt;FR&gt;/g, '<span class="v-red">')
+      .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
+      .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
+      .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
+      .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
+      .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
+      .replace(/&lt;FU&gt;/g, '<u>')
+      .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
+      .replace(/&lt;CM&gt;|&lt;CL&gt;|&lt;CI&gt;/gi, '<br>')
+      .replace(/&lt;PI\d?&gt;|&lt;PF\d?&gt;/gi, '<br><span class="v-indent"></span>');
+
+    // Tags HTML básicas usadas em módulos MySword
+    safe = safe
+      .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+      .replace(/&lt;p(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+      .replace(/&lt;\/p&gt;/gi, '')
+      .replace(/&lt;div(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;/gi, '<br>')
+      .replace(/&lt;\/div&gt;/gi, '')
+      .replace(/&lt;(?:b|strong)&gt;/gi, '<strong>')
+      .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
+      .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
+      .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
+      .replace(/&lt;u&gt;/gi, '<u>')
+      .replace(/&lt;\/u&gt;/gi, '</u>')
+      .replace(/&lt;sup&gt;/gi, '<sup>')
+      .replace(/&lt;\/sup&gt;/gi, '</sup>')
+      .replace(/&lt;sub&gt;/gi, '<sub>')
+      .replace(/&lt;\/sub&gt;/gi, '</sub>');
+
+    // Remove qualquer tag customizada restante
+    safe = safe.replace(
+      /&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
+      ''
+    );
+
+    safe = decodeCommonEntities(safe)
+      .replace(/\n+/g, '<br>')
+      .replace(/(?:<br>\s*)+<span class="v-parallel-sep"><\/span>/g, '<span class="v-parallel-sep"></span>')
+      .replace(/(<br>\s*){3,}/g, '<br><br>')
+      .replace(/^(?:<span class="v-parallel-sep"><\/span>|<br>\s*)+/, '')
+      .replace(/(<br>\s*)+$/, '')
+      .trim();
+
+    if (hasHebrewScript(safe)) {
+      safe = `<span class="v-rtl" dir="rtl">${safe}</span>`;
+    }
+  }
+
+  // Restaura Strong, Morfologia e Notas de rodapé
+  safe = safe.replace(/\u0003(\d+)\u0003/g, (_, idxStr) => {
+    const code = strongTokens[Number(idxStr)] || '';
+    return code ? `<span class="v-strong" dir="ltr" data-strong="${escapeHtml(code)}">${escapeHtml(code)}</span>` : '';
+  });
+
+  safe = safe.replace(/\u0004(\d+)\u0004/g, (_, idxStr) => {
+    const morph = morphTokens[Number(idxStr)] || '';
+    return morph ? `<span class="v-morph" dir="ltr" data-morph="${escapeHtml(morph)}">${escapeHtml(morph)}</span>` : '';
+  });
+
+  safe = restoreFootnotes(safe, footnoteLabels);
+
+  return {
+    html: safe,
+    headings,
+    footnotes
+  };
+}
+
+export const myswordBibleAdapter = {
+  formatId: 'mysword_bbl',
+  resourceKind: 'bible',
+  label: 'Bíblia MySword (.bbl.mybible)',
+  extensions: ['.bbl.mybible'],
+
+  async getAvailableBooks(modulePath) {
+    const res = await nativeBridge.queryModule(
+      modulePath,
+      'SELECT DISTINCT Book FROM Bible ORDER BY Book ASC'
+    );
+    const rows = Array.isArray(res && res.rows) ? res.rows : [];
+    return rows
+      .map((r) => Number(getRowField(r, 'book')))
+      .filter((n) => Number.isFinite(n) && n > 0);
+  },
+
+  async getChaptersForBook(modulePath, bookId) {
+    const res = await nativeBridge.queryModule(
+      modulePath,
+      'SELECT DISTINCT Chapter FROM Bible WHERE Book = ? ORDER BY Chapter ASC',
+      [Number(bookId)]
+    );
+    const rows = Array.isArray(res && res.rows) ? res.rows : [];
+    return rows
+      .map((r) => Number(getRowField(r, 'chapter')))
+      .filter((n) => Number.isFinite(n) && n > 0);
+  },
+
+  async getChapterVerses(modulePath, bookId, chapter, options = {}) {
+    const res = await nativeBridge.queryModule(
+      modulePath,
+      'SELECT Verse, Scripture FROM Bible WHERE Book = ? AND Chapter = ? ORDER BY Verse ASC',
+      [Number(bookId), Number(chapter)]
+    );
+    const rows = Array.isArray(res && res.rows) ? res.rows : [];
+
+    return rows.map((row) => {
+      const verseNum = Number(getRowField(row, 'verse')) || 0;
+      const raw = String(getRowField(row, 'scripture') || '');
+      const parsed = formatMySwordScripture(raw, { ...options, verseNum });
+      return {
+        book: Number(bookId),
+        chapter: Number(chapter),
+        verse: verseNum,
+        raw,
+        html: parsed.html,
+        headings: parsed.headings,
+        footnotes: parsed.footnotes
+      };
+    });
+  }
+};
