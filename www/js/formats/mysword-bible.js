@@ -8,6 +8,10 @@ import {
   isTothtTaggedText,
   formatTothtHtml
 } from './linguistic-totht.js';
+import {
+  isShebanqBhsText,
+  formatShebanqBhsHtml
+} from './linguistic-shebanq.js';
 
 function escapeHtml(str) {
   return String(str || '')
@@ -80,6 +84,13 @@ function decodeCommonEntities(str) {
     .replace(/&(?:amp;)?raquo;/gi, '»');
 }
 
+function restoreFootnotes(html) {
+  return String(html || '').replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
+    const idx = Number(idxStr);
+    return `<button type="button" class="v-fn-btn" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">*</button>`;
+  });
+}
+
 export function formatMySwordScripture(rawText, options = {}) {
   const showStrongs = Boolean(options.showStrongs);
   const showMorph = Boolean(options.showMorph);
@@ -110,13 +121,19 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   // Módulos morfológicos completos tipo Tyndale TOTHT (<Hb>...<W>...<WT...><T><ST><Lemma><Tr></T>)
   if (isTothtTaggedText(text)) {
-    let tothtHtml = formatTothtHtml(decodeCommonEntities(text), options.verseNum);
-    tothtHtml = tothtHtml.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
-      const idx = Number(idxStr);
-      return `<button type="button" class="v-fn-btn" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">*</button>`;
-    });
+    const tothtHtml = formatTothtHtml(decodeCommonEntities(text), options.verseNum);
     return {
-      html: tothtHtml,
+      html: restoreFootnotes(tothtHtml),
+      headings,
+      footnotes
+    };
+  }
+
+  // Módulos BHS Enhanced / SHEBANQ (registros delimitados por 「<w>...<w>」)
+  if (isShebanqBhsText(text)) {
+    const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum);
+    return {
+      html: restoreFootnotes(shebanqHtml),
       headings,
       footnotes
     };
@@ -244,10 +261,7 @@ export function formatMySwordScripture(rawText, options = {}) {
     return morph ? `<span class="v-morph" dir="ltr" data-morph="${escapeHtml(morph)}">${escapeHtml(morph)}</span>` : '';
   });
 
-  safe = safe.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
-    const idx = Number(idxStr);
-    return `<button type="button" class="v-fn-btn" data-fn-idx="${idx}" aria-label="Ver nota de rodapé">*</button>`;
-  });
+  safe = restoreFootnotes(safe);
 
   return {
     html: safe,
