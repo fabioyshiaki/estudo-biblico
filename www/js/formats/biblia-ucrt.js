@@ -19,10 +19,20 @@ const UCRT_CSS = `
   --ucrt-ref-av-bg: rgba(161, 82, 11, 0.11);
   --ucrt-ref-bg-fg: #6b3fa0;
   --ucrt-ref-bg-bg: rgba(107, 63, 160, 0.10);
+  --ucrt-ref-proph-fg: #9d176b;
+  --ucrt-ref-proph-bg: rgba(157, 23, 107, 0.10);
+  --ucrt-ref-contrast-fg: #b42318;
+  --ucrt-ref-contrast-bg: rgba(180, 35, 24, 0.10);
+  --ucrt-ref-type-fg: #0e7490;
+  --ucrt-ref-type-bg: rgba(14, 116, 144, 0.10);
+  --ucrt-ref-quote-fg: #4338ca;
+  --ucrt-ref-quote-bg: rgba(67, 56, 202, 0.10);
   --ucrt-strong-fg: #2b4c9b;
   --ucrt-strong-bg: rgba(43, 76, 155, 0.10);
   --ucrt-fs-fg: #0f7068;
   --ucrt-fs-bg: rgba(15, 112, 104, 0.10);
+  --ucrt-flag-fg: #5c5346;
+  --ucrt-flag-bg: rgba(92, 83, 70, 0.12);
 }
 
 :root[data-theme="light"] {
@@ -42,10 +52,20 @@ const UCRT_CSS = `
   --ucrt-ref-av-bg: rgba(180, 83, 9, 0.11);
   --ucrt-ref-bg-fg: #6d28d9;
   --ucrt-ref-bg-bg: rgba(109, 40, 217, 0.10);
+  --ucrt-ref-proph-fg: #a21caf;
+  --ucrt-ref-proph-bg: rgba(162, 28, 175, 0.10);
+  --ucrt-ref-contrast-fg: #b91c1c;
+  --ucrt-ref-contrast-bg: rgba(185, 28, 28, 0.10);
+  --ucrt-ref-type-fg: #0e7490;
+  --ucrt-ref-type-bg: rgba(14, 116, 144, 0.10);
+  --ucrt-ref-quote-fg: #4338ca;
+  --ucrt-ref-quote-bg: rgba(67, 56, 202, 0.10);
   --ucrt-strong-fg: #2648a1;
   --ucrt-strong-bg: rgba(38, 72, 161, 0.10);
   --ucrt-fs-fg: #0d736b;
   --ucrt-fs-bg: rgba(13, 115, 107, 0.10);
+  --ucrt-flag-fg: #475569;
+  --ucrt-flag-bg: rgba(71, 85, 105, 0.12);
 }
 
 :root[data-theme="sepia"] {
@@ -65,10 +85,20 @@ const UCRT_CSS = `
   --ucrt-ref-av-bg: rgba(153, 78, 12, 0.12);
   --ucrt-ref-bg-fg: #663d94;
   --ucrt-ref-bg-bg: rgba(102, 61, 148, 0.10);
+  --ucrt-ref-proph-fg: #941b66;
+  --ucrt-ref-proph-bg: rgba(148, 27, 102, 0.11);
+  --ucrt-ref-contrast-fg: #a6261d;
+  --ucrt-ref-contrast-bg: rgba(166, 38, 29, 0.11);
+  --ucrt-ref-type-fg: #126a80;
+  --ucrt-ref-type-bg: rgba(18, 106, 128, 0.11);
+  --ucrt-ref-quote-fg: #3f36ad;
+  --ucrt-ref-quote-bg: rgba(63, 54, 173, 0.10);
   --ucrt-strong-fg: #2d4c8f;
   --ucrt-strong-bg: rgba(45, 76, 143, 0.10);
   --ucrt-fs-fg: #156960;
   --ucrt-fs-bg: rgba(21, 105, 96, 0.11);
+  --ucrt-flag-fg: #5e4f3c;
+  --ucrt-flag-bg: rgba(94, 79, 60, 0.13);
 }
 
 :root[data-theme="dark"] {
@@ -88,10 +118,20 @@ const UCRT_CSS = `
   --ucrt-ref-av-bg: rgba(244, 178, 89, 0.13);
   --ucrt-ref-bg-fg: #c29dff;
   --ucrt-ref-bg-bg: rgba(194, 157, 255, 0.13);
+  --ucrt-ref-proph-fg: #f472c4;
+  --ucrt-ref-proph-bg: rgba(244, 114, 196, 0.14);
+  --ucrt-ref-contrast-fg: #fb7185;
+  --ucrt-ref-contrast-bg: rgba(251, 113, 133, 0.14);
+  --ucrt-ref-type-fg: #38bdf8;
+  --ucrt-ref-type-bg: rgba(56, 189, 248, 0.14);
+  --ucrt-ref-quote-fg: #a5b4fc;
+  --ucrt-ref-quote-bg: rgba(165, 180, 252, 0.14);
   --ucrt-strong-fg: #93b4ff;
   --ucrt-strong-bg: rgba(147, 180, 255, 0.13);
   --ucrt-fs-fg: #5cd6c9;
   --ucrt-fs-bg: rgba(92, 214, 201, 0.13);
+  --ucrt-flag-fg: #cbd5e1;
+  --ucrt-flag-bg: rgba(203, 213, 225, 0.14);
 }
 
 .verse-text .ucrt-wrap {
@@ -244,6 +284,40 @@ const UCRT_CSS = `
   background: var(--ucrt-ref-bg-bg);
 }
 
+.verse-text .ucrt-ref--proph {
+  color: var(--ucrt-ref-proph-fg);
+  background: var(--ucrt-ref-proph-bg);
+}
+
+.verse-text .ucrt-ref--contrast {
+  color: var(--ucrt-ref-contrast-fg);
+  background: var(--ucrt-ref-contrast-bg);
+}
+
+.verse-text .ucrt-ref--type {
+  color: var(--ucrt-ref-type-fg);
+  background: var(--ucrt-ref-type-bg);
+}
+
+.verse-text .ucrt-ref--quote {
+  color: var(--ucrt-ref-quote-fg);
+  background: var(--ucrt-ref-quote-bg);
+}
+
+.verse-text .ucrt-flag {
+  display: inline-block;
+  padding: 0 4px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background: var(--ucrt-flag-bg);
+  color: var(--ucrt-flag-fg);
+  font-family: var(--font-ui);
+  font-size: 0.74em;
+  font-weight: 700;
+  line-height: 1.35;
+  vertical-align: baseline;
+}
+
 .verse-text .ucrt-strong-wrap {
   display: inline-flex;
   align-items: baseline;
@@ -282,9 +356,31 @@ const UCRT_CSS = `
 }
 `;
 
+const UCRT_BOOK_CODES =
+  '(?:[123]\\s*)?(?:' +
+  'Gên|Gn|Gen|Êx|Ex|Exo|Lv|Lev|Nm|Num|Dt|Deu|Js|Jos|Jz|Jdg|Rt|Rth|' +
+  'Sm|Sam|Rs|Ki|Cr|Ch|Ed|Ezr|Ne|Neh|Et|Est|Jó|Job|Sl|Ps|Psa|Pv|Pro|' +
+  'Ec|Ecc|Ct|Son|Is|Isa|Jr|Jer|Lm|Lam|Ez|Eze|Dn|Dan|Os|Hos|Jl|Joe|' +
+  'Am|Amo|Ob|Oba|Jn|Jon|Mq|Mic|Na|Nah|Hc|Hab|Sf|Zep|Ag|Hag|Zc|Zec|Ml|Mal|' +
+  'Mt|Mat|Mc|Mar|Lc|Luk|Jo|Joh|At|Act|Rm|Rom|Co|Gl|Gal|Ef|Eph|Fp|Php|' +
+  'Cl|Col|Ts|Th|Tm|Ti|Tt|Tit|Fm|Phm|Hb|Heb|Tg|Jas|Pe|Jd|Jud|Ap|Rev' +
+  ')\\.?';
+
+const UCRT_PLAIN_SYM_TOKEN = '(?:&lt;rp\\s+|&lt;a\\s+|=&gt;|&gt;|[+*%=#$])';
+const UCRT_PLAIN_REF_RE = new RegExp(
+  `(^|[\\s(\\[;,])((?:${UCRT_PLAIN_SYM_TOKEN}){0,5})(${UCRT_BOOK_CODES}\\s+\\d+:\\d+(?:\\s*[-–—]\\s*\\d+(?::\\d+)?)?(?:\\s*,\\s*\\d+(?:\\s*[-–—]\\s*\\d+)?)*)(?=$|[\\s.,;:()\\]])`,
+  'g'
+);
+
+const UCRT_TAG_SYM_TOKEN = '(?:\\u0005LT(?:rp|a)\\u0006\\s+|\\u0005GT\\u0006|=&gt;|&gt;|[+*%=#$])';
+
 function ensureUcrtStyles() {
   if (typeof document === 'undefined') return;
-  if (document.getElementById(UCRT_STYLE_ID)) return;
+  const existing = document.getElementById(UCRT_STYLE_ID);
+  if (existing) {
+    existing.textContent = UCRT_CSS;
+    return;
+  }
   const style = document.createElement('style');
   style.id = UCRT_STYLE_ID;
   style.textContent = UCRT_CSS;
@@ -320,8 +416,19 @@ export function isBibliaUcrt(modulePath) {
 
 function isChronologyText(str) {
   const clean = cleanSpaces(str);
-  if (!clean || clean.length > 48) return false;
-  return /^(?:A\.?C\.?|D\.?C\.?|B\.?C\.?|A\.?D\.?|A\.?M\.?|An\.?Ex\.?Is\.?)\s*[\d.,\-–—\s]+$/i.test(clean);
+  if (!clean || clean.length > 95) return false;
+  if (!/^(?:c\.?\s*)?(?:A\.?\s*M\.?|A\.?\s*C\.?|D\.?\s*C\.?|B\.?\s*C\.?|A\.?\s*D\.?|An\.?\s*Ex\.?\s*Is\.?)\s*\d/i.test(clean)) {
+    return false;
+  }
+  if (/<(?:R|VD|AV|BG|ST|WORD)>/i.test(clean) || /\d+:\d+/.test(clean)) {
+    return false;
+  }
+  return true;
+}
+
+function isStandaloneVerseRef(str) {
+  const clean = cleanSpaces(String(str || '').replace(/<[^>]*>/g, ''));
+  return /^(?:[123]\s*)?[A-Za-zÀ-ÿ]{2,5}\.?\s+\d+:\d+$/.test(clean);
 }
 
 function formatInlineScripture(rawText) {
@@ -345,12 +452,95 @@ function formatInlineScripture(rawText) {
   return safe.replace(/\s+/g, ' ').trim();
 }
 
+function decodeSymbolForLogic(symHtml) {
+  return String(symHtml || '')
+    .replace(/\u0005GT\u0006/g, '>')
+    .replace(/\u0005LT(rp|a)\u0006/g, '<$1')
+    .replace(/&gt;/gi, '>')
+    .replace(/&lt;/gi, '<');
+}
+
+function recordUcrtSymbols(symPlain, symbolsUsed, defaultSymbol = '') {
+  const s = String(symPlain || '').trim();
+  if (!s) {
+    if (defaultSymbol) symbolsUsed.add(defaultSymbol);
+    return;
+  }
+  if (s.includes('%')) symbolsUsed.add('%');
+  if (s.includes('$')) symbolsUsed.add('$');
+  if (s.includes('=>')) {
+    symbolsUsed.add('=>');
+  } else if (s.includes('=')) {
+    symbolsUsed.add('=');
+  }
+  if (s.includes('<rp')) symbolsUsed.add('<rp');
+  if (s.includes('<a')) symbolsUsed.add('<a');
+  if (s.includes('>') && !s.includes('=>')) symbolsUsed.add('>');
+  if (s.includes('#')) symbolsUsed.add('#');
+  if (s.includes('+')) symbolsUsed.add('+');
+  if (s.includes('**')) {
+    symbolsUsed.add('**');
+  } else if (s.includes('*')) {
+    symbolsUsed.add('*');
+  }
+  if (s.includes('+*') || s.includes('*+') || s.includes('+**')) {
+    symbolsUsed.add('+*');
+  }
+}
+
+function classifyUcrtRef(symPlain, tagModifier = '') {
+  if (tagModifier === 'bg') return 'bg';
+  const s = String(symPlain || '');
+  if (s.includes('%')) return 'contrast';
+  if (s.includes('$')) return 'proph';
+  if (s.includes('=')) return 'type';
+  if (s.includes('>') || s.includes('<a') || s.includes('<rp') || s.includes('#')) return 'quote';
+  if (s.includes('+')) return 'av';
+  if (s.includes('*')) return 'vd';
+  return tagModifier || 'r';
+}
+
+function buildRefSpanHtml(symRaw, refText, tagModifier, symbolsUsed) {
+  const symPlain = decodeSymbolForLogic(symRaw);
+  const symDisplay = escapeHtml(symPlain);
+  const defaultSym = tagModifier === 'bg' ? 'BG' : tagModifier === 'vd' ? '*' : tagModifier === 'av' ? '+' : '';
+  recordUcrtSymbols(symPlain, symbolsUsed, defaultSym);
+  if (tagModifier === 'bg') symbolsUsed.add('BG');
+  const cssMod = classifyUcrtRef(symPlain, tagModifier);
+  return `<span class="ucrt-ref ucrt-ref--${cssMod}" data-ref="${refText}">${symDisplay}${refText}</span>`;
+}
+
+function transformPlainTextSegments(html, transformFn) {
+  const parts = String(html || '').split(/(<[^>]+>)/g);
+  let skipDepth = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    if (part.startsWith('<')) {
+      if (/^<span\b[^>]*\bucrt-(?:ref|strong|fs|flag)\b/i.test(part)) {
+        skipDepth++;
+      } else if (skipDepth > 0 && /^<span\b/i.test(part)) {
+        skipDepth++;
+      } else if (skipDepth > 0 && /^<\/span>/i.test(part)) {
+        skipDepth--;
+      }
+      continue;
+    }
+    if (skipDepth === 0) {
+      parts[i] = transformFn(part);
+    }
+  }
+  return parts.join('');
+}
+
 function formatUcrtBody(rawBody, symbolsUsed) {
   let refCount = 0;
 
-  // Protege marcadores literais da UCRT "<a " (alusão) e "<rp " (citação do Pentateuco)
+  // Protege entidades/símbolos literais da UCRT (&gt;, &lt;a, &lt;rp, <a, <rp) antes de escapar HTML
   const protectedRaw = String(rawBody || '')
-    .replace(/(^|[\s,;(\[])<(a|rp)(?=\s)/g, '$1\u0005$2\u0006');
+    .replace(/&(?:amp;)?gt;/gi, '\u0005GT\u0006')
+    .replace(/&(?:amp;)?lt;(rp|a)(?=\s)/gi, '\u0005LT$1\u0006')
+    .replace(/(^|[\s,;(\[])<(rp|a)(?=\s+(?:[123]\s*)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ<])/g, '$1\u0005LT$2\u0006');
 
   let safe = escapeHtml(protectedRaw);
 
@@ -383,30 +573,24 @@ function formatUcrtBody(rawBody, symbolsUsed) {
     return `<span class="ucrt-strong-wrap"><span class="v-strong ucrt-strong" dir="ltr" data-strong="${code}">${code}</span></span>`;
   });
 
-  // Helper para referências (<VD>, <AV>, <BG>, <R>)
-  const replaceRefTag = (tagName, cssModifier, defaultSymbol) => {
+  // Referências com tags conhecidas (<VD>, <AV>, <BG>, <R>), aceitando combinações de símbolos antes da tag
+  const replaceRefTag = (tagName, tagModifier) => {
     const re = new RegExp(
-      `((?:\\+\\*\\*|\\*\\+|\\+\\*|\\*\\*|\\*|\\+|%|=&gt;|=|&gt;|\\$|#)?)\\s*&lt;${tagName}&gt;([\\s\\S]*?)&lt;\\/?${tagName}&gt;`,
+      `((?:${UCRT_TAG_SYM_TOKEN}){0,5})\\s*&lt;${tagName}&gt;([\\s\\S]*?)&lt;\\/?${tagName}&gt;`,
       'gi'
     );
     safe = safe.replace(re, (_, symRaw, refRaw) => {
       const refText = cleanSpaces(refRaw);
       if (!refText) return '';
       refCount++;
-      const sym = symRaw || '';
-      if (sym) {
-        symbolsUsed.add(sym.replace(/&gt;/g, '>'));
-      } else if (defaultSymbol) {
-        symbolsUsed.add(defaultSymbol);
-      }
-      return `<span class="ucrt-ref ucrt-ref--${cssModifier}" data-ref="${refText}">${sym}${refText}</span>`;
+      return buildRefSpanHtml(symRaw || '', refText, tagModifier, symbolsUsed);
     });
   };
 
-  replaceRefTag('VD', 'vd', '*');
-  replaceRefTag('AV', 'av', '+');
-  replaceRefTag('BG', 'bg', 'BG');
-  replaceRefTag('R', 'r', '');
+  replaceRefTag('VD', 'vd');
+  replaceRefTag('AV', 'av');
+  replaceRefTag('BG', 'bg');
+  replaceRefTag('R', 'r');
 
   // Remove quaisquer outras tags customizadas desconhecidas
   safe = safe.replace(
@@ -414,21 +598,52 @@ function formatUcrtBody(rawBody, symbolsUsed) {
     ''
   );
 
-  // Restaura marcadores literais "<a" e "<rp"
-  safe = safe.replace(/\u0005(a|rp)\u0006/g, (_, sym) => {
-    symbolsUsed.add(`<${sym}`);
-    return `&lt;${sym}`;
+  // Restaura marcadores literais protegidos (> , <a , <rp)
+  safe = safe
+    .replace(/\u0005GT\u0006/g, '&gt;')
+    .replace(/\u0005LT(rp|a)\u0006/g, '&lt;$1');
+
+  // Captura referências bíblicas restantes em texto puro (com símbolos $, %, =, >, *+, +$, %+*, ou sem tag)
+  safe = transformPlainTextSegments(safe, (chunk) => {
+    let out = chunk.replace(UCRT_PLAIN_REF_RE, (full, lead, symRaw, refRaw) => {
+      const refText = cleanSpaces(refRaw);
+      if (!refText) return full;
+      refCount++;
+      return `${lead}${buildRefSpanHtml(symRaw || '', refText, '', symbolsUsed)}`;
+    });
+
+    // Destaca códigos de Figuras de Linguagem (FS148, FS16, FS171G2)
+    out = out.replace(/(^|[\s(;,])(FS\d+[A-Z0-9]*)\b/g, (_, lead, fsCode) => {
+      symbolsUsed.add('FS');
+      return `${lead}<span class="ucrt-fs">${fsCode}</span>`;
+    });
+
+    return out;
   });
 
-  // Destaca códigos de Figuras de Linguagem (FS148, FS16, FS121A3)
-  safe = safe.replace(/(^|[\s(;,])(FS\d+[A-Z0-9]*)\b/g, (_, lead, fsCode) => {
-    symbolsUsed.add('FS');
-    return `${lead}<span class="ucrt-fs">${fsCode}</span>`;
-  });
+  // Destaca marcadores curtos g / h / n logo após uma referência (ex.: Tg 1:23 g, Ap 22:6 g, n)
+  safe = safe.replace(
+    /(<span class="ucrt-ref\b[^>]*>[\s\S]*?<\/span>)\s+((?:g|h|n)(?:\s*,\s*(?:g|h|n))?)(?=$|[\s.,;:()\]])/g,
+    (_, refSpan, flagsRaw) => {
+      const flags = flagsRaw.split(/\s*,\s*/).filter(Boolean);
+      const renderedFlags = flags
+        .map((f) => {
+          symbolsUsed.add(f);
+          const title = f === 'g'
+            ? 'Mesma palavra no grego original'
+            : f === 'h'
+              ? 'Mesma palavra no hebraico original'
+              : 'Há nota explicativa nesta passagem';
+          return `<span class="ucrt-flag" title="${title}">${f}</span>`;
+        })
+        .join('');
+      return `${refSpan} ${renderedFlags}`;
+    }
+  );
 
   // Detecta se a caixa é composta quase só por referências
   const plainWithoutRefs = safe
-    .replace(/<span class="ucrt-ref[\s\S]*?<\/span>/g, '')
+    .replace(/<span class="ucrt-(?:ref|flag)\b[\s\S]*?<\/span>/g, '')
     .replace(/<[^>]*>/g, '')
     .replace(/[\s.,;:()\-–—]+/g, '')
     .trim();
@@ -449,55 +664,64 @@ function formatUcrtBody(rawBody, symbolsUsed) {
 function buildLegendText(symbolsUsed, hasChrono) {
   const lines = [];
   if (symbolsUsed.has('*')) {
-    lines.push('• * (verde): Referência muito clara, com conexão imediata ao versículo.');
+    lines.push('• [Verde] * — Referência muito clara, com conexão imediata ao versículo.');
   }
   if (symbolsUsed.has('**')) {
-    lines.push('• ** (verde): Referência muito significativa e criticamente clara.');
+    lines.push('• [Verde] ** — Referência muito significativa e criticamente clara.');
   }
   if (symbolsUsed.has('+')) {
-    lines.push('• + (âmbar): "Encontre mais aqui" — aponta para outro ponto principal de referências sobre o mesmo assunto (estudo em camadas).');
+    lines.push('• [Âmbar] + — "Encontre mais aqui": ponto principal com mais referências sobre o tema.');
   }
-  if (symbolsUsed.has('+*') || symbolsUsed.has('*+') || symbolsUsed.has('+**')) {
-    lines.push('• +* / *+ / +**: Referência clara que também serve como ponto principal de aprofundamento.');
-  }
-  if (symbolsUsed.has('BG')) {
-    lines.push('• Roxo (nota): Referência acompanhada de nota explicativa importante na UCRT.');
-  }
-  if (symbolsUsed.has('+S#')) {
-    lines.push('• +S#: Número Strong com todas as ocorrências relevantes/paralelas da palavra original.');
-  }
-  if (symbolsUsed.has('*S#')) {
-    lines.push('• *S#: Número Strong com todas as ocorrências da palavra original.');
-  }
-  if (symbolsUsed.has('S#')) {
-    lines.push('• S#: Número lexical da Concordância de Strong (hebraico/grego).');
-  }
-  if (symbolsUsed.has('FS')) {
-    lines.push('• FS (verde-petróleo): Código de Figura de Linguagem segundo E. W. Bullinger (ex.: FS148 = Polissíndeto).');
-  }
-  if (symbolsUsed.has('%')) {
-    lines.push('• %: Referência de contraste ou assunto oposto.');
-  }
-  if (symbolsUsed.has('=') || symbolsUsed.has('=>')) {
-    lines.push('• = / =>: Tipo ou antítipo (=> identificado pela própria Escritura).');
-  }
-  if (symbolsUsed.has('>')) {
-    lines.push('• >: Citação entre o Antigo e o Novo Testamento.');
-  }
-  if (symbolsUsed.has('<a')) {
-    lines.push('• <a: Alusão a outra passagem bíblica.');
-  }
-  if (symbolsUsed.has('<rp')) {
-    lines.push('• <rp: Citação do Pentateuco nos profetas.');
+  if (symbolsUsed.has('+*')) {
+    lines.push('• [Âmbar] +* / *+ / +** — Referência clara que também serve como ponto principal de aprofundamento.');
   }
   if (symbolsUsed.has('$')) {
-    lines.push('• $: Cumprimento de profecia.');
+    lines.push('• [Magenta] $ — Cumprimento de profecia (pode combinar com * e +).');
+  }
+  if (symbolsUsed.has('%')) {
+    lines.push('• [Vermelho] % — Contraste ou aspecto oposto ao assunto (pode combinar com + e *).');
+  }
+  if (symbolsUsed.has('=') || symbolsUsed.has('=>')) {
+    lines.push('• [Ciano] = / => — Tipo ou antítipo (=> confirmado pela própria Escritura).');
+  }
+  if (symbolsUsed.has('>')) {
+    lines.push('• [Índigo] > — Citação direta entre o Antigo e o Novo Testamento.');
+  }
+  if (symbolsUsed.has('<a')) {
+    lines.push('• [Índigo] <a — Alusão a outra passagem bíblica.');
+  }
+  if (symbolsUsed.has('<rp')) {
+    lines.push('• [Índigo] <rp — Citação do Pentateuco nos livros proféticos.');
   }
   if (symbolsUsed.has('#')) {
-    lines.push('• #: Passagem paralela estrita.');
+    lines.push('• [Índigo] # — Passagem paralela estrita.');
+  }
+  if (symbolsUsed.has('BG')) {
+    lines.push('• [Violeta] nota — Referência acompanhada de nota explicativa importante na UCRT.');
+  }
+  if (symbolsUsed.has('g')) {
+    lines.push('• [Etiqueta] g — Mesma palavra no grego original.');
+  }
+  if (symbolsUsed.has('h')) {
+    lines.push('• [Etiqueta] h — Mesma palavra no hebraico original.');
+  }
+  if (symbolsUsed.has('n')) {
+    lines.push('• [Etiqueta] n — Há uma nota explicativa na passagem indicada.');
+  }
+  if (symbolsUsed.has('+S#')) {
+    lines.push('• [Azul] +S# — Número Strong com todas as ocorrências relevantes/paralelas.');
+  }
+  if (symbolsUsed.has('*S#')) {
+    lines.push('• [Azul] *S# — Número Strong com todas as ocorrências da palavra original.');
+  }
+  if (symbolsUsed.has('S#')) {
+    lines.push('• [Azul] S# — Número lexical da Concordância de Strong (hebraico/grego).');
+  }
+  if (symbolsUsed.has('FS')) {
+    lines.push('• [Verde-petróleo] FS — Figura de Linguagem (classificação de E. W. Bullinger).');
   }
   if (hasChrono) {
-    lines.push('• A.C. / A.M.: Cronologia bíblica (A.C. = Antes de Cristo; A.M. = Anno Mundi).');
+    lines.push('• [Cronologia] A.M. = Ano do Mundo; A.C. = Antes de Cristo; AD = Depois de Cristo; An. Ex. Is. = Anos desde o Êxodo.');
   }
   return lines.join('\n');
 }
@@ -552,6 +776,11 @@ export function formatUcrtHtml(rawText, options = {}) {
       continue;
     }
 
+    if (!keyword && isStandaloneVerseRef(boxInner)) {
+      if (!vtRef) vtRef = cleanSpaces(boxInner.replace(/<[^>]*>/g, ''));
+      continue;
+    }
+
     const formatted = formatUcrtBody(boxInner, symbolsUsed);
     if (!keyword && !formatted.html) continue;
 
@@ -579,11 +808,17 @@ export function formatUcrtHtml(rawText, options = {}) {
   // Eventual texto restante fora de <BOX>
   const leftoverRaw = working.replace(boxRegex, '').trim();
   if (leftoverRaw) {
-    const leftoverFormatted = formatUcrtBody(leftoverRaw, symbolsUsed);
-    if (leftoverFormatted.html) {
-      boxCards.push(
-        `<div class="ucrt-box"><div class="ucrt-box-plain">${leftoverFormatted.html}</div></div>`
-      );
+    if (isStandaloneVerseRef(leftoverRaw)) {
+      if (!vtRef) vtRef = cleanSpaces(leftoverRaw.replace(/<[^>]*>/g, ''));
+    } else if (isChronologyText(leftoverRaw)) {
+      chronos.push(cleanSpaces(leftoverRaw).replace(/\.$/, ''));
+    } else {
+      const leftoverFormatted = formatUcrtBody(leftoverRaw, symbolsUsed);
+      if (leftoverFormatted.html) {
+        boxCards.push(
+          `<div class="ucrt-box"><div class="ucrt-box-plain">${leftoverFormatted.html}</div></div>`
+        );
+      }
     }
   }
 
