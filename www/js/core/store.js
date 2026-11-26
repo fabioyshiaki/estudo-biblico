@@ -9,7 +9,8 @@ const DEFAULT_PREFS = Object.freeze({
   fontFamily: 'serif',
   justifyText: false,
   showStrongs: false,
-  showMorph: false
+  showMorph: false,
+  bibleSortBy: 'abbr'
 });
 
 function loadPersisted() {
@@ -21,6 +22,26 @@ function loadPersisted() {
   } catch (err) {
     return {};
   }
+}
+
+function compareBibles(a, b, sortBy) {
+  const favDiff = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
+  if (favDiff !== 0) return favDiff;
+
+  const primaryA = sortBy === 'title' ? (a.title || a.abbr || '') : (a.abbr || a.title || '');
+  const primaryB = sortBy === 'title' ? (b.title || b.abbr || '') : (b.abbr || b.title || '');
+  const primaryDiff = String(primaryA).localeCompare(String(primaryB), 'pt-BR', {
+    sensitivity: 'base',
+    numeric: true
+  });
+  if (primaryDiff !== 0) return primaryDiff;
+
+  const secondaryA = sortBy === 'title' ? (a.abbr || '') : (a.title || '');
+  const secondaryB = sortBy === 'title' ? (b.abbr || '') : (b.title || '');
+  return String(secondaryA).localeCompare(String(secondaryB), 'pt-BR', {
+    sensitivity: 'base',
+    numeric: true
+  });
 }
 
 const persisted = loadPersisted();
@@ -96,7 +117,10 @@ export const store = {
   },
 
   getBibles() {
-    return state.modules.filter((m) => m.resourceKind === 'bible');
+    const sortBy = state.prefs.bibleSortBy === 'title' ? 'title' : 'abbr';
+    return state.modules
+      .filter((m) => m.resourceKind === 'bible')
+      .sort((a, b) => compareBibles(a, b, sortBy));
   },
 
   getActiveBible() {
