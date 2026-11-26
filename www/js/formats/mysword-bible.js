@@ -83,26 +83,28 @@ export function formatMySwordScripture(rawText, options = {}) {
     .replace(/<RX(?:(?!>|<).)*>/gi, '')
     .replace(/<\/?[a-zA-Z][a-zA-Z0-9_:-]*=(?:(?!>|<).)*\/?>/g, '');
 
-  // Captura ou remove códigos Strong (<WG>/<WH>) e Morfologia (<WT>)
+  // Captura ou remove códigos Strong simples e compostos (ex.: <WH853>, <WH4480＋H776>)
   const strongTokens = [];
   if (showStrongs) {
-    text = text.replace(/<W([GH])(\d+[a-z]?)>/gi, (_, lang, code) => {
+    text = text.replace(/<W([GH])(\d[^<>]*)>/gi, (_, lang, rest) => {
+      const normalized = `${lang.toUpperCase()}${String(rest).replace(/\uFF0B/g, '+').trim()}`;
       const idx = strongTokens.length;
-      strongTokens.push(`${lang.toUpperCase()}${code}`);
-      return `\u0003${idx}\u0003`;
+      strongTokens.push(normalized);
+      return ` \u0003${idx}\u0003`;
     });
   } else {
-    text = text.replace(/<W[GH]\d+[a-z]?>/gi, '');
+    text = text.replace(/<W[GH]\d[^<>]*>/gi, '');
   }
 
+  // Captura ou remove tags de Morfologia (<WT...>)
   const morphTokens = [];
   if (showMorph) {
     text = text.replace(/<WT([^<>]+)>/gi, (_, morph) => {
-      const clean = String(morph || '').trim();
+      const clean = String(morph || '').replace(/\s+l="[^"]*"/gi, '').trim();
       if (!clean) return '';
       const idx = morphTokens.length;
       morphTokens.push(clean);
-      return `\u0004${idx}\u0004`;
+      return ` \u0004${idx}\u0004`;
     });
   } else {
     text = text.replace(/<WT[^<>]+>/gi, '');
@@ -112,7 +114,7 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   if (isBilingualAncientText(text)) {
     // Modo bilíngue/interlinear: língua antiga (hebraico, aramaico, grego) acima da tradução
-    safe = formatInterlinearHtml(decodeCommonEntities(text));
+    safe = formatInterlinearHtml(decodeCommonEntities(text), options.verseNum);
   } else {
     safe = escapeHtml(text);
 
@@ -188,12 +190,12 @@ export function formatMySwordScripture(rawText, options = {}) {
   // Restaura Strong, Morfologia e Notas de rodapé
   safe = safe.replace(/\u0003(\d+)\u0003/g, (_, idxStr) => {
     const code = strongTokens[Number(idxStr)] || '';
-    return code ? `<span class="v-strong" data-strong="${code}">${code}</span>` : '';
+    return code ? `<span class="v-strong" dir="ltr" data-strong="${escapeHtml(code)}">${escapeHtml(code)}</span>` : '';
   });
 
   safe = safe.replace(/\u0004(\d+)\u0004/g, (_, idxStr) => {
     const morph = morphTokens[Number(idxStr)] || '';
-    return morph ? `<span class="v-morph" data-morph="${escapeHtml(morph)}">${escapeHtml(morph)}</span>` : '';
+    return morph ? `<span class="v-morph" dir="ltr" data-morph="${escapeHtml(morph)}">${escapeHtml(morph)}</span>` : '';
   });
 
   safe = safe.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
@@ -248,7 +250,7 @@ export const myswordBibleAdapter = {
     return rows.map((row) => {
       const verseNum = Number(getRowField(row, 'verse')) || 0;
       const raw = String(getRowField(row, 'scripture') || '');
-      const parsed = formatMySwordScripture(raw, options);
+      const parsed = formatMySwordScripture(raw, { ...options, verseNum });
       return {
         book: Number(bookId),
         chapter: Number(chapter),
