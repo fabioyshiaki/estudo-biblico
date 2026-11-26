@@ -37,9 +37,34 @@ function getRowField(row, targetLower) {
   return undefined;
 }
 
+function decodeNumericEntities(str) {
+  return String(str || '')
+    .replace(/&#(\d+);/g, (match, dec) => {
+      const code = Number(dec);
+      if (code === 39) return "'";
+      if (!Number.isFinite(code) || code < 128 || code > 0x10FFFF) return match;
+      try {
+        return String.fromCodePoint(code);
+      } catch (err) {
+        return match;
+      }
+    })
+    .replace(/&#x([0-9a-fA-F]+);/g, (match, hex) => {
+      const code = parseInt(hex, 16);
+      if (code === 0x27) return "'";
+      if (!Number.isFinite(code) || code < 128 || code > 0x10FFFF) return match;
+      try {
+        return String.fromCodePoint(code);
+      } catch (err) {
+        return match;
+      }
+    });
+}
+
 function decodeCommonEntities(str) {
   return String(str || '')
     .replace(/&(?:amp;)?nbsp;/gi, ' ')
+    .replace(/&(?:amp;)?middot;/gi, '·')
     .replace(/&(?:amp;)?mdash;/gi, '—')
     .replace(/&(?:amp;)?ndash;/gi, '–')
     .replace(/&(?:amp;)?hellip;/gi, '…')
@@ -55,7 +80,8 @@ export function formatMySwordScripture(rawText, options = {}) {
   const showStrongs = Boolean(options.showStrongs);
   const showMorph = Boolean(options.showMorph);
 
-  let text = String(rawText || '').replace(/\r\n/g, '\n');
+  // Decodifica entidades numéricas não-ASCII (hebraico, grego, aramaico, ponto médio) sem abrir brecha de tags
+  let text = decodeNumericEntities(String(rawText || '').replace(/\r\n/g, '\n'));
 
   // Remove blocos perigosos antes de qualquer conversão
   text = text.replace(/<(script|style|iframe)[\s\S]*?<\/\1>/gi, '');
@@ -83,11 +109,13 @@ export function formatMySwordScripture(rawText, options = {}) {
     .replace(/<RX(?:(?!>|<).)*>/gi, '')
     .replace(/<\/?[a-zA-Z][a-zA-Z0-9_:-]*=(?:(?!>|<).)*\/?>/g, '');
 
-  // Captura ou remove códigos Strong simples e compostos (ex.: <WH853>, <WH4480＋H776>)
+  // Captura ou remove códigos Strong simples e compostos (ignora <WH0>/<WG0> vazios)
   const strongTokens = [];
   if (showStrongs) {
     text = text.replace(/<W([GH])(\d[^<>]*)>/gi, (_, lang, rest) => {
-      const normalized = `${lang.toUpperCase()}${String(rest).replace(/\uFF0B/g, '+').trim()}`;
+      const cleaned = String(rest).replace(/\uFF0B/g, '+').trim();
+      if (!cleaned || cleaned === '0') return '';
+      const normalized = `${lang.toUpperCase()}${cleaned}`;
       const idx = strongTokens.length;
       strongTokens.push(normalized);
       return ` \u0003${idx}\u0003`;
