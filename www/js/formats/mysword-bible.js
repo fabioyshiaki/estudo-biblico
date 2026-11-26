@@ -12,6 +12,10 @@ import {
   isShebanqBhsText,
   formatShebanqBhsHtml
 } from './linguistic-shebanq.js';
+import {
+  isBibliaReveladaOmega,
+  processBibliaReveladaOmega
+} from './biblia-revelada-omega.js';
 
 const NAMED_ENTITIES = {
   nbsp: ' ', middot: '·', mdash: '—', ndash: '–', hellip: '…',
@@ -288,6 +292,14 @@ export function formatMySwordScripture(rawText, options = {}) {
     return embeddedTokens.join('');
   });
 
+  // Regra exclusiva para o módulo "Bíblia Revelada Ômega"
+  let omegaTrailingRef = '';
+  if (isBibliaReveladaOmega(options.modulePath)) {
+    const omegaRes = processBibliaReveladaOmega(text, options, footnotes, footnoteLabels);
+    text = omegaRes.text;
+    omegaTrailingRef = omegaRes.trailingRef;
+  }
+
   // Módulos morfológicos completos tipo Tyndale TOTHT
   if (isTothtTaggedText(text)) {
     const tothtHtml = formatTothtHtml(decodeCommonEntities(text), options.verseNum);
@@ -373,6 +385,10 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   safe = restoreFootnotes(safe, footnoteLabels);
 
+  if (omegaTrailingRef) {
+    safe += ` <span class="v-ref-tag" data-ref="${escapeHtml(omegaTrailingRef)}">${escapeHtml(omegaTrailingRef)}</span>`;
+  }
+
   return {
     html: safe,
     headings,
@@ -420,7 +436,13 @@ export const myswordBibleAdapter = {
     return rows.map((row) => {
       const verseNum = Number(getRowField(row, 'verse')) || 0;
       const raw = String(getRowField(row, 'scripture') || '');
-      const parsed = formatMySwordScripture(raw, { ...options, verseNum });
+      const parsed = formatMySwordScripture(raw, {
+        ...options,
+        modulePath,
+        bookId: Number(bookId),
+        chapter: Number(chapter),
+        verseNum
+      });
       return {
         book: Number(bookId),
         chapter: Number(chapter),
