@@ -132,6 +132,15 @@ function restoreFootnotes(html, footnoteLabels = []) {
     });
 }
 
+function applyPilcrowInitialBold(html) {
+  return String(html || '')
+    .replace(
+      /¶\s*((?:<[^>]+>\s*)*)([\s—–\-“”‘’"'(\[«¡¿]*)(\p{L})/gu,
+      (_, tags, punct, letter) => `${tags}${punct}<strong class="v-para-initial">${letter}</strong>`
+    )
+    .replace(/¶\s*/g, '');
+}
+
 function formatStandardInlineHtml(rawSegment) {
   let safe = escapeHtml(rawSegment);
 
@@ -181,12 +190,14 @@ function formatStandardInlineHtml(rawSegment) {
     ''
   );
 
-  return decodeCommonEntities(safe)
+  const cleaned = decodeCommonEntities(safe)
     .replace(/\n+/g, '<br>')
     .replace(/(<br>\s*){3,}/g, '<br><br>')
     .replace(/^(?:<br>\s*)+/, '')
     .replace(/(<br>\s*)+$/, '')
     .trim();
+
+  return applyPilcrowInitialBold(cleaned);
 }
 
 function formatParallelSeloHtml(rawText) {
