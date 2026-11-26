@@ -1,0 +1,251 @@
+:root,
+:root[data-theme="paper"] {
+  --tt-card-bg: #ffffff;
+  --tt-card-border: #dcd4c6;
+  --tt-orig-color: #4f2a75;
+  --tt-pr-color: #c23b2b;
+  --tt-wnum-color: #8b7f70;
+  --tt-morph-color: #16794b;
+  --tt-strong-root-bg: #e8f0fe;
+  --tt-strong-root-color: #1a5499;
+  --tt-strong-ext-bg: #f1ede4;
+  --tt-strong-ext-color: #5f5b52;
+  --tt-punct-color: #8a8377;
+  --tt-sep-color: #2f8a57;
+  --tt-c1: #8b4513;
+  --tt-c2: #b8223d;
+  --tt-c3: #1e4d9b;
+  --tt-c4: #9e4747;
+  --tt-c5: #516072;
+  --tt-c6: #914a22;
+}
+
+:root[data-theme="light"] {
+  --tt-card-bg: #ffffff;
+  --tt-card-border: #d7dee8;
+  --tt-orig-color: #4a2373;
+  --tt-pr-color: #c62828;
+  --tt-wnum-color: #7c8796;
+  --tt-morph-color: #147a4c;
+  --tt-strong-root-bg: #e7f0fe;
+  --tt-strong-root-color: #1552a3;
+  --tt-strong-ext-bg: #eef2f7;
+  --tt-strong-ext-color: #546070;
+  --tt-punct-color: #8590a0;
+  --tt-sep-color: #268953;
+  --tt-c1: #874310;
+  --tt-c2: #bd1f3c;
+  --tt-c3: #1a4ca3;
+  --tt-c4: #a34343;
+  --tt-c5: #4f5f73;
+  --tt-c6: #8f471e;
+}
+
+:root[data-theme="sepia"] {
+  --tt-card-bg: #faf4e8;
+  --tt-card-border: #d2c2a8;
+  --tt-orig-color: #542d70;
+  --tt-pr-color: #b53626;
+  --tt-wnum-color: #87765e;
+  --tt-morph-color: #1f6f46;
+  --tt-strong-root-bg: #e8e0cf;
+  --tt-strong-root-color: #254f85;
+  --tt-strong-ext-bg: #efe6d4;
+  --tt-strong-ext-color: #665845;
+  --tt-punct-color: #8b7b65;
+  --tt-sep-color: #2f7d4f;
+  --tt-c1: #7d3c11;
+  --tt-c2: #a8223a;
+  --tt-c3: #234982;
+  --tt-c4: #8f3f3f;
+  --tt-c5: #57606b;
+  --tt-c6: #82421d;
+}
+
+:root[data-theme="dark"] {
+  --tt-card-bg: #171b22;
+  --tt-card-border: #2e3542;
+  --tt-orig-color: #cbb0f7;
+  --tt-pr-color: #ff7b72;
+  --tt-wnum-color: #8b94a5;
+  --tt-morph-color: #4bd18c;
+  --tt-strong-root-bg: #1f334d;
+  --tt-strong-root-color: #8ac2ff;
+  --tt-strong-ext-bg: #232934;
+  --tt-strong-ext-color: #9ba5b8;
+  --tt-punct-color: #7c8596;
+  --tt-sep-color: #57c283;
+  --tt-c1: #e09f67;
+  --tt-c2: #ff7a90;
+  --tt-c3: #7fb4ff;
+  --tt-c4: #f08a8a;
+  --tt-c5: #a8b7cc;
+  --tt-c6: #dba074;
+}
+
+.verse-text .tt-flow {
+  gap: 8px 6px;
+  align-items: stretch;
+}
+
+.verse-text .tt-card {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 64px;
+  max-width: 235px;
+  padding: 6px 8px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--tt-card-bg);
+  border: 1px solid var(--tt-card-border);
+  text-align: center;
+}
+
+.verse-text .tt-head {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.verse-text .tt-orig {
+  font-size: 1.16em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--tt-orig-color);
+}
+
+.verse-text .tt-pr {
+  color: var(--tt-pr-color);
+  font-weight: 700;
+  padding: 0 1px;
+}
+
+.verse-text .tt-wnum {
+  font-family: var(--font-ui);
+  font-size: 0.64em;
+  font-weight: 600;
+  color: var(--tt-wnum-color);
+  unicode-bidi: isolate;
+}
+
+.verse-text .tt-morph {
+  font-family: var(--font-ui);
+  font-size: 0.66em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--tt-morph-color);
+  word-break: break-word;
+}
+
+.verse-text .tt-strongs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+}
+
+.verse-text .tt-strong {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 0.64em;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.verse-text .tt-strong.is-root {
+  background: var(--tt-strong-root-bg);
+  color: var(--tt-strong-root-color);
+  font-weight: 700;
+}
+
+.verse-text .tt-strong.is-ext {
+  background: var(--tt-strong-ext-bg);
+  color: var(--tt-strong-ext-color);
+  font-weight: 500;
+}
+
+.verse-text .tt-strong.is-punct {
+  background: transparent;
+  color: var(--tt-punct-color);
+  font-size: 0.6em;
+  padding: 0 2px;
+}
+
+.verse-text .tt-arrow {
+  font-family: var(--font-ui);
+  font-size: 0.68em;
+  color: var(--tt-wnum-color);
+  padding: 0 1px;
+}
+
+.verse-text .tt-lemmas,
+.verse-text .tt-glosses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 1px 4px;
+  font-family: var(--font-ui);
+  line-height: 1.28;
+}
+
+.verse-text .tt-lemmas {
+  margin-top: 1px;
+  font-size: 0.78em;
+}
+
+.verse-text .tt-glosses {
+  font-size: 0.71em;
+}
+
+.verse-text .tt-seg {
+  unicode-bidi: isolate;
+  word-break: break-word;
+}
+
+.verse-text .tt-seg.is-hebrew {
+  font-family: var(--reader-font-family);
+  font-size: 1.12em;
+  font-weight: 500;
+}
+
+.verse-text .tt-seg.is-punct {
+  color: var(--tt-punct-color);
+  font-style: italic;
+  font-size: 0.88em;
+}
+
+.verse-text .tt-sep {
+  color: var(--tt-sep-color);
+  font-weight: 700;
+  opacity: 0.75;
+  user-select: none;
+}
+
+.verse-text .tt-gloss-main {
+  font-weight: 600;
+}
+
+.verse-text .tt-gloss-sense {
+  font-size: 0.9em;
+  font-weight: 400;
+  opacity: 0.82;
+}
+
+.verse-text .tt-c1 { color: var(--tt-c1); }
+.verse-text .tt-c2 { color: var(--tt-c2); }
+.verse-text .tt-c3 { color: var(--tt-c3); }
+.verse-text .tt-c4 { color: var(--tt-c4); }
+.verse-text .tt-c5 { color: var(--tt-c5); }
+.verse-text .tt-c6 { color: var(--tt-c6); }
+
+/* FIM linguistic-totht.css */
