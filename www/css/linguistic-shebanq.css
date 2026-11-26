@@ -147,5 +147,16 @@
   line-height: 1.2;
   color: var(--shb-freq-color);
 }
+.verse-text .shb-strongs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 4px;
+  margin-top: 1px;
+}
 
+.verse-text .shb-strong {
+  font-size: 0.6em;
+  line-height: 1.2;
+}
 /* FIM linguistic-shebanq.css */
