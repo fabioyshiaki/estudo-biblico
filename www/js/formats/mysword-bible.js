@@ -110,7 +110,7 @@ function getRowField(row, targetLower) {
 
 function extractAttrLabel(attrStr) {
   if (!attrStr) return '';
-  const m = /\bq\s*=\s*(?:'([^']*)'|"([^"]*)"|([^\s>]+))/i.exec(attrStr);
+  const m = /\bq\s*=\s*(?:'([^']*)'|"([^"]*)"|([^>]+))/i.exec(attrStr);
   const raw = m ? (m[1] ?? m[2] ?? m[3] ?? '') : '';
   return decodeCommonEntities(decodeNumericEntities(raw)).trim();
 }
@@ -161,7 +161,10 @@ export function formatMySwordScripture(rawText, options = {}) {
       return '';
     });
 
-    const clean = stripTagsPlain(withoutTokens);
+    const clean = stripTagsPlain(withoutTokens)
+      .replace(/^(?:\|\||[|•·\-–—])+\s*/, '')
+      .replace(/\s*(?:\|\||[|•·\-–—])+$/, '')
+      .trim();
     if (clean) headings.push(clean);
     return embeddedTokens.join('');
   });
@@ -186,9 +189,10 @@ export function formatMySwordScripture(rawText, options = {}) {
     };
   }
 
-  // Remove referências cruzadas e tags customizadas com "=" (ex.: <v=Gn 1:1>, <RX ...>)
+  // Remove referências cruzadas, marcadores de versículo (<Gn#1#1>) e tags customizadas com "="
   text = text
     .replace(/<RX(?:(?!>|<).)*>/gi, '')
+    .replace(/<[A-Za-z0-9]{1,8}#\d+#\d+>/g, '')
     .replace(/<\/?[a-zA-Z][a-zA-Z0-9_:-]*=(?:(?!>|<).)*\/?>/g, '');
 
   // Captura ou remove códigos Strong simples e compostos
