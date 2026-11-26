@@ -3,36 +3,60 @@
   --shb-card-bg: #ffffff;
   --shb-card-border: #dcd4c6;
   --shb-divider: #e3dbce;
-  --shb-lemma-color: #5b544b;
+  --shb-translit-color: #5c7a29;
+  --shb-lemma-color: #6b6257;
+  --shb-gloss-color: #b43e2e;
   --shb-freq-color: #8f8679;
   --shb-gram-color: #7b7265;
+  --shb-strong-color: #1d5fa7;
+  --shb-bdb-color: #6c46a8;
+  --shb-twot-color: #16766c;
+  --shb-ges-color: #9e5a16;
 }
 
 :root[data-theme="light"] {
   --shb-card-bg: #ffffff;
   --shb-card-border: #d7dee8;
   --shb-divider: #e1e7f0;
-  --shb-lemma-color: #4f5b6b;
+  --shb-translit-color: #4f7322;
+  --shb-lemma-color: #5a6678;
+  --shb-gloss-color: #b8372c;
   --shb-freq-color: #828e9e;
   --shb-gram-color: #6b7687;
+  --shb-strong-color: #1b63b8;
+  --shb-bdb-color: #6b42b0;
+  --shb-twot-color: #12786e;
+  --shb-ges-color: #a35912;
 }
 
 :root[data-theme="sepia"] {
   --shb-card-bg: #faf4e8;
   --shb-card-border: #d2c2a8;
   --shb-divider: #dfd1b8;
-  --shb-lemma-color: #5c4e3c;
+  --shb-translit-color: #5b7223;
+  --shb-lemma-color: #685844;
+  --shb-gloss-color: #a93b2a;
   --shb-freq-color: #8c7b65;
   --shb-gram-color: #786752;
+  --shb-strong-color: #215996;
+  --shb-bdb-color: #69449c;
+  --shb-twot-color: #1c6e64;
+  --shb-ges-color: #965414;
 }
 
 :root[data-theme="dark"] {
   --shb-card-bg: #171b22;
   --shb-card-border: #2e3542;
   --shb-divider: #2b3240;
-  --shb-lemma-color: #b4becf;
+  --shb-translit-color: #9ec95b;
+  --shb-lemma-color: #a6b0c2;
+  --shb-gloss-color: #e67c73;
   --shb-freq-color: #7a8496;
   --shb-gram-color: #8f99ad;
+  --shb-strong-color: #6cb0ff;
+  --shb-bdb-color: #b794f4;
+  --shb-twot-color: #56cfc1;
+  --shb-ges-color: #e6a65c;
 }
 
 .verse-text .shb-flow {
@@ -56,9 +80,9 @@
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 2px;
-  min-width: 46px;
+  min-width: 52px;
   padding: 5px 8px 6px;
   text-align: center;
 }
@@ -69,7 +93,8 @@
 
 .verse-text .shb-orig {
   display: block;
-  font-size: 1.14em;
+  min-height: 1.4em;
+  font-size: 1.18em;
   font-weight: 600;
   line-height: 1.35;
   color: var(--text-main);
@@ -82,30 +107,41 @@
 
 .verse-text .shb-translit {
   display: block;
+  min-height: 1.25em;
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
   font-size: 0.69em;
   line-height: 1.24;
-  color: var(--il-translit-color);
+  color: var(--shb-translit-color);
+}
+
+.verse-text .shb-lemma {
+  display: block;
+  min-height: 1.3em;
+  font-size: 0.88em;
+  font-weight: 500;
+  line-height: 1.28;
+  color: var(--shb-lemma-color);
 }
 
 .verse-text .shb-gloss {
   display: block;
+  min-height: 1.3em;
   direction: ltr;
   unicode-bidi: isolate;
   font-family: var(--font-ui);
   font-size: 0.73em;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.26;
-  color: var(--il-t2-color);
+  color: var(--shb-gloss-color);
 }
 
 .verse-text .shb-gloss.is-gram {
   color: var(--shb-gram-color);
   font-style: italic;
   font-weight: 400;
-  font-size: 0.69em;
+  font-size: 0.68em;
 }
 
 .verse-text .shb-extra {
@@ -118,23 +154,53 @@
   color: var(--shb-gram-color);
 }
 
-.verse-text .shb-meta {
-  display: inline-flex;
+.verse-text .shb-meta,
+.verse-text .shb-lex-block {
+  display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   width: 100%;
-  margin-top: 3px;
-  padding-top: 3px;
+  margin-top: 4px;
+  padding-top: 4px;
   border-top: 1px solid var(--shb-divider);
 }
 
-.verse-text .shb-lemma {
-  display: block;
-  font-size: 0.84em;
+.verse-text .shb-lex-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 4px;
+  min-height: 1.15em;
+  font-family: var(--font-ui);
+  font-size: 0.6em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.verse-text .shb-lex-row.is-empty {
+  opacity: 0.25;
+}
+
+.verse-text .shb-tag {
   font-weight: 500;
-  line-height: 1.28;
-  color: var(--shb-lemma-color);
+}
+
+.verse-text .shb-tag--strong {
+  color: var(--shb-strong-color);
+  font-weight: 600;
+}
+
+.verse-text .shb-tag--bdb {
+  color: var(--shb-bdb-color);
+}
+
+.verse-text .shb-tag--twot {
+  color: var(--shb-twot-color);
+}
+
+.verse-text .shb-tag--ges {
+  color: var(--shb-ges-color);
 }
 
 .verse-text .shb-freq {
@@ -147,16 +213,3 @@
   line-height: 1.2;
   color: var(--shb-freq-color);
 }
-.verse-text .shb-strongs {
-  display: inline-flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 2px 4px;
-  margin-top: 1px;
-}
-
-.verse-text .shb-strong {
-  font-size: 0.6em;
-  line-height: 1.2;
-}
-/* FIM linguistic-shebanq.css */
