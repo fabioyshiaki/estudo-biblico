@@ -9,10 +9,8 @@ import com.getcapacitor.JSObject;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Locale;
-import java.util.Map;
 
 public class SqlReadOnlyPool {
 
@@ -112,13 +110,16 @@ public class SqlReadOnlyPool {
 
     private void evictIfNeeded() {
         while (pool.size() >= maxConnections) {
-            Iterator> it = pool.entrySet().iterator();
-            if (!it.hasNext()) {
+            String oldestKey = null;
+            for (String key : pool.keySet()) {
+                oldestKey = key;
                 break;
             }
-            Map.Entry<String, SQLiteDatabase> oldest = it.next();
-            it.remove();
-            safeClose(oldest.getValue());
+            if (oldestKey == null) {
+                break;
+            }
+            SQLiteDatabase oldestDb = pool.remove(oldestKey);
+            safeClose(oldestDb);
         }
     }
 
