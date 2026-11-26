@@ -30,6 +30,14 @@ function matchesBibleQuery(mod, terms) {
   return terms.every((term) => haystack.includes(term));
 }
 
+function scrollChildToTop(scrollContainer, targetEl, extraTopOffset = 12) {
+  if (!scrollContainer || !targetEl) return;
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const targetRect = targetEl.getBoundingClientRect();
+  const nextTop = scrollContainer.scrollTop + (targetRect.top - containerRect.top) - extraTopOffset;
+  scrollContainer.scrollTop = Math.max(0, Math.round(nextTop));
+}
+
 export function closeModal() {
   const root = document.getElementById('modal-root');
   if (root) {
@@ -113,7 +121,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   let searchQuery = '';
 
   modal.body.innerHTML = `
-    <div class="picker-search-wrap">
+    <div class="picker-search-wrap" id="bible-search-wrap">
       <div class="search-input-box">
         <input
           type="search"
@@ -134,10 +142,20 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
     </div>
   `;
 
+  const searchWrap = modal.body.querySelector('#bible-search-wrap');
   const inputEl = modal.body.querySelector('#bible-search-input');
   const clearBtn = modal.body.querySelector('#bible-search-clear');
   const metaEl = modal.body.querySelector('#bible-picker-meta');
   const listEl = modal.body.querySelector('#bible-picker-list');
+
+  function scrollActiveBibleToTop() {
+    window.requestAnimationFrame(() => {
+      const activeRow = listEl && listEl.querySelector('.module-row.active');
+      if (!activeRow) return;
+      const stickyOffset = (searchWrap ? searchWrap.offsetHeight : 0) + 8;
+      scrollChildToTop(modal.body, activeRow, stickyOffset);
+    });
+  }
 
   function renderRows() {
     const bibles = store.getBibles();
@@ -193,6 +211,11 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   inputEl?.addEventListener('input', (ev) => {
     searchQuery = ev.target.value || '';
     renderRows();
+    if (searchQuery.trim()) {
+      modal.body.scrollTop = 0;
+    } else {
+      scrollActiveBibleToTop();
+    }
   });
 
   clearBtn?.addEventListener('click', () => {
@@ -202,6 +225,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
       inputEl.focus();
     }
     renderRows();
+    scrollActiveBibleToTop();
   });
 
   listEl?.addEventListener('click', async (ev) => {
@@ -235,6 +259,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   });
 
   renderRows();
+  scrollActiveBibleToTop();
 }
 
 export async function openLocationPickerModal() {
@@ -269,6 +294,17 @@ export async function openLocationPickerModal() {
   function syncTabs() {
     modal.sheet.querySelectorAll('[data-loc-tab]').forEach((el) => {
       el.classList.toggle('active', el.dataset.locTab === activeTab);
+    });
+  }
+
+  function scrollActiveChipToTop() {
+    window.requestAnimationFrame(() => {
+      const activeChip = modal.body.querySelector('.grid-chip.active');
+      if (activeChip) {
+        scrollChildToTop(modal.body, activeChip, 12);
+      } else {
+        modal.body.scrollTop = 0;
+      }
     });
   }
 
@@ -308,6 +344,8 @@ export async function openLocationPickerModal() {
         renderChapters();
       });
     });
+
+    scrollActiveChipToTop();
   }
 
   async function renderChapters() {
@@ -332,6 +370,8 @@ export async function openLocationPickerModal() {
         closeModal();
       });
     });
+
+    scrollActiveChipToTop();
   }
 
   modal.sheet.querySelectorAll('[data-loc-tab]').forEach((tabBtn) => {
