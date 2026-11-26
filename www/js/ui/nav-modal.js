@@ -82,6 +82,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   function renderList() {
     const bibles = store.getBibles();
     const active = store.getActiveBible();
+    const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
 
     if (!bibles.length) {
       modal.body.innerHTML = `
@@ -100,11 +101,18 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
 
     const rows = bibles.map((m) => {
       const isActive = active && active.path === m.path;
-      const metaParts = [m.abbr, m.language, m.hasStrongs ? 'Strong' : ''].filter(Boolean).join(' • ');
+      const mainLabel = sortBy === 'title' ? (m.title || m.abbr) : (m.abbr || m.title);
+      const secondaryLabel = sortBy === 'title'
+        ? (m.abbr && m.abbr !== m.title ? m.abbr : '')
+        : (m.title && m.title !== m.abbr ? m.title : '');
+      const metaParts = [secondaryLabel, m.language, m.hasStrongs ? 'Strong' : '']
+        .filter(Boolean)
+        .join(' • ');
+
       return `
         <div class="module-row ${isActive ? 'active' : ''}">
           <button type="button" class="row-main" data-select-path="${escapeHtml(m.path)}">
-            <div class="row-title">${escapeHtml(m.title)}</div>
+            <div class="row-title">${escapeHtml(mainLabel)}</div>
             <div class="row-sub">${escapeHtml(metaParts || m.fileName)}</div>
           </button>
           <button
