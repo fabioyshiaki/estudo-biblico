@@ -2,6 +2,10 @@ import {
   isLinguisticClauseHtml,
   formatLinguisticClauseHtml
 } from './linguistic-bh.js';
+import {
+  isSupFontInterlinear,
+  formatSupFontInterlinear
+} from './interlinear-sup.js';
 
 const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F]/;
 const RE_ANCIENT = /[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]/;
@@ -53,7 +57,12 @@ export function hasHebrewScript(str) {
 
 export function isBilingualAncientText(str) {
   const s = String(str || '');
-  if (isLinguisticClauseHtml(s) || RE_INTERLINEAR_Q.test(s) || RE_STRUCTURED_ROW.test(s)) {
+  if (
+    isLinguisticClauseHtml(s) ||
+    isSupFontInterlinear(s) ||
+    RE_INTERLINEAR_Q.test(s) ||
+    RE_STRUCTURED_ROW.test(s)
+  ) {
     return true;
   }
   const plain = s.replace(/<[^>]*>/g, ' ');
@@ -350,6 +359,11 @@ export function formatInterlinearHtml(rawHtml, verseNum = null) {
   if (RE_STRUCTURED_ROW.test(rawHtml)) {
     const structured = parseStructuredRows(rawHtml);
     if (structured) return structured;
+  }
+
+  if (isSupFontInterlinear(rawHtml)) {
+    const supHtml = formatSupFontInterlinear(rawHtml, verseNum);
+    if (supHtml) return supHtml;
   }
 
   if (RE_PAIR_TAG.test(rawHtml)) {
