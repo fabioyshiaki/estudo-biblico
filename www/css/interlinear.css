@@ -107,6 +107,10 @@
   gap: 12px 10px;
 }
 
+.verse-text .il-sup-flow {
+  gap: 8px 6px;
+}
+
 .verse-text .il-vnum {
   display: inline-flex;
   align-items: center;
@@ -132,6 +136,30 @@
   gap: 1px;
   padding: 1px 2px;
   text-align: center;
+}
+
+.verse-text .il-sup-stack {
+  gap: 2px;
+  min-width: 44px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--il-card-bg);
+  border: 1px solid var(--border);
+}
+
+.verse-text .il-strong-line {
+  display: block;
+  margin-top: 2px;
+  direction: ltr;
+  unicode-bidi: isolate;
+  line-height: 1.25;
+}
+
+.verse-text .il-sup-stack .v-strong {
+  margin: 0;
+  padding: 1px 5px;
+  font-size: 0.64em;
+  line-height: 1.3;
 }
 
 .verse-text .il-word {
