@@ -119,7 +119,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
           type="search"
           id="bible-search-input"
           class="search-input"
-          placeholder="Buscar por abreviação ou descrição..."
+          placeholder="Buscar por abreviação, descrição ou arquivo..."
           autocomplete="off"
           autocorrect="off"
           spellcheck="false"
@@ -167,18 +167,16 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
     listEl.innerHTML = filtered.map((m) => {
       const isActive = active && active.path === m.path;
       const mainLabel = sortBy === 'title' ? (m.title || m.abbr) : (m.abbr || m.title);
-      const secondaryLabel = sortBy === 'title'
-        ? (m.abbr && m.abbr !== m.title ? m.abbr : '')
-        : (m.title && m.title !== m.abbr ? m.title : '');
-      const metaParts = [secondaryLabel, m.language, m.hasStrongs ? 'Strong' : '']
-        .filter(Boolean)
-        .join(' • ');
+      const secondaryLabel = sortBy === 'title' ? (m.abbr || '') : (m.title || '');
+      const extraMeta = [m.language, m.hasStrongs ? 'Strong' : ''].filter(Boolean).join(' • ');
+      const fileLine = [m.fileName, extraMeta].filter(Boolean).join(' • ');
 
       return `
         <div class="module-row ${isActive ? 'active' : ''}">
           <button type="button" class="row-main" data-select-path="${escapeHtml(m.path)}">
             <div class="row-title">${escapeHtml(mainLabel)}</div>
-            <div class="row-sub">${escapeHtml(metaParts || m.fileName)}</div>
+            ${secondaryLabel ? `<div class="row-sub">${escapeHtml(secondaryLabel)}</div>` : ''}
+            ${fileLine ? `<div class="row-file">${escapeHtml(fileLine)}</div>` : ''}
           </button>
           <button
             type="button"
@@ -347,3 +345,5 @@ export async function openLocationPickerModal() {
 
   renderBooks();
 }
+
+// FIM nav-modal.js
