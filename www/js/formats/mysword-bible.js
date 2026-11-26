@@ -16,6 +16,10 @@ import {
   isBibliaReveladaOmega,
   processBibliaReveladaOmega
 } from './biblia-revelada-omega.js';
+import {
+  isBibliaUcrt,
+  formatUcrtHtml
+} from './biblia-ucrt.js';
 
 const NAMED_ENTITIES = {
   nbsp: ' ', middot: '·', mdash: '—', ndash: '–', hellip: '…',
@@ -291,6 +295,22 @@ export function formatMySwordScripture(rawText, options = {}) {
     if (clean) headings.push(clean);
     return embeddedTokens.join('');
   });
+
+  // Regra exclusiva para o módulo "Bíblia UCRT" (The Ultimate Cross-Reference Treasury)
+  if (isBibliaUcrt(options.modulePath)) {
+    const ucrtHtml = formatUcrtHtml(decodeCommonEntities(text), {
+      ...options,
+      footnotes,
+      footnoteLabels
+    });
+    if (ucrtHtml) {
+      return {
+        html: restoreFootnotes(ucrtHtml, footnoteLabels),
+        headings,
+        footnotes
+      };
+    }
+  }
 
   // Regra exclusiva para o módulo "Bíblia Revelada Ômega"
   let omegaTrailingRef = '';
