@@ -30,9 +30,15 @@ function parseFreqAndLex(rawField) {
   return { freq, consLex };
 }
 
+function pushUnique(arr, val) {
+  if (val && !arr.includes(val)) arr.push(val);
+}
+
 function parseBhseLexicals(rawLexField) {
   const strongs = [];
-  const seen = new Set();
+  const bdbs = [];
+  const twots = [];
+  const ges = [];
   const str = String(rawLexField || '');
 
   RE_BHSE_LEX.lastIndex = 0;
@@ -42,22 +48,23 @@ function parseBhseLexicals(rawLexField) {
     const val = cleanText(match[2]);
     if (!val) continue;
 
-    // Mantém apenas Strongs numéricos (descarta prefixos como S1Hb, S1Hha, S1Hv)
     if ((tag === 'S1H' || tag === 'S2H') && /^\d+[a-z]?$/i.test(val)) {
-      const code = `H${val}`;
-      if (!seen.has(code)) {
-        seen.add(code);
-        strongs.push(code);
-      }
+      pushUnique(strongs, `H${val}`);
+    } else if (tag === 'BDB') {
+      pushUnique(bdbs, val);
+    } else if (tag === 'TWOT') {
+      pushUnique(twots, val);
+    } else if (tag === 'GES' && /^\d+[a-z]?$/i.test(val)) {
+      pushUnique(ges, `GES${val}`);
     }
   }
-  return strongs;
+
+  return { strongs, bdbs, twots, ges };
 }
 
 function parseShebanqRecord(inner) {
   const parts = inner.split(/<w>/i);
 
-  // Formato BHSE v5: 「『<BHS...><KJV...>』<w>id<w>tr<w>gloss<w>SHE<w>lemma<w>surface<w>trailer<w>《lex》」
   const isBhseV5 =
     parts.length >= 8 &&
     parts.length < 11 &&
@@ -73,7 +80,6 @@ function parseShebanqRecord(inner) {
     const rawTrailer = String(parts[7] || '');
     const lexField = String(parts[8] || '');
 
-    // Se surface vier vazio (registro oculto no VerseRules), ignora
     if (!surface && !lemma && !gloss) return null;
 
     const endsWord = rawTrailer.length > 0;
@@ -85,17 +91,22 @@ function parseShebanqRecord(inner) {
         : `${surfaceDisplay}${visibleTrailer}`;
     }
 
-    const strongs = parseBhseLexicals(lexField);
+    const lex = parseBhseLexicals(lexField);
     const sheCode = /^SHE[1-9]\d*$/i.test(sheRaw) ? sheRaw.toUpperCase() : '';
 
     return {
+      isBhseV5: true,
       wordId,
       translit,
       gloss,
       extra: '',
-      lemma: lemma && lemma !== surface ? lemma : '',
-      freq: strongs.length ? '' : sheCode,
-      strongs,
+      lemma: lemma || '',
+      freq: '',
+      sheCode,
+      strongs: lex.strongs,
+      bdbs: lex.bdbs,
+      twots: lex.twots,
+      ges: lex.ges,
       surfaceDisplay,
       endsWord
     };
@@ -123,13 +134,18 @@ function parseShebanqRecord(inner) {
   }
 
   return {
+    isBhseV5: false,
     wordId,
     translit,
     gloss,
     extra,
     lemma,
     freq,
+    sheCode: '',
     strongs: [],
+    bdbs: [],
+    twots: [],
+    ges: [],
     surfaceDisplay,
     endsWord
   };
@@ -138,7 +154,7 @@ function parseShebanqRecord(inner) {
 function renderGloss(rawGloss) {
   const txt = cleanText(rawGloss);
   if (!txt) {
-    return '<span class="shb-gloss" dir="ltr">&nbsp;</span>';
+    return '<span class="shb-gloss is-empty" dir="ltr">&nbsp;</span>';
   }
 
   const markerMatch = RE_BRACKET_MARKER.exec(txt);
@@ -153,6 +169,16 @@ function renderGloss(rawGloss) {
   return `<span class="shb-gloss" dir="ltr">${escapeHtml(txt)}</span>`;
 }
 
+function renderLexRow(items, cls, dataAttr) {
+  if (!items || !items.length) {
+    return `<div class="shb-lex-row is-empty" dir="ltr">&nbsp;</div>`;
+  }
+  const chips = items
+    .map((code) => `<span class="shb-tag ${cls}" data-${dataAttr}="${escapeHtml(code)}">${escapeHtml(code)}</span>`)
+    .join('');
+  return `<div class="shb-lex-row" dir="ltr">${chips}</div>`;
+}
+
 function renderMorpheme(item) {
   const origDir = RE_HEBREW.test(item.surfaceDisplay) ? 'rtl' : 'ltr';
   const origHtml = item.surfaceDisplay
@@ -165,33 +191,48 @@ function renderMorpheme(item) {
 
   const glossHtml = renderGloss(item.gloss);
 
-  const extraHtml = item.extra
-    ? `<span class="shb-extra" dir="ltr">${escapeHtml(item.extra)}</span>`
-    : '';
-
   const lemmaDir = RE_HEBREW.test(item.lemma) ? 'rtl' : 'ltr';
   const lemmaHtml = item.lemma
     ? `<span class="shb-lemma" dir="${lemmaDir}">${escapeHtml(item.lemma)}</span>`
-    : '';
-
-  const strongsHtml = (item.strongs && item.strongs.length)
-    ? `<div class="shb-strongs" dir="ltr">${item.strongs
-        .map((code) => `<span class="v-strong shb-strong" data-strong="${escapeHtml(code)}">${escapeHtml(code)}</span>`)
-        .join('')}</div>`
-    : '';
-
-  const freqHtml = item.freq
-    ? `<span class="shb-freq" dir="ltr">${escapeHtml(item.freq)}</span>`
-    : '';
-
-  const metaHtml = (lemmaHtml || strongsHtml || freqHtml)
-    ? `<div class="shb-meta">${lemmaHtml}${strongsHtml}${freqHtml}</div>`
-    : '';
+    : '<span class="shb-lemma is-empty" dir="ltr">&nbsp;</span>';
 
   const attrs = [
     item.wordId ? `data-word-id="${escapeHtml(item.wordId)}"` : '',
-    item.lemma ? `data-lemma="${escapeHtml(item.lemma)}"` : ''
+    item.lemma ? `data-lemma="${escapeHtml(item.lemma)}"` : '',
+    item.sheCode ? `data-she="${escapeHtml(item.sheCode)}"` : ''
   ].filter(Boolean).join(' ');
+
+  // Layout alinhado em camadas fixas para BHSE v5
+  if (item.isBhseV5) {
+    const lexBlock =
+      '<div class="shb-lex-block">' +
+        renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong') +
+        renderLexRow(item.bdbs, 'shb-tag--bdb', 'bdb') +
+        renderLexRow(item.twots, 'shb-tag--twot', 'twot') +
+        renderLexRow(item.ges, 'shb-tag--ges', 'ges') +
+      '</div>';
+
+    return (
+      `<div class="shb-morph is-bhse"${attrs ? ` ${attrs}` : ''}>` +
+        origHtml +
+        translitHtml +
+        lemmaHtml +
+        glossHtml +
+        lexBlock +
+      '</div>'
+    );
+  }
+
+  // Layout original para SHEBANQ v4
+  const extraHtml = item.extra
+    ? `<span class="shb-extra" dir="ltr">${escapeHtml(item.extra)}</span>`
+    : '';
+  const freqHtml = item.freq
+    ? `<span class="shb-freq" dir="ltr">${escapeHtml(item.freq)}</span>`
+    : '';
+  const metaHtml = (item.lemma || freqHtml)
+    ? `<div class="shb-meta">${item.lemma ? lemmaHtml : ''}${freqHtml}</div>`
+    : '';
 
   return (
     `<div class="shb-morph"${attrs ? ` ${attrs}` : ''}>` +
@@ -205,7 +246,6 @@ function renderMorpheme(item) {
 }
 
 export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
-  // Limpa eventuais marcadores Ketib/Qere (<KQ>...<kq>) sem vazar tags
   const source = String(rawHtml || '').replace(/<KQ>[\s\S]*?<\/?kq>/gi, '');
   const groups = [];
   let currentGroup = [];
