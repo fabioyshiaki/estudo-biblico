@@ -61,6 +61,19 @@
   --dct-switch-active-bg: #2a3342;
 }
 
+/* Integração com a barra superior */
+.topbar-right {
+  gap: 10px;
+}
+
+.topbar .nav-group.hidden {
+  display: none !important;
+}
+
+.topbar .nav-group-dict {
+  flex: 0 1 340px;
+}
+
 /* Alternador Bíblia / Dicionário na barra superior */
 .mode-switch {
   display: inline-flex;
@@ -96,6 +109,28 @@
   background: var(--dct-switch-active-bg);
   color: var(--accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* Tags léxicas clicáveis na Bíblia (Bíblia -> Dicionário com 1 toque) */
+.verse-text [data-strong],
+.verse-text [data-morph],
+.verse-text [data-ln],
+.verse-text [data-bdb],
+.verse-text [data-twot],
+.verse-text [data-gk],
+.verse-text [data-hgk] {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.verse-text [data-strong]:active,
+.verse-text [data-morph]:active,
+.verse-text [data-ln]:active,
+.verse-text [data-bdb]:active,
+.verse-text [data-twot]:active,
+.verse-text [data-gk]:active,
+.verse-text [data-hgk]:active {
+  opacity: 0.65;
 }
 
 /* Área principal do leitor de dicionário */
@@ -279,7 +314,7 @@
   background: var(--dct-link-morph-bg);
 }
 
-/* Resultados de busca e barra flutuante de seleção de palavra */
+/* Resultados de busca */
 .dct-results-list {
   display: flex;
   flex-direction: column;
@@ -374,4 +409,11 @@
   cursor: pointer;
   white-space: nowrap;
   touch-action: manipulation;
+}
+
+@media (max-width: 680px) {
+  .mode-switch-btn {
+    padding: 0 9px;
+    font-size: 12px;
+  }
 }
