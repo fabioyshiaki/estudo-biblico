@@ -28,8 +28,11 @@ public final class StorageBrowser {
     }
 
     public static List<String> getExtensionsForFormat(String formatId) {
-        if ("mysword_bbl".equals(formatId)) {
-            return Collections.singletonList(".bbl.mybible");
+        if ("mysword_dct".equals(formatId)) {
+            return Collections.singletonList(".dct.mybible");
+        }
+        if ("mysword_all".equals(formatId)) {
+            return Arrays.asList(".bbl.mybible", ".dct.mybible");
         }
         return Collections.singletonList(".bbl.mybible");
     }
@@ -197,13 +200,28 @@ public final class StorageBrowser {
             String formatId,
             SqlReadOnlyPool sqlPool
     ) {
+        return inspectMySwordModule(file, resourceKind, formatId, sqlPool);
+    }
+
+    public static ContentValues inspectMySwordModule(
+            File file,
+            String resourceKind,
+            String formatId,
+            SqlReadOnlyPool sqlPool
+    ) {
+        String lowerName = file.getName().toLowerCase(Locale.ROOT);
+        boolean isDict = lowerName.endsWith(".dct.mybible") || "mysword_dct".equals(formatId);
+        String actualKind = isDict ? "dictionary" : "bible";
+        String actualFormatId = isDict ? "mysword_dct" : "mysword_bbl";
         String path = file.getAbsolutePath();
+
         try {
-            JSArray tableCheck = sqlPool.query(
-                    path,
-                    "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='bible' LIMIT 1",
-                    null
-            );
+            String checkSql = isDict
+                    ? "SELECT name FROM sqlite_master WHERE type='table' "
+                    + "AND lower(name) NOT IN ('details', 'info', 'android_metadata', 'bible') "
+                    + "AND lower(name) NOT LIKE 'sqlite_%' LIMIT 1"
+                    : "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='bible' LIMIT 1";
+            JSArray tableCheck = sqlPool.query(path, checkSql, null);
             if (tableCheck.length() == 0) {
                 return null;
             }
@@ -211,9 +229,10 @@ public final class StorageBrowser {
             return null;
         }
 
-        String baseName = stripExtension(file.getName(), ".bbl.mybible");
+        String ext = isDict ? ".dct.mybible" : ".bbl.mybible";
+        String baseName = stripExtension(file.getName(), ext);
         String title = baseName;
-        String abbr = buildFallbackAbbr(baseName);
+        String abbr = buildFallbackAbbr(baseName, isDict ? "DCT" : "BIB");
         String description = "";
         String language = "";
         int hasStrongs = 0;
@@ -255,8 +274,8 @@ public final class StorageBrowser {
         cv.put("description", description);
         cv.put("language", language);
         cv.put("has_strongs", hasStrongs);
-        cv.put("resource_kind", resourceKind);
-        cv.put("format_id", formatId);
+        cv.put("resource_kind", actualKind);
+        cv.put("format_id", actualFormatId);
         cv.put("file_size", file.length());
         cv.put("last_modified", file.lastModified());
         return cv;
@@ -282,10 +301,10 @@ public final class StorageBrowser {
         return name;
     }
 
-    private static String buildFallbackAbbr(String baseName) {
+    private static String buildFallbackAbbr(String baseName, String fallback) {
         String clean = baseName.replaceAll("[^A-Za-z0-9]", "").toUpperCase(Locale.ROOT);
         if (clean.isEmpty()) {
-            return "BIB";
+            return fallback;
         }
         return clean.length() > 10 ? clean.substring(0, 10) : clean;
     }
