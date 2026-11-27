@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="./css/linguistic.css" />
   <link rel="stylesheet" href="./css/linguistic-totht.css" />
   <link rel="stylesheet" href="./css/linguistic-shebanq.css" />
+  <link rel="stylesheet" href="./css/dictionary.css" />
   <link rel="stylesheet" href="./css/modals.css" />
   <link rel="stylesheet" href="./css/modals-content.css" />
 </head>
@@ -19,7 +20,7 @@
   <div class="app-shell" id="app-shell">
     <header class="topbar" id="topbar">
       <div class="topbar-left">
-        <div class="nav-group nav-group-bible">
+        <div class="nav-group nav-group-bible" id="nav-group-bible">
           <button type="button" class="step-arrow-btn" id="btn-prev-bible" aria-label="Bíblia anterior">&lsaquo;</button>
           <button type="button" class="pill-btn pill-bible" id="btn-bible-picker" aria-label="Selecionar Bíblia">
             <span id="label-active-bible">Bíblia</span>
@@ -27,15 +28,29 @@
           <button type="button" class="step-arrow-btn" id="btn-next-bible" aria-label="Próxima Bíblia">&rsaquo;</button>
         </div>
 
-        <div class="nav-group nav-group-book">
+        <div class="nav-group nav-group-book" id="nav-group-book">
           <button type="button" class="step-arrow-btn" id="btn-prev-book" aria-label="Livro anterior">&lsaquo;</button>
           <button type="button" class="pill-btn pill-nav" id="btn-nav-picker" aria-label="Selecionar livro e capítulo">
             <span id="label-active-ref">Gênesis 1</span>
           </button>
           <button type="button" class="step-arrow-btn" id="btn-next-book" aria-label="Próximo livro">&rsaquo;</button>
         </div>
+
+        <div class="nav-group nav-group-dict hidden" id="nav-group-dict">
+          <button type="button" class="step-arrow-btn" id="btn-prev-dict" aria-label="Dicionário anterior">&lsaquo;</button>
+          <button type="button" class="pill-btn pill-bible" id="btn-dict-picker" aria-label="Selecionar Dicionário">
+            <span id="label-active-dict">Dicionário</span>
+          </button>
+          <button type="button" class="step-arrow-btn" id="btn-next-dict" aria-label="Próximo Dicionário">&rsaquo;</button>
+        </div>
       </div>
+
       <div class="topbar-right">
+        <div class="mode-switch" id="mode-switch" role="tablist" aria-label="Alternar entre Bíblia e Dicionário">
+          <button type="button" class="mode-switch-btn is-active" id="btn-mode-bible" data-app-mode="bible" role="tab" aria-selected="true">Bíblia</button>
+          <button type="button" class="mode-switch-btn" id="btn-mode-dictionary" data-app-mode="dictionary" role="tab" aria-selected="false">Dicionário</button>
+        </div>
+
         <button type="button" class="icon-btn" id="btn-settings" aria-label="Configurações e Fontes" title="Configurações e Fontes">
           &#9881;
         </button>
@@ -53,11 +68,11 @@
     </main>
 
     <footer class="bottom-nav" id="bottom-nav">
-      <button type="button" class="nav-step-btn" id="btn-prev-chapter" aria-label="Capítulo anterior">
+      <button type="button" class="nav-step-btn" id="btn-prev-chapter" aria-label="Anterior">
         &larr; Anterior
       </button>
       <div class="chapter-meta" id="chapter-meta">—</div>
-      <button type="button" class="nav-step-btn" id="btn-next-chapter" aria-label="Próximo capítulo">
+      <button type="button" class="nav-step-btn" id="btn-next-chapter" aria-label="Próximo">
         Próximo &rarr;
       </button>
     </footer>
