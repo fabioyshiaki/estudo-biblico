@@ -83,7 +83,25 @@
   <div class="boot-error hidden" id="boot-error" role="alert"></div>
 
   <script type="module">
+    function saveBootLog(title, detail) {
+      try {
+        const key = 'estudo_biblico_error_logs_v1';
+        const prev = JSON.parse(window.localStorage.getItem(key) || '[]');
+        const list = Array.isArray(prev) ? prev : [];
+        list.push({
+          id: Date.now() + '_boot',
+          ts: Date.now(),
+          level: 'error',
+          scope: 'BOOT',
+          message: String(title || 'Erro de boot'),
+          detail: String(detail || '')
+        });
+        window.localStorage.setItem(key, JSON.stringify(list.slice(-220)));
+      } catch (e) {}
+    }
+
     function showBootError(title, detail) {
+      saveBootLog(title, detail);
       const box = document.getElementById('boot-error');
       if (!box) return;
       box.classList.remove('hidden');
