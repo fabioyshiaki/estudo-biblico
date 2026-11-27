@@ -2,6 +2,7 @@ const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F\uFB1D-\uFB4F]/;
 const RE_SHEBANQ = /\u300C(?:\s*\u300E[^\u300E\u300F]*\u300F)?\s*<w>[\s\S]*?<w>[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_OGNT = /\u300C[\s\S]*?<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>[\s\S]*?(?:<Lx(?:\s+[^>]*)?>|<Es(?:\s+[^>]*)?>|<IT(?:\s+[^>]*)?>|<LN(?:\s+[^>]*)?>|<GN(?:\s+[^>]*)?>)[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_MN = /\u300C\s*<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>[\s\S]*?\u300D/i;
+const RE_INTERLINEAR_SYRIAC = /\u300C[\s\S]*?<A>[\s\S]*?<\/A>[\s\S]*?(?:<HE>|<EN>|<LE>|<TR>|<W[GH]\d)[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_UW = /\u300C[\s\S]*?<(G|H)(?:\s+[^>]*)?>[\s\S]*?<\/\1>[\s\S]*?(?:<X(?:\s+[^>]*)?>|<Wn(?:\s+[^>]*)?>|<W[GH]\d|<WT)[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_VIMS = /\u300C[\s\S]*?<wt>[\s\S]*?(?:<X>|<E1>|<E2>)[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_TORTOISE = /\u3014[\s\S]*?<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>[\s\S]*?\u3015/i;
@@ -32,6 +33,13 @@ function cleanText(str) {
 
 function extractTagContent(str, tagName) {
   const re = new RegExp(`<${tagName}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, 'i');
+  const m = re.exec(String(str || ''));
+  if (!m) return '';
+  return cleanText(String(m[1] || '').replace(/<[^>]*>/g, ''));
+}
+
+function extractExactTagContent(str, tagName) {
+  const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
   const m = re.exec(String(str || ''));
   if (!m) return '';
   return cleanText(String(m[1] || '').replace(/<[^>]*>/g, ''));
@@ -78,6 +86,7 @@ export function isShebanqBhsText(str) {
     RE_SHEBANQ.test(s) ||
     RE_INTERLINEAR_OGNT.test(s) ||
     RE_INTERLINEAR_MN.test(s) ||
+    RE_INTERLINEAR_SYRIAC.test(s) ||
     RE_INTERLINEAR_UW.test(s) ||
     RE_INTERLINEAR_VIMS.test(s) ||
     RE_INTERLINEAR_TORTOISE.test(s)
@@ -124,6 +133,67 @@ function parseBhseLexicals(rawLexField) {
   }
 
   return { strongs, bdbs, twots, ges };
+}
+
+function parseInterlinearSyriacRecord(inner) {
+  const surface = extractExactTagContent(inner, 'A');
+  const hebrewEquiv = extractTagContent(inner, 'HE');
+  const gloss =
+    extractTagContent(inner, 'EN') ||
+    extractTagContent(inner, 'PT') ||
+    extractTagContent(inner, 'ES');
+  const lemma = extractTagContent(inner, 'LE');
+  const translit = extractTagContent(inner, 'TR');
+
+  const strongs = [];
+  RE_STRONG_TAG.lastIndex = 0;
+  let sm;
+  while ((sm = RE_STRONG_TAG.exec(inner)) !== null) {
+    const code = `${sm[1].toUpperCase()}${sm[2]}`;
+    if (code !== 'H0' && code !== 'G0') pushUnique(strongs, code);
+  }
+
+  const morphs = [];
+  RE_MORPH_TAG.lastIndex = 0;
+  let mm;
+  while ((mm = RE_MORPH_TAG.exec(inner)) !== null) {
+    const cleanMorph = cleanText(String(mm[1] || '').replace(/\s+l="[^"]*"/gi, ''));
+    if (cleanMorph) pushUnique(morphs, cleanMorph);
+  }
+
+  if (!surface && !hebrewEquiv && !lemma && !translit && !gloss) return null;
+
+  return {
+    mode: 'interlinear_syriac',
+    wordId: '',
+    wordNum: '',
+    twCat: '',
+    variantLevel: 0,
+    variantStart: false,
+    variantEnd: false,
+    variantSigla: '',
+    surfaceDisplay: surface || lemma || hebrewEquiv,
+    hebrewEquiv,
+    strongs,
+    morphs,
+    translit,
+    phonetic: '',
+    lemmaTranslit: '',
+    hgkList: [],
+    lnList: [],
+    gloss,
+    enGloss: '',
+    detailFnToken: '',
+    variantFnToken: '',
+    lemma,
+    extra: '',
+    freq: '',
+    sheCode: '',
+    bdbs: [],
+    twots: [],
+    ges: [],
+    endsWord: true
+  };
 }
 
 function parseInterlinearOgntRecord(inner, variantRaw, ctx) {
@@ -234,6 +304,7 @@ function parseInterlinearOgntRecord(inner, variantRaw, ctx) {
     variantEnd: false,
     variantSigla: '',
     surfaceDisplay,
+    hebrewEquiv: '',
     strongs,
     morphs,
     translit,
@@ -302,6 +373,7 @@ function parseInterlinearMnRecord(inner) {
     variantEnd: false,
     variantSigla: '',
     surfaceDisplay: surface,
+    hebrewEquiv: '',
     strongs,
     morphs,
     translit,
@@ -364,6 +436,7 @@ function parseInterlinearTortoiseRecord(inner) {
     variantEnd: false,
     variantSigla: '',
     surfaceDisplay: surface || lemma,
+    hebrewEquiv: '',
     strongs,
     morphs,
     translit,
@@ -428,6 +501,7 @@ function parseInterlinearUwRecord(inner) {
     variantEnd: false,
     variantSigla: '',
     surfaceDisplay,
+    hebrewEquiv: '',
     strongs,
     morphs,
     translit,
@@ -495,6 +569,7 @@ function parseInterlinearVimsRecord(inner, variantMeta = null) {
     variantEnd: Boolean(variantMeta && variantMeta.end),
     variantSigla: variantMeta ? variantMeta.sigla : '',
     surfaceDisplay: surface || lemma,
+    hebrewEquiv: '',
     strongs,
     morphs,
     translit,
@@ -520,6 +595,10 @@ function parseInterlinearVimsRecord(inner, variantMeta = null) {
 function parseShebanqRecord(inner, variantMeta = null) {
   if (/<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>/i.test(inner)) {
     return parseInterlinearMnRecord(inner);
+  }
+
+  if (/<A>[\s\S]*?<\/A>/i.test(inner) && !/<w>/i.test(inner)) {
+    return parseInterlinearSyriacRecord(inner);
   }
 
   if (/<wt>[\s\S]*?(?:<X>|<E1>|<E2>)/i.test(inner) && !/<w>/i.test(inner)) {
@@ -573,6 +652,7 @@ function parseShebanqRecord(inner, variantMeta = null) {
       translit,
       phonetic: '',
       lemmaTranslit: '',
+      hebrewEquiv: '',
       gloss,
       enGloss: '',
       detailFnToken: '',
@@ -626,6 +706,7 @@ function parseShebanqRecord(inner, variantMeta = null) {
     translit,
     phonetic: '',
     lemmaTranslit: '',
+    hebrewEquiv: '',
     gloss,
     enGloss: '',
     detailFnToken: '',
@@ -675,7 +756,7 @@ function renderLexRow(items, cls, dataAttr) {
   return `<div class="shb-lex-row" dir="ltr">${chips}</div>`;
 }
 
-function renderMorpheme(item, mnCols, uwCols, torCols, ogntCols) {
+function renderMorpheme(item, mnCols, uwCols, torCols, ogntCols, syrCols) {
   const origDir = RE_HEBREW.test(item.surfaceDisplay) ? 'rtl' : 'ltr';
   const wnHtml = item.wordNum
     ? `<sub class="shb-wn">${escapeHtml(item.wordNum)}</sub>`
@@ -701,6 +782,53 @@ function renderMorpheme(item, mnCols, uwCols, torCols, ogntCols) {
     item.twCat ? `data-tw-cat="${escapeHtml(item.twCat)}"` : '',
     item.variantLevel ? `data-variant="${item.variantLevel}"` : ''
   ].filter(Boolean).join(' ');
+
+  // Layout alinhado para NT Siríaco-Hebraico-Inglês (「<A><HE><EN><WG><LE><TR>」)
+  if (item.mode === 'interlinear_syriac') {
+    const parts = [origHtml];
+
+    if (syrCols.hasHebrew) {
+      parts.push(
+        item.hebrewEquiv
+          ? `<span class="shb-he-equiv" dir="rtl">${escapeHtml(item.hebrewEquiv)}</span>`
+          : '<span class="shb-he-equiv is-empty" dir="rtl">&nbsp;</span>'
+      );
+    }
+
+    if (syrCols.hasTranslit) {
+      parts.push(
+        item.translit
+          ? `<span class="shb-translit" dir="ltr">${escapeHtml(item.translit)}</span>`
+          : '<span class="shb-translit is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+
+    if (syrCols.hasLemma) {
+      const lemmaDir = RE_HEBREW.test(item.lemma) ? 'rtl' : 'ltr';
+      parts.push(
+        item.lemma
+          ? `<span class="shb-lemma" dir="${lemmaDir}">${escapeHtml(item.lemma)}</span>`
+          : '<span class="shb-lemma is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+
+    if (syrCols.hasStrong || syrCols.hasMorph) {
+      const lexRows = [];
+      if (syrCols.hasStrong) {
+        lexRows.push(renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong'));
+      }
+      if (syrCols.hasMorph) {
+        lexRows.push(renderLexRow(item.morphs, 'v-morph shb-tag--morph', 'morph'));
+      }
+      parts.push(`<div class="shb-lex-block">${lexRows.join('')}</div>`);
+    }
+
+    if (syrCols.hasGloss) {
+      parts.push(renderGloss(item.gloss, 'shb-uw-tw'));
+    }
+
+    return `<div class="shb-morph is-syriac"${attrs ? ` ${attrs}` : ''}>${parts.join('')}</div>`;
+  }
 
   // Layout alinhado para OGNT Interlinear Grego-Espanhol-Inglês (TrsAIMS)
   if (item.mode === 'interlinear_ognt') {
@@ -991,7 +1119,11 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null, options = {}) {
 
   const pushParsed = (parsed) => {
     if (!parsed) return;
-    if (RE_HEBREW.test(parsed.surfaceDisplay) || RE_HEBREW.test(parsed.lemma)) {
+    if (
+      RE_HEBREW.test(parsed.surfaceDisplay) ||
+      RE_HEBREW.test(parsed.lemma) ||
+      RE_HEBREW.test(parsed.hebrewEquiv)
+    ) {
       isRtlVerse = true;
     }
     currentGroup.push(parsed);
@@ -1096,6 +1228,15 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null, options = {}) {
     hasActions: false
   };
 
+  const syrCols = {
+    hasHebrew: false,
+    hasTranslit: false,
+    hasLemma: false,
+    hasStrong: false,
+    hasMorph: false,
+    hasGloss: false
+  };
+
   for (const grp of groups) {
     for (const it of grp) {
       if (it.mode === 'interlinear_mn') {
@@ -1130,6 +1271,13 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null, options = {}) {
         if (it.gloss) ogntCols.hasEs = true;
         if (it.enGloss) ogntCols.hasIt = true;
         if (it.detailFnToken || it.variantFnToken) ogntCols.hasActions = true;
+      } else if (it.mode === 'interlinear_syriac') {
+        if (it.hebrewEquiv) syrCols.hasHebrew = true;
+        if (it.translit) syrCols.hasTranslit = true;
+        if (it.lemma) syrCols.hasLemma = true;
+        if (it.strongs && it.strongs.length) syrCols.hasStrong = true;
+        if (it.morphs && it.morphs.length) syrCols.hasMorph = true;
+        if (it.gloss) syrCols.hasGloss = true;
       }
     }
   }
@@ -1145,7 +1293,7 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null, options = {}) {
     const variantClass = isAltVariant ? ' is-variant' : '';
     cards.push(
       `<div class="shb-word${multiClass}${variantClass}" dir="${isRtlVerse ? 'rtl' : 'ltr'}">` +
-        grp.map((it) => renderMorpheme(it, mnCols, uwCols, torCols, ogntCols)).join('') +
+        grp.map((it) => renderMorpheme(it, mnCols, uwCols, torCols, ogntCols, syrCols)).join('') +
       '</div>'
     );
   }
