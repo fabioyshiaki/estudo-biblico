@@ -4,6 +4,9 @@ import {
   buildLookupCandidates
 } from './mysword-dictionary.js';
 
+const TERM_PRESENCE_CACHE_LIMIT = 40;
+const termPresenceCache = new Map();
+
 const BOOK_ALIAS_MAP = {
   gn: 1, gen: 1, genesis: 1,
   ex: 2, exo: 2, exod: 2, exodo: 2,
@@ -54,7 +57,7 @@ const BOOK_ALIAS_MAP = {
   '2co': 47, '2cor': 47, '2corintios': 47,
   gl: 48, ga: 48, gal: 48, galatas: 48,
   ef: 49, eph: 49, efesios: 49,
-  fp: 50, php: 50, phil: 50, fil: 50, filipenses: 50,
+  fp: 50, php: 50, phil: 50, filipenses: 50,
   cl: 51, col: 51, colossenses: 51,
   '1ts': 52, '1th': 52, '1thess': 52, '1tessalonicenses': 52,
   '2ts': 53, '2th': 53, '2thess': 53, '2tessalonicenses': 53,
@@ -78,6 +81,60 @@ function normalizeAscii(str) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+export function clearDictionaryLookupCache() {
+  termPresenceCache.clear();
+}
+
+function buildPresenceCacheKey(dictionaries, cleanTerm, searchBody) {
+  const sig = (Array.isArray(dictionaries) ? dictionaries : [])
+    .map((m) => m.path)
+    .sort()
+    .join('|');
+  return `${cleanTerm.toLowerCase()}::${searchBody ? '1' : '0'}::${sig}`;
+}
+
+function sortPresenceMatches(list, origOrderMap) {
+  const matchPriority = { exact: 0, prefix: 1, title: 2, body: 3 };
+  return list.slice().sort((a, b) => {
+    const favDiff = Number(Boolean(b.module && b.module.isFavorite)) - Number(Boolean(a.module && a.module.isFavorite));
+    if (favDiff !== 0) return favDiff;
+
+    const pa = matchPriority[a.matchType] ?? 9;
+    const pb = matchPriority[b.matchType] ?? 9;
+    if (pa !== pb) return pa - pb;
+
+    const ia = origOrderMap.has(a.module.path) ? origOrderMap.get(a.module.path) : 999999;
+    const ib = origOrderMap.has(b.module.path) ? origOrderMap.get(b.module.path) : 999999;
+    return ia - ib;
+  });
+}
+
+export function getCachedDictionariesWithTerm(dictionaries, rawTerm, options = {}) {
+  const clean = normalizeLookupTerm(rawTerm);
+  if (!clean) return null;
+  const searchBody = Boolean(options.searchBody);
+  const key = buildPresenceCacheKey(dictionaries, clean, searchBody);
+  if (!termPresenceCache.has(key)) return null;
+
+  const cached = termPresenceCache.get(key);
+  const byPath = new Map((Array.isArray(dictionaries) ? dictionaries : []).map((m) => [m.path, m]));
+  const origOrder = new Map((Array.isArray(dictionaries) ? dictionaries : []).map((m, idx) => [m.path, idx]));
+
+  const hydrated = cached
+    .map((item) => {
+      const freshMod = byPath.get(item.path);
+      if (!freshMod) return null;
+      return {
+        module: freshMod,
+        word: item.word,
+        matchType: item.matchType
+      };
+    })
+    .filter(Boolean);
+
+  return sortPresenceMatches(hydrated, origOrder);
 }
 
 export function detectLookupKind(rawTerm) {
@@ -123,7 +180,6 @@ export function scoreDictionaryForQuery(mod, rawTerm, options = {}) {
   } else if (kind === 'louwnida') {
     if (/louw|nida|domain|dominio/.test(hay)) score += 85;
   } else {
-    // Palavra comum: prioriza dicionários bíblicos gerais/português acima de tabelas de morfologia pura
     if (/morph|morf|robinson|rmac/.test(hay)) score -= 25;
     if (/port|pt|br|biblic|enciclop|teolog|champlin|vine|wycliffe|dicion/.test(hay)) score += 18;
   }
@@ -152,7 +208,6 @@ export function parseBibleReference(rawRef) {
   const txt = String(rawRef || '').trim().replace(/^b\s*/i, '');
   if (!txt) return null;
 
-  // Formato numérico MySword: 40.1.1 ou 40.1.1-5 ou 40:1:1
   const numMatch = /^(\d{1,2})\s*[.:]\s*(\d{1,3})(?:\s*[.:]\s*(\d{1,3}))?/.exec(txt);
   if (numMatch) {
     const book = Number(numMatch[1]);
@@ -163,7 +218,6 @@ export function parseBibleReference(rawRef) {
     }
   }
 
-  // Formato textual: Mt 1:1, 1Sm 17:12, Jó 38:4, 1 Jo 3:16
   const textMatch = /^([123]?\s*[A-Za-zÀ-ÿ]{2,20})\.?\s+(\d{1,3})(?:\s*[:.]\s*(\d{1,3}))?/.exec(txt);
   if (!textMatch) return null;
 
@@ -172,7 +226,6 @@ export function parseBibleReference(rawRef) {
   const verse = Number(textMatch[3]) || 1;
   if (!Number.isFinite(chapter) || chapter < 1) return null;
 
-  // Distingue "Jó" (18) de "Jo" / "João" (43)
   if (/^J[óÓ]$/.test(rawBook)) {
     return { book: 18, chapter, verse };
   }
@@ -201,6 +254,85 @@ async function runWithConcurrency(items, concurrency, workerFn, signal) {
     workers.push(next());
   }
   await Promise.all(workers);
+}
+
+export async function findDictionariesWithTerm(dictionaries, rawTerm, options = {}) {
+  const list = Array.isArray(dictionaries) ? dictionaries : [];
+  const clean = normalizeLookupTerm(rawTerm);
+  if (!clean || !list.length) return [];
+
+  const searchBody = Boolean(options.searchBody);
+  const signal = options.signal || null;
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+
+  const cached = getCachedDictionariesWithTerm(list, clean, { searchBody });
+  if (cached) {
+    if (onProgress && (!signal || !signal.aborted)) {
+      onProgress(list.length, list.length, cached);
+    }
+    return cached;
+  }
+
+  const origOrder = new Map(list.map((m, idx) => [m.path, idx]));
+  const ranked = rankDictionariesForQuery(list, clean, {
+    activePath: options.activePath || '',
+    moduleHint: options.moduleHint || ''
+  });
+
+  const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 4, 6));
+  const matches = [];
+  let scanned = 0;
+
+  await runWithConcurrency(
+    ranked,
+    concurrency,
+    async (mod) => {
+      if (signal && signal.aborted) return;
+      let added = false;
+
+      try {
+        const hit = await myswordDictionaryAdapter.findQuickMatch(mod.path, clean, { searchBody });
+        if (hit && (!signal || !signal.aborted)) {
+          matches.push({
+            module: mod,
+            word: hit.word,
+            matchType: hit.matchType
+          });
+          added = true;
+        }
+      } catch (err) {
+        // Ignora módulo com esquema incompatível
+      } finally {
+        scanned++;
+        if (onProgress && (!signal || !signal.aborted)) {
+          if (added || scanned === ranked.length || scanned % 6 === 0) {
+            onProgress(scanned, ranked.length, sortPresenceMatches(matches, origOrder));
+          }
+        }
+      }
+    },
+    signal
+  );
+
+  if (signal && signal.aborted) return [];
+
+  const finalSorted = sortPresenceMatches(matches, origOrder);
+  const cacheKey = buildPresenceCacheKey(list, clean, searchBody);
+
+  if (termPresenceCache.size >= TERM_PRESENCE_CACHE_LIMIT) {
+    const oldestKey = termPresenceCache.keys().next().value;
+    if (oldestKey !== undefined) termPresenceCache.delete(oldestKey);
+  }
+  termPresenceCache.set(
+    cacheKey,
+    finalSorted.map((item) => ({
+      path: item.module.path,
+      word: item.word,
+      matchType: item.matchType
+    }))
+  );
+
+  return finalSorted;
 }
 
 export async function lookupExactAcrossDictionaries(dictionaries, rawTerm, options = {}) {
