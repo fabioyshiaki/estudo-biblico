@@ -14,6 +14,7 @@ import { clearBibleSearchCache } from '../formats/bible-search.js';
 import { clearUnifiedDictSearchCache } from '../formats/dictionary-search.js';
 import { clearCommentarySearchCache } from '../formats/commentary-search.js';
 import { clearMapServiceCache } from '../formats/map-service.js';
+import { clearFsLookupCache } from '../formats/fs-internal-lookup.js';
 import {
   myswordCommentaryAdapter,
   clearCommentaryLookupCache
@@ -631,7 +632,7 @@ async function findBibleContainingBook(bookId, preferredModulePath = '') {
 
   const prioritized = allBibles.slice().sort((a, b) => {
     const aSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(a.abbr || '');
-    const bSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(b.abbr || '');
+    const bSkip = isOT ? /^nt\b/i.test(b.abbr || '') : /^at\b/i.test(b.abbr || '');
     return Number(aSkip) - Number(bSkip);
   });
 
@@ -862,9 +863,9 @@ async function goBackFromBibleJump() {
   });
 }
 
-async function openTermInDictionary(term, { searchAll = false, moduleHint = '' } = {}) {
+async function openTermInDictionary(term, { searchAll = false, moduleHint = '', sourceModulePath = '' } = {}) {
   const dicts = store.getDictionaries();
-  if (!dicts.length) {
+  if (!dicts.length && !sourceModulePath) {
     showToast('Adicione um dicionário (.dct.mybible) em Configurações → Fontes.');
     openSettingsModal({ initialTab: 'sources', initialKind: 'dictionary' });
     return;
@@ -892,6 +893,7 @@ async function openTermInDictionary(term, { searchAll = false, moduleHint = '' }
 
   await openDictionaryEntry(term, {
     moduleHint,
+    sourceModulePath,
     pushHistory: true,
     fallbackAll: true
   });
@@ -1179,6 +1181,7 @@ function bindStateEvents() {
     clearUnifiedDictSearchCache();
     clearCommentarySearchCache();
     clearMapServiceCache();
+    clearFsLookupCache();
     clearBibleSearchSession();
     myswordCommentaryAdapter.clearCache();
     clearCommentaryLookupCache();
