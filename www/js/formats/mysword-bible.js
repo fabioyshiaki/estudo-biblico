@@ -303,7 +303,7 @@ export function formatMySwordScripture(rawText, options = {}) {
     }
   );
 
-  // 2. Extrai títulos de seção (<TS>...</Ts> ou <TS1>...</Ts>), preservando notas embutidas como botão
+  // 2. Extrai títulos de seção (<TS>...</Ts> ou <TS1>...</Ts>), preservando notas embutidas e ignorando vazios como "()"
   const headings = [];
   text = text.replace(/<TS\d?>([\s\S]*?)<\/?Ts\d?>/gi, (_, inner) => {
     const embeddedTokens = [];
@@ -316,7 +316,7 @@ export function formatMySwordScripture(rawText, options = {}) {
       .replace(/^(?:\|\||[|•·\-–—])+\s*/, '')
       .replace(/\s*(?:\|\||[|•·\-–—])+$/, '')
       .trim();
-    if (clean) headings.push(clean);
+    if (clean && /[\p{L}\p{N}]/u.test(clean)) headings.push(clean);
     return embeddedTokens.join('');
   });
 
