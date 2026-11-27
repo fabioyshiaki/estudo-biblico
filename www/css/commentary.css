@@ -1,0 +1,300 @@
+/* Estilos do Leitor de Comentários Bíblicos (adaptado aos 4 temas: paper, light, sepia, dark) */
+
+:root,
+:root[data-theme="paper"] {
+  --ms-badge-cmt-bg: #2563ab;
+  --ms-badge-cmt-fg: #ffffff;
+  --cmt-card-bg: #ffffff;
+  --cmt-card-border: #dcd4c6;
+  --cmt-badge-chapter-bg: rgba(37, 99, 171, 0.13);
+  --cmt-badge-chapter-fg: #1d5394;
+  --cmt-badge-range-bg: rgba(46, 139, 60, 0.13);
+  --cmt-badge-range-fg: #1e732c;
+  --cmt-badge-verse-bg: rgba(158, 90, 22, 0.13);
+  --cmt-badge-verse-fg: #8c4d10;
+  --cmt-badge-intro-bg: rgba(108, 70, 168, 0.13);
+  --cmt-badge-intro-fg: #633d9c;
+}
+
+:root[data-theme="light"] {
+  --ms-badge-cmt-bg: #2563eb;
+  --ms-badge-cmt-fg: #ffffff;
+  --cmt-card-bg: #ffffff;
+  --cmt-card-border: #d7dee8;
+  --cmt-badge-chapter-bg: rgba(37, 99, 235, 0.12);
+  --cmt-badge-chapter-fg: #1d4ed8;
+  --cmt-badge-range-bg: rgba(22, 124, 62, 0.12);
+  --cmt-badge-range-fg: #156e38;
+  --cmt-badge-verse-bg: rgba(161, 82, 11, 0.12);
+  --cmt-badge-verse-fg: #924808;
+  --cmt-badge-intro-bg: rgba(107, 66, 176, 0.12);
+  --cmt-badge-intro-fg: #5e389e;
+}
+
+:root[data-theme="sepia"] {
+  --ms-badge-cmt-bg: #245c96;
+  --ms-badge-cmt-fg: #ffffff;
+  --cmt-card-bg: #faf4e8;
+  --cmt-card-border: #d2c2a8;
+  --cmt-badge-chapter-bg: rgba(36, 92, 150, 0.14);
+  --cmt-badge-chapter-fg: #1d4d80;
+  --cmt-badge-range-bg: rgba(44, 122, 59, 0.14);
+  --cmt-badge-range-fg: #23632f;
+  --cmt-badge-verse-bg: rgba(143, 78, 16, 0.14);
+  --cmt-badge-verse-fg: #7a410b;
+  --cmt-badge-intro-bg: rgba(102, 61, 148, 0.14);
+  --cmt-badge-intro-fg: #583482;
+}
+
+:root[data-theme="dark"] {
+  --ms-badge-cmt-bg: #3b7dd8;
+  --ms-badge-cmt-fg: #ffffff;
+  --cmt-card-bg: #0b0d10;
+  --cmt-card-border: #20252d;
+  --cmt-badge-chapter-bg: rgba(78, 168, 222, 0.18);
+  --cmt-badge-chapter-fg: #7bc4f2;
+  --cmt-badge-range-bg: rgba(105, 201, 78, 0.17);
+  --cmt-badge-range-fg: #7be061;
+  --cmt-badge-verse-bg: rgba(240, 183, 98, 0.18);
+  --cmt-badge-verse-fg: #f3c173;
+  --cmt-badge-intro-bg: rgba(194, 157, 255, 0.18);
+  --cmt-badge-intro-fg: #ccb0ff;
+}
+
+/* Selo azul quadrado "C" (topo, menu lateral e dock inferior) */
+.ms-res-badge--commentary {
+  background: var(--ms-badge-cmt-bg);
+  color: var(--ms-badge-cmt-fg);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+/* Container do leitor de comentários */
+.cmt-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cmt-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--cmt-card-bg);
+  border: 1px solid var(--cmt-card-border);
+}
+
+.cmt-context-ref {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cmt-context-title {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ms-active-green);
+}
+
+.cmt-context-sub {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cmt-context-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cmt-mini-btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-main);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cmt-mini-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+/* Barra horizontal das seções disponíveis no capítulo atual */
+.cmt-sections-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 1px 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cmt-sections-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.cmt-section-chip {
+  flex: 0 0 auto;
+  height: 29px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--cmt-card-bg);
+  color: var(--text-main);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cmt-section-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+/* Cartões de comentário exibidos para a passagem ativa */
+.cmt-entry-card {
+  padding: 12px 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--cmt-card-bg);
+  border: 1px solid var(--cmt-card-border);
+}
+
+.cmt-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmt-entry-ref {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.cmt-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.cmt-scope-badge--chapter,
+.cmt-scope-badge--multiChapter {
+  background: var(--cmt-badge-chapter-bg);
+  color: var(--cmt-badge-chapter-fg);
+}
+
+.cmt-scope-badge--range {
+  background: var(--cmt-badge-range-bg);
+  color: var(--cmt-badge-range-fg);
+}
+
+.cmt-scope-badge--verse {
+  background: var(--cmt-badge-verse-bg);
+  color: var(--cmt-badge-verse-fg);
+}
+
+.cmt-scope-badge--bookIntro {
+  background: var(--cmt-badge-intro-bg);
+  color: var(--cmt-badge-intro-fg);
+}
+
+.cmt-entry-body {
+  font-family: var(--reader-font-family);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+  text-align: var(--reader-align);
+  color: var(--text-main);
+  word-wrap: break-word;
+}
+
+.cmt-entry-body[dir="rtl"] {
+  text-align: right;
+}
+
+.cmt-entry-body p {
+  margin: 0 0 10px;
+}
+
+.cmt-entry-body ul,
+.cmt-entry-body ol {
+  margin: 6px 0 12px;
+  padding-left: 22px;
+}
+
+.cmt-entry-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 0.92em;
+}
+
+.cmt-entry-body th,
+.cmt-entry-body td {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+/* Lista alternativa quando o comentário atual não cobre o versículo exato */
+.cmt-fallback-box {
+  padding: 16px 14px;
+  border-radius: var(--radius-md);
+  background: var(--cmt-card-bg);
+  border: 1px solid var(--cmt-card-border);
+}
+
+.cmt-fallback-box h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.cmt-fallback-box p {
+  margin: 0 0 12px;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.cmt-fallback-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
