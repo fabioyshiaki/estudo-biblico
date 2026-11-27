@@ -7,6 +7,10 @@ import {
   loadCompanionRefsForChapter,
   buildCompanionBarHtml
 } from '../formats/companion-dicts.js';
+import {
+  loadMapMarkersForChapter,
+  buildVerseMapPinHtml
+} from '../formats/map-service.js';
 
 const SHORT_BOOK_ABBR = [
   '',
@@ -25,11 +29,13 @@ let callbacks = {
   onRequestPermission: () => {},
   onLookupDictionary: () => {},
   onOpenCompanionGroup: () => {},
+  onOpenVerseMap: () => {},
   onBibleChromeUpdated: () => {}
 };
 
 let currentVerses = [];
 let currentCompanionMap = new Map();
+let currentMapMarkers = new Map();
 let selectedVerseNum = null;
 let renderSeq = 0;
 
@@ -99,6 +105,18 @@ export function initReaderView(opts = {}) {
       if (verseObj && verseObj.footnotes && verseObj.footnotes[fnIdx]) {
         const ref = formatReference(verseObj.book, verseObj.chapter, verseObj.verse);
         callbacks.onOpenFootnote(ref, verseObj.footnotes[fnIdx]);
+      }
+      return;
+    }
+
+    // Símbolo de localização no mapa (pino azul no final do versículo)
+    const mapPinBtn = ev.target.closest('.v-map-pin-btn');
+    if (mapPinBtn) {
+      ev.stopPropagation();
+      const vNum = Number(mapPinBtn.dataset.mapVerse);
+      const markerInfo = currentMapMarkers.get(vNum);
+      if (markerInfo) {
+        callbacks.onOpenVerseMap(markerInfo);
       }
       return;
     }
@@ -261,6 +279,7 @@ function renderEmptyState({ title, message, primaryLabel, primaryAction, seconda
   container.classList.remove('has-interlinear');
   currentVerses = [];
   currentCompanionMap = new Map();
+  currentMapMarkers = new Map();
   selectedVerseNum = null;
 
   container.innerHTML = `
@@ -358,6 +377,10 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     ]);
     if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
 
+    const mapMarkers = await loadMapMarkersForChapter(targetBook, targetChapter, verses)
+      .catch(() => new Map());
+    if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
+
     const bookIdx = books.indexOf(targetBook);
     const chapIdx = chapters.indexOf(targetChapter);
     const isFirstBook = bookIdx <= 0;
@@ -384,6 +407,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
       ? requestedVerse
       : (activeVerseNum > firstVerseInChap ? activeVerseNum : null);
     currentCompanionMap = companionMap || new Map();
+    currentMapMarkers = mapMarkers || new Map();
 
     const hasInterlinear = verses.some((v) => v.html.includes('il-block'));
     const parts = [];
@@ -422,12 +446,15 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
 
       const companionGroups = currentCompanionMap.get(v.verse) || [];
       const companionHtml = buildCompanionBarHtml(v.verse, companionGroups);
+      const mapMarker = currentMapMarkers.get(v.verse) || null;
+      const mapPinHtml = buildVerseMapPinHtml(v.verse, mapMarker);
 
       parts.push(
         `<div class="${itemClasses}" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
           `<span class="verse-num">${v.verse}</span>` +
           `<span class="verse-text">${v.html}</span>` +
           companionHtml +
+          mapPinHtml +
         '</div>'
       );
     }
