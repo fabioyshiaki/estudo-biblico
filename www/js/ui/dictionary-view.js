@@ -11,6 +11,7 @@ import {
 import { parseBibleReference } from '../core/bible-refs.js';
 import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
 import { ensureCompanionStyles } from '../formats/companion-dicts.js';
+import { openDictionaryTermsModal } from './dictionary-terms-modal.js';
 
 const viewState = {
   dictionaries: [],
@@ -211,6 +212,26 @@ export function getDictionaryViewState() {
     searchBody: viewState.searchBody,
     historyLength: viewState.history.length
   };
+}
+
+export function openActiveDictionaryTerms() {
+  const mod = getActiveModule();
+  if (!mod) {
+    callbacks.onToast('Nenhum dicionário selecionado.');
+    return;
+  }
+
+  openDictionaryTermsModal({
+    dictionaryModule: mod,
+    currentWord: viewState.currentEntry ? viewState.currentEntry.word : '',
+    onSelectTerm: (chosenWord) => {
+      openDictionaryEntry(chosenWord, {
+        modulePath: mod.path,
+        pushHistory: true,
+        fallbackAll: false
+      });
+    }
+  });
 }
 
 export async function setActiveDictionaryModule(modulePath, options = {}) {
@@ -592,6 +613,7 @@ function buildToolbarHtml() {
   return (
     '<form class="dct-toolbar" id="dct-search-form">' +
       `<button type="button" class="dct-action-btn" id="dct-btn-back"${backDisabled} aria-label="Voltar ao verbete anterior">&larr; Voltar</button>` +
+      '<button type="button" class="dct-action-btn" id="dct-btn-terms" aria-label="Ver lista de todos os termos do dicionário">&#9776; Termos</button>' +
       `<input type="search" class="dct-search-input" id="dct-search-input" value="${escapeHtml(viewState.query)}" placeholder="Buscar verbete, Strong (H430, G976) ou palavra..." autocomplete="off" />` +
       '<button type="submit" class="dct-action-btn is-primary" id="dct-btn-search-one">Buscar</button>' +
       '<button type="button" class="dct-action-btn" id="dct-btn-search-all">Em todos</button>' +
@@ -704,6 +726,10 @@ function bindRenderedEvents(rootEl) {
       });
     });
   }
+
+  rootEl.querySelector('#dct-btn-terms')?.addEventListener('click', () => {
+    openActiveDictionaryTerms();
+  });
 
   rootEl.querySelector('#dct-btn-search-all')?.addEventListener('click', () => {
     const term = input ? input.value : viewState.query;
