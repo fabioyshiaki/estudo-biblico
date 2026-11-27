@@ -199,17 +199,20 @@ export function initReaderView(opts = {}) {
 
     const curState = store.getState();
     const refLabel = document.getElementById('label-active-ref');
+    const firstVerseNum = currentVerses[0] ? currentVerses[0].verse : 1;
 
     if (!alreadySelected) {
       verseEl.classList.add('is-selected');
+      store.setActiveVerse(verseNum, { silent: true });
       if (refLabel) {
         refLabel.textContent = formatCompactRef(curState.book, curState.chapter, verseNum);
       }
       const verseObj = currentVerses.find((v) => v.verse === verseNum) || null;
       eventBus.emit(EVENTS.VERSE_TAPPED, verseObj);
     } else {
+      store.setActiveVerse(firstVerseNum, { silent: true });
       if (refLabel) {
-        refLabel.textContent = formatCompactRef(curState.book, curState.chapter, 1);
+        refLabel.textContent = formatCompactRef(curState.book, curState.chapter, firstVerseNum);
       }
       eventBus.emit(EVENTS.VERSE_TAPPED, null);
     }
@@ -362,11 +365,24 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     const isFirst = isFirstBook && chapIdx <= 0;
     const isLast = isLastBook && (chapIdx < 0 || chapIdx >= chapters.length - 1);
 
-    const initialVerseNum = Number(scrollToVerse) || (verses[0] ? verses[0].verse : 1);
-    updateChrome(bible, targetBook, targetChapter, { isFirst, isLast, isFirstBook, isLastBook }, initialVerseNum);
+    const firstVerseInChap = verses[0] ? verses[0].verse : 1;
+    const requestedVerse = Number(scrollToVerse) || 0;
+    const storedVerse = Number(state.verse) || firstVerseInChap;
+    const hasStoredVerse = verses.some((v) => v.verse === storedVerse);
+    const activeVerseNum = requestedVerse > 0
+      ? requestedVerse
+      : (hasStoredVerse ? storedVerse : firstVerseInChap);
+
+    if (activeVerseNum !== state.verse) {
+      store.setActiveVerse(activeVerseNum, { silent: true });
+    }
+
+    updateChrome(bible, targetBook, targetChapter, { isFirst, isLast, isFirstBook, isLastBook }, activeVerseNum);
 
     currentVerses = verses;
-    selectedVerseNum = Number(scrollToVerse) || null;
+    selectedVerseNum = requestedVerse > 0
+      ? requestedVerse
+      : (activeVerseNum > firstVerseInChap ? activeVerseNum : null);
     currentCompanionMap = companionMap || new Map();
 
     const hasInterlinear = verses.some((v) => v.html.includes('il-block'));
@@ -425,13 +441,20 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     }
 
     const scrollBox = document.getElementById('reader-scroll');
-    if (scrollToVerse && container) {
-      const targetVerseEl = container.querySelector(`.verse-item[data-verse="${Number(scrollToVerse)}"]`);
+    if (requestedVerse > 0 && container) {
+      const targetVerseEl = container.querySelector(`.verse-item[data-verse="${requestedVerse}"]`);
       if (targetVerseEl) {
-        selectedVerseNum = Number(scrollToVerse);
+        selectedVerseNum = requestedVerse;
         targetVerseEl.classList.add('is-selected');
         targetVerseEl.scrollIntoView({ behavior: 'auto', block: 'center' });
         return;
+      }
+    }
+
+    if (selectedVerseNum && container) {
+      const activeVerseEl = container.querySelector(`.verse-item[data-verse="${selectedVerseNum}"]`);
+      if (activeVerseEl) {
+        activeVerseEl.classList.add('is-selected');
       }
     }
 
