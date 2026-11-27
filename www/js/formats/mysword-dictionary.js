@@ -73,6 +73,14 @@ function decodeCommonEntities(str) {
   });
 }
 
+function safeDecodeUri(str) {
+  try {
+    return decodeURIComponent(str);
+  } catch (err) {
+    return str;
+  }
+}
+
 function stripTagsPlain(str) {
   return decodeCommonEntities(
     decodeNumericEntities(String(str || ''))
@@ -120,7 +128,6 @@ export function buildLookupCandidates(rawTerm) {
 
   push(clean);
 
-  // Variações de códigos Strong (ex.: H430, H0430, H00430, 430)
   const strongMatch = /^([GH])\s*0*(\d+)([a-z]?)$/i.exec(clean);
   if (strongMatch) {
     const prefix = strongMatch[1].toUpperCase();
@@ -132,13 +139,11 @@ export function buildLookupCandidates(rawTerm) {
     push(`${num}${suffix}`);
   }
 
-  // Sem acentos latinos (útil para buscas em dicionários sem acentuação)
   const noAccents = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (noAccents && noAccents !== clean) {
     push(noAccents);
   }
 
-  // Sem niqqud/cantilação hebraica ou acentos politônicos gregos
   const noMarks = clean.normalize('NFD').replace(/[\u0300-\u036f\u0591-\u05C7\u0730-\u074A]/g, '');
   if (noMarks && noMarks !== clean) {
     push(noMarks);
@@ -165,12 +170,19 @@ function buildSnippet(rawData, query) {
   return `${prefix}${plain.slice(start, end).trim()}${suffix}`;
 }
 
+function cleanLabel(str) {
+  return stripTagsPlain(str).replace(/\s+/g, ' ').trim();
+}
+
 function classifyHrefLink(hrefRaw, labelText) {
   const href = decodeCommonEntities(decodeNumericEntities(String(hrefRaw || ''))).trim();
   const label = cleanLabel(labelText) || href;
 
-  // Referência bíblica: b40.1.1 ou b1.1.1-5
-  const bibleMatch = /^b\s*(.+)$/i.exec(href);
+  if (/^(?:https?:|mailto:|wiki\/)/i.test(href)) {
+    return null;
+  }
+
+  const bibleMatch = /^b\s*(\d+[\s.:]\d+[\s\S]*)$/i.exec(href);
   if (bibleMatch) {
     return {
       kind: 'bible',
@@ -180,7 +192,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // Código Strong: sH430 ou sG976
   const strongMatch = /^s\s*([GH]\d+[a-z]?)$/i.exec(href);
   if (strongMatch) {
     return {
@@ -191,7 +202,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // Morfologia: mN-NSF
   const morphMatch = /^m\s*(.+)$/i.exec(href);
   if (morphMatch) {
     return {
@@ -202,7 +212,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // Link para outro dicionário específico: d-Strong H430 ou d-LouwNida 33.38
   const modDictMatch = /^d-([^\s]+)\s+(.+)$/i.exec(href);
   if (modDictMatch) {
     return {
@@ -213,7 +222,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // Link para verbete no dicionário atual: dPalavra ou #Palavra
   const dictMatch = /^(?:d|#)([\s\S]+)$/i.exec(href);
   if (dictMatch) {
     return {
@@ -227,14 +235,9 @@ function classifyHrefLink(hrefRaw, labelText) {
   return null;
 }
 
-function cleanLabel(str) {
-  return stripTagsPlain(str).replace(/\s+/g, ' ').trim();
-}
-
 export function formatMySwordDictionaryData(rawData) {
   let text = decodeNumericEntities(String(rawData || '').replace(/\r\n/g, '\n'));
 
-  // Remove blocos perigosos
   text = text.replace(/<(script|style|iframe)[\s\S]*?<\/\1>/gi, '');
 
   // 1. Extrai notas <RF>...</Rf>
@@ -249,6 +252,40 @@ export function formatMySwordDictionaryData(rawData) {
     return `\u0001${idx}\u0001`;
   });
 
+  // 1b. Extrai imagens <img ... src="..."> (e eventual URL Wikimedia próxima para fallback)
+  const imageTokens = [];
+  text = text.replace(/<img\b([^>]*)>/gi, (full, attrs, offset, fullStr) => {
+    const srcMatch = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs || '');
+    const altMatch = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs || '');
+    const src = decodeCommonEntities(decodeNumericEntities((srcMatch && (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3])) || '')).trim();
+    if (!src) return '';
+
+    const alt = decodeCommonEntities(decodeNumericEntities((altMatch && (altMatch[1] ?? altMatch[2])) || '')).trim();
+
+    const afterSlice = fullStr.slice(offset + full.length, offset + full.length + 500);
+    const wikiFileMatch = /href\s*=\s*["'](https?:\/\/(?:commons\.wikimedia\.org|en\.wikipedia\.org)\/wiki\/File:[^"']+)["']/i.exec(afterSlice);
+    const fallbackUrl = wikiFileMatch ? wikiFileMatch[1] : '';
+
+    const idx = imageTokens.length;
+    imageTokens.push({ src, alt, fallbackUrl });
+    return `\u0006${idx}\u0006`;
+  });
+
+  // 1c. Extrai notas embutidas <a href="r ...">[3]</a>
+  text = text.replace(
+    /<a\b[^>]*\bhref\s*=\s*(?:"r\s+([^"]*)"|'r\s+([^']*)')[^>]*>([\s\S]*?)<\/a>/gi,
+    (_, dbl, sgl, labelRaw) => {
+      const noteRaw = dbl !== undefined ? dbl : sgl;
+      const clean = stripTagsPlain(safeDecodeUri(noteRaw || ''));
+      if (!clean) return '';
+      const label = cleanLabel(labelRaw).replace(/^\[|\]$/g, '') || '*';
+      const idx = footnotes.length;
+      footnotes.push(clean);
+      footnoteLabels.push(label);
+      return `\u0001${idx}\u0001`;
+    }
+  );
+
   // 2. Converte links internos, Strong, Morfologia e referências <RX> em tokens clicáveis
   const linkTokens = [];
   const pushLinkToken = (linkObj) => {
@@ -260,6 +297,10 @@ export function formatMySwordDictionaryData(rawData) {
   text = text.replace(
     /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi,
     (_, dbl, sgl, bare, inner) => {
+      // Preserva imagens que eventualmente venham dentro de uma tag <a>
+      if (/\u0006\d+\u0006/.test(inner)) {
+        return inner;
+      }
       const href = dbl ?? sgl ?? bare ?? '';
       const parsed = classifyHrefLink(href, inner);
       if (parsed) return pushLinkToken(parsed);
@@ -286,10 +327,17 @@ export function formatMySwordDictionaryData(rawData) {
     return pushLinkToken({ kind: 'bible', target: ref, moduleHint: '', label: ref });
   });
 
-  // 3. Escapa HTML e restaura apenas tags estruturais seguras (sem cores inline fixas)
+  // 3. Preserva classes estruturais úteis (.info e .definition) antes de escapar HTML
+  text = text
+    .replace(/<(p|div)\b[^>]*class\s*=\s*["'][^"']*\binfo\b[^"']*["'][^>]*>/gi, '\u0007INFO_OPEN\u0007')
+    .replace(/<(p|div)\b[^>]*class\s*=\s*["'][^"']*\bdefinition\b[^"']*["'][^>]*>/gi, '\u0007DEF_OPEN\u0007');
+
+  // 4. Escapa HTML e restaura apenas tags estruturais seguras (sem cores inline fixas)
   let safe = escapeHtml(text);
 
   safe = safe
+    .replace(/\u0007INFO_OPEN\u0007/g, '<div class="dct-info">')
+    .replace(/\u0007DEF_OPEN\u0007/g, '<div class="dct-definition">')
     .replace(/&lt;TS\d?&gt;([\s\S]*?)&lt;\/?Ts\d?&gt;/gi, '<h4 class="dct-subhead">$1</h4>')
     .replace(/&lt;FR&gt;/g, '<span class="v-red">')
     .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
@@ -309,6 +357,8 @@ export function formatMySwordDictionaryData(rawData) {
     .replace(/&lt;\/(b|strong|i|em|u|sup|sub)&gt;/gi, '</$1>')
     .replace(/&lt;\/?[a-zA-Z][a-zA-Z0-9_:*.-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g, '');
 
+  safe = safe.replace(/<div class="dct-info">([\s\S]*?)<\/p>/gi, '<div class="dct-info">$1</div>');
+
   safe = decodeCommonEntities(safe)
     .replace(/\n{2,}/g, '<br><br>')
     .replace(/\n/g, '<br>')
@@ -317,7 +367,19 @@ export function formatMySwordDictionaryData(rawData) {
     .replace(/(<br>\s*)+$/, '')
     .trim();
 
-  // 4. Restaura links clicáveis
+  // 5. Restaura figuras de imagem (sem loading="lazy" para garantir disparo imediato no Android WebView)
+  safe = safe.replace(/(?:<p>\s*)?\u0006(\d+)\u0006(?:\s*<\/p>)?/g, (_, idxStr) => {
+    const img = imageTokens[Number(idxStr)];
+    if (!img) return '';
+    const fbAttr = img.fallbackUrl ? ` data-dct-img-fallback="${escapeHtml(img.fallbackUrl)}"` : '';
+    return (
+      '<figure class="dct-pic" data-bref-skip="1">' +
+        `<img class="dct-img is-loading" data-dct-img-src="${escapeHtml(img.src)}"${fbAttr} alt="${escapeHtml(img.alt)}" />` +
+      '</figure>'
+    );
+  });
+
+  // 6. Restaura links clicáveis
   safe = safe.replace(/\u0005(\d+)\u0005/g, (_, idxStr) => {
     const link = linkTokens[Number(idxStr)];
     if (!link) return '';
@@ -334,7 +396,7 @@ export function formatMySwordDictionaryData(rawData) {
     return `<button type="button" class="dct-link ${extraCls}" data-dct-lookup="${escapeHtml(link.target)}"${modAttr}>${labelHtml}</button>`;
   });
 
-  // 5. Restaura notas de rodapé
+  // 7. Restaura notas de rodapé
   safe = safe.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
     const idx = Number(idxStr);
     const label = footnoteLabels[idx] || '*';
@@ -344,6 +406,7 @@ export function formatMySwordDictionaryData(rawData) {
   return {
     html: safe,
     footnotes,
+    hasImages: imageTokens.length > 0,
     isRtl: RE_RTL_SCRIPT.test(safe) && !/[A-Za-zÀ-ÿ]{12,}/.test(stripTagsPlain(rawData))
   };
 }
@@ -371,7 +434,7 @@ async function resolveSchema(modulePath) {
     }
   }
   if (!tableName) {
-    tableName = tableNames.find((t) => !/^(?:details|info|sqlite_|android_metadata)/i.test(t)) || '';
+    tableName = tableNames.find((t) => !/^(?:details|info|data|verse|sqlite_|android_metadata)/i.test(t)) || '';
   }
   if (!tableName) {
     throw new Error('Tabela de dicionário não encontrada no módulo.');
@@ -395,6 +458,7 @@ async function resolveSchema(modulePath) {
 
   const wordCol = pickCol(['word', 'topic', 'key', 'term', 'entry', 'strong', 'subject'], 0);
   const dataCol = pickCol(['data', 'definition', 'content', 'text', 'body', 'meaning'], 1);
+  const altCol = cols.find((col) => col.toLowerCase() === 'alt_words') || '';
 
   if (!wordCol || !dataCol) {
     throw new Error(`Colunas do dicionário não identificadas na tabela ${tableName}.`);
@@ -404,9 +468,11 @@ async function resolveSchema(modulePath) {
     tableName,
     wordCol,
     dataCol,
+    altCol,
     qTable: quoteIdent(tableName),
     qWord: quoteIdent(wordCol),
-    qData: quoteIdent(dataCol)
+    qData: quoteIdent(dataCol),
+    qAlt: altCol ? quoteIdent(altCol) : ''
   };
   schemaCache.set(modulePath, schema);
   return schema;
@@ -477,7 +543,19 @@ export const myswordDictionaryAdapter = {
         `WHERE ${s.qWord} IN (${placeholders}) COLLATE NOCASE LIMIT 1`,
       candidates
     );
-    const row = res && Array.isArray(res.rows) ? res.rows[0] : null;
+    let row = res && Array.isArray(res.rows) ? res.rows[0] : null;
+
+    if (!row && s.qAlt) {
+      const primary = candidates[0];
+      const altRes = await nativeBridge.queryModule(
+        modulePath,
+        `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
+          `WHERE ${s.qAlt} = ? COLLATE NOCASE OR ${s.qAlt} LIKE ? COLLATE NOCASE LIMIT 1`,
+        [primary, `%${primary}%`]
+      );
+      row = altRes && Array.isArray(altRes.rows) ? altRes.rows[0] : null;
+    }
+
     if (!row) return null;
 
     const word = String(getRowField(row, 'word') || '');
@@ -489,6 +567,7 @@ export const myswordDictionaryAdapter = {
       raw,
       html: parsed.html,
       footnotes: parsed.footnotes,
+      hasImages: parsed.hasImages,
       isRtl: parsed.isRtl
     };
   },
@@ -512,6 +591,7 @@ export const myswordDictionaryAdapter = {
       raw,
       html: parsed.html,
       footnotes: parsed.footnotes,
+      hasImages: parsed.hasImages,
       isRtl: parsed.isRtl
     };
   },
@@ -544,6 +624,7 @@ export const myswordDictionaryAdapter = {
       raw,
       html: parsed.html,
       footnotes: parsed.footnotes,
+      hasImages: parsed.hasImages,
       isRtl: parsed.isRtl
     };
   },
@@ -559,7 +640,6 @@ export const myswordDictionaryAdapter = {
     const results = [];
     const seen = new Set();
 
-    // 1. Busca exata nas variações (Strong, acentos, etc.)
     const placeholders = candidates.map(() => '?').join(', ');
     const exactRes = await nativeBridge.queryModule(
       modulePath,
@@ -579,15 +659,21 @@ export const myswordDictionaryAdapter = {
       });
     }
 
-    // 2. Busca por prefixo ou trecho no título do verbete
     if (results.length < limit) {
+      const whereClause = s.qAlt
+        ? `(${s.qWord} LIKE ? COLLATE NOCASE OR ${s.qAlt} LIKE ? COLLATE NOCASE)`
+        : `${s.qWord} LIKE ? COLLATE NOCASE`;
+      const params = s.qAlt
+        ? [`%${clean}%`, `%${clean}%`, `${clean}%`, limit]
+        : [`%${clean}%`, `${clean}%`, limit];
+
       const titleRes = await nativeBridge.queryModule(
         modulePath,
         `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-          `WHERE ${s.qWord} LIKE ? COLLATE NOCASE ` +
+          `WHERE ${whereClause} ` +
           `ORDER BY CASE WHEN ${s.qWord} LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END, ` +
           `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ?`,
-        [`%${clean}%`, `${clean}%`, limit]
+        params
       );
       for (const row of (titleRes && titleRes.rows) || []) {
         if (results.length >= limit) break;
@@ -603,7 +689,6 @@ export const myswordDictionaryAdapter = {
       }
     }
 
-    // 3. Busca opcional dentro do texto das definições
     if (searchBody && results.length < limit && clean.length >= 2) {
       const remaining = limit - results.length;
       const bodyRes = await nativeBridge.queryModule(
