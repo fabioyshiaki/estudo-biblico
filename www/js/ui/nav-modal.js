@@ -3,7 +3,10 @@ import { store } from '../core/store.js';
 import { eventBus, EVENTS } from '../core/events.js';
 import { getBookMeta } from '../core/canon.js';
 import { loadBooksForBible, loadChaptersForBible } from './reader-view.js';
-import { normalizeLookupTerm } from '../formats/mysword-dictionary.js';
+import {
+  normalizeLookupTerm,
+  normalizeDictSearchOptions
+} from '../formats/mysword-dictionary.js';
 import {
   findDictionariesWithTerm,
   getCachedDictionariesWithTerm
@@ -34,6 +37,19 @@ function matchesModuleQuery(mod, terms) {
     `${mod.abbr || ''} ${mod.title || ''} ${mod.language || ''} ${mod.fileName || ''}`
   );
   return terms.every((term) => haystack.includes(term));
+}
+
+function buildCompactFilterSummary(opts) {
+  const tags = [];
+  if (opts.matchMode === 'exact') tags.push('Exata');
+  else if (opts.matchMode === 'startsWith') tags.push('Início');
+  if (opts.accentSensitive) tags.push('Acento');
+  if (opts.caseSensitive) tags.push('Aa');
+  if (opts.searchBody) tags.push('No texto');
+  if (!opts.searchAltWords) tags.push('Sem sinôn.');
+  if (opts.exactPhrase) tags.push('Frase');
+  if (opts.favoritesOnly) tags.push('Favoritos ★');
+  return tags.join(' · ');
 }
 
 function scrollChildToTop(scrollContainer, targetEl, extraTopOffset = 12) {
@@ -303,9 +319,13 @@ export function openDictionaryPickerModal({
   onOpenSources,
   filterTerm = '',
   searchBody = false,
+  searchOptions = null,
   onSelectDictionary = null
 } = {}) {
   const cleanFilter = normalizeLookupTerm(filterTerm);
+  const effectiveSearchOpts = normalizeDictSearchOptions(
+    searchOptions ? searchOptions : { searchBody }
+  );
 
   // Sem termo pesquisado: exibe todos os dicionários normalmente
   if (!cleanFilter) {
@@ -347,18 +367,31 @@ export function openDictionaryPickerModal({
     return;
   }
 
+  const targetPoolInitial = effectiveSearchOpts.favoritesOnly
+    ? allDictsInitial.filter((m) => m.isFavorite)
+    : allDictsInitial;
+  const activeFilterSummary = buildCompactFilterSummary(effectiveSearchOpts);
+
   let searchQuery = '';
   let filterEnabled = true;
   let scanController = null;
   let scanDone = 0;
-  let scanTotal = allDictsInitial.length;
+  let scanTotal = targetPoolInitial.length;
   let isScanning = false;
   let matchedEntries = [];
 
-  const cachedMatches = getCachedDictionariesWithTerm(allDictsInitial, cleanFilter, { searchBody });
+  const cachedMatches = getCachedDictionariesWithTerm(
+    allDictsInitial,
+    cleanFilter,
+    effectiveSearchOpts
+  );
   if (cachedMatches) {
     matchedEntries = cachedMatches;
-    scanDone = allDictsInitial.length;
+    scanDone = scanTotal;
+    isScanning = false;
+  } else if (scanTotal === 0) {
+    matchedEntries = [];
+    scanDone = 0;
     isScanning = false;
   } else {
     isScanning = true;
@@ -384,6 +417,7 @@ export function openDictionaryPickerModal({
           Ver todos (${allDictsInitial.length})
         </button>
       </div>
+      ${activeFilterSummary ? `<div class="picker-meta" id="mod-filter-summary" style="margin-top:2px;color:var(--accent);">Filtros: ${escapeHtml(activeFilterSummary)}</div>` : ''}
     </div>
     <div class="module-list" id="mod-picker-list"></div>
     <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
@@ -395,6 +429,7 @@ export function openDictionaryPickerModal({
   const inputEl = modal.body.querySelector('#mod-search-input');
   const clearBtn = modal.body.querySelector('#mod-search-clear');
   const metaEl = modal.body.querySelector('#mod-picker-meta');
+  const summaryEl = modal.body.querySelector('#mod-filter-summary');
   const toggleFilterBtn = modal.body.querySelector('#btn-toggle-dict-filter');
   const listEl = modal.body.querySelector('#mod-picker-list');
 
@@ -450,6 +485,10 @@ export function openDictionaryPickerModal({
 
     clearBtn?.classList.toggle('hidden', !searchQuery.length);
 
+    if (summaryEl) {
+      summaryEl.classList.toggle('hidden', !filterEnabled);
+    }
+
     if (toggleFilterBtn) {
       toggleFilterBtn.textContent = filterEnabled
         ? `Ver todos (${allDicts.length})`
@@ -481,9 +520,12 @@ export function openDictionaryPickerModal({
         return;
       }
       if (filterEnabled && !terms.length) {
+        const emptyMsg = effectiveSearchOpts.favoritesOnly && scanTotal === 0
+          ? 'Nenhum dicionário marcado como favorito.'
+          : `Nenhum dicionário possui "${escapeHtml(cleanFilter)}" com os filtros ativos.`;
         listEl.innerHTML = `
           <div class="picker-empty">
-            <p style="margin:0 0 10px;">Nenhum dicionário possui "${escapeHtml(cleanFilter)}".</p>
+            <p style="margin:0 0 10px;">${emptyMsg}</p>
             <button type="button" class="secondary-btn" id="btn-show-all-empty">Mostrar todos os dicionários</button>
           </div>
         `;
@@ -551,7 +593,7 @@ export function openDictionaryPickerModal({
     };
 
     findDictionariesWithTerm(store.getDictionaries(), cleanFilter, {
-      searchBody,
+      ...effectiveSearchOpts,
       activePath: active ? active.path : '',
       concurrency: 4,
       signal,
