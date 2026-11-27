@@ -12,12 +12,22 @@ import { clearMediaIndexCache } from '../formats/media-cache.js';
 import { clearDictionaryLookupCache } from '../formats/dictionary-lookup.js';
 import { clearBibleSearchCache } from '../formats/bible-search.js';
 import {
+  myswordCommentaryAdapter,
+  clearCommentaryLookupCache
+} from '../formats/mysword-commentary.js';
+import {
   initReaderView,
   renderReader,
   stepChapter,
   loadBooksForBible,
   loadChaptersForBible
 } from '../ui/reader-view.js';
+import {
+  initCommentaryView,
+  renderCommentaryView,
+  stepCommentarySection,
+  getCommentaryViewState
+} from '../ui/commentary-view.js';
 import {
   initDictionaryView,
   syncDictionaryModules,
@@ -56,6 +66,17 @@ import {
 
 appLogger.installGlobalHandlers();
 
+const SHORT_BOOK_ABBR = [
+  '',
+  'Gn', 'Êx', 'Lv', 'Nm', 'Dt', 'Js', 'Jz', 'Rt', '1Sm', '2Sm',
+  '1Rs', '2Rs', '1Cr', '2Cr', 'Ed', 'Ne', 'Et', 'Jó', 'Sl', 'Pv',
+  'Ec', 'Ct', 'Is', 'Jr', 'Lm', 'Ez', 'Dn', 'Os', 'Jl', 'Am',
+  'Ob', 'Jn', 'Mq', 'Na', 'Hc', 'Sf', 'Ag', 'Zc', 'Ml',
+  'Mt', 'Mc', 'Lc', 'Jo', 'At', 'Rm', '1Co', '2Co', 'Gl', 'Ef',
+  'Fp', 'Cl', '1Ts', '2Ts', '1Tm', '2Tm', 'Tt', 'Fm', 'Hb', 'Tg',
+  '1Pe', '2Pe', '1Jo', '2Jo', '3Jo', 'Jd', 'Ap'
+];
+
 let toastTimer = null;
 let savedBibleScrollTop = 0;
 let pendingScrollVerse = null;
@@ -70,6 +91,14 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function formatCompactRef(bookId, chapter, verse = 1) {
+  const b = Number(bookId) || 1;
+  const abbr = SHORT_BOOK_ABBR[b] || getBookName(b).slice(0, 4);
+  const c = Number(chapter) || 1;
+  const v = Number(verse) || 1;
+  return `${abbr} ${c}:${v}`;
 }
 
 function getPreferredModuleLabel(mod, fallback = '') {
@@ -122,6 +151,15 @@ function refreshQuickBibleTabs() {
   });
 }
 
+function refreshQuickCommentaryTabs() {
+  const bar = document.getElementById('quick-cmts-bar');
+  const active = store.getActiveCommentary();
+  renderQuickTabs(bar, 'commentary', store.getCommentaries(), active ? active.path : '', (path) => {
+    recordRecentModule('commentary', path);
+    store.setActiveCommentary(path);
+  });
+}
+
 function refreshQuickDictionaryTabs() {
   const bar = document.getElementById('quick-dicts-bar');
   const active = store.getActiveDictionary();
@@ -153,7 +191,7 @@ function pushCurrentBibleJumpOrigin(originVerse = 0) {
   const curState = store.getState();
   const curBible = store.getActiveBible();
   const scrollBox = document.getElementById('reader-scroll');
-  const verseNum = Number(originVerse) || 0;
+  const verseNum = Number(originVerse) || curState.verse || 0;
 
   jumpHistory.push({
     mode: 'bible',
@@ -188,6 +226,44 @@ function highlightAndScrollToVerse(verseNum, smooth = true) {
     block: 'center'
   });
   return true;
+}
+
+function updateCommentaryChrome(meta = {}) {
+  const st = store.getState();
+  const active = meta.activeModule !== undefined ? meta.activeModule : store.getActiveCommentary();
+  const book = meta.book || st.book || 1;
+  const chapter = meta.chapter || st.chapter || 1;
+  const verse = meta.verse || st.verse || 1;
+  const refShort = meta.refShort || formatCompactRef(book, chapter, verse);
+
+  const cmtLabel = document.getElementById('label-active-cmt');
+  const refLabel = document.getElementById('label-active-cmt-ref');
+  const topPrevSec = document.getElementById('btn-top-prev-cmt-sec');
+  const topNextSec = document.getElementById('btn-top-next-cmt-sec');
+
+  if (cmtLabel) {
+    cmtLabel.textContent = getPreferredModuleLabel(active, 'Sem Comentário');
+  }
+  if (refLabel) {
+    refLabel.textContent = refShort;
+  }
+  if (topPrevSec) topPrevSec.disabled = !active;
+  if (topNextSec) topNextSec.disabled = !active;
+
+  refreshQuickCommentaryTabs();
+
+  if (store.getActiveMode() === 'commentary') {
+    const metaLabel = document.getElementById('chapter-meta');
+    const prevBtn = document.getElementById('btn-prev-chapter');
+    const nextBtn = document.getElementById('btn-next-chapter');
+
+    if (metaLabel) {
+      const modName = getPreferredModuleLabel(active, 'Nenhum comentário');
+      metaLabel.textContent = `${modName} • ${formatReference(book, chapter, verse)}`;
+    }
+    if (prevBtn) prevBtn.disabled = !active;
+    if (nextBtn) nextBtn.disabled = !active;
+  }
 }
 
 function updateDictionaryChrome(meta = {}) {
@@ -232,27 +308,43 @@ function updateDictionaryChrome(meta = {}) {
 
 function syncModeChrome() {
   const mode = store.getActiveMode();
+  const isBible = mode === 'bible';
+  const isCmt = mode === 'commentary';
   const isDict = mode === 'dictionary';
 
   closeShellPopover();
 
-  document.getElementById('strip-bible')?.classList.toggle('hidden', isDict);
+  document.getElementById('strip-bible')?.classList.toggle('hidden', !isBible);
+  document.getElementById('strip-commentary')?.classList.toggle('hidden', !isCmt);
   document.getElementById('strip-dict')?.classList.toggle('hidden', !isDict);
 
   const badge = document.getElementById('main-mode-badge');
   if (badge) {
-    badge.className = `ms-res-badge ${isDict ? 'ms-res-badge--dict' : 'ms-res-badge--bible'}`;
-    badge.innerHTML = isDict ? 'D' : '&#10013;';
+    if (isDict) {
+      badge.className = 'ms-res-badge ms-res-badge--dict';
+      badge.textContent = 'D';
+    } else if (isCmt) {
+      badge.className = 'ms-res-badge ms-res-badge--commentary';
+      badge.textContent = 'C';
+    } else {
+      badge.className = 'ms-res-badge ms-res-badge--bible';
+      badge.innerHTML = '&#10013;';
+    }
   }
 
   const bibleBtn = document.getElementById('btn-mode-bible');
+  const cmtBtn = document.getElementById('btn-mode-commentary');
   const dictBtn = document.getElementById('btn-mode-dictionary');
   const searchDockBtn = document.getElementById('btn-dock-search');
   const indexDockBtn = document.getElementById('btn-dock-index');
 
   if (bibleBtn) {
-    bibleBtn.classList.toggle('is-active', !isDict);
-    bibleBtn.setAttribute('aria-pressed', String(!isDict));
+    bibleBtn.classList.toggle('is-active', isBible);
+    bibleBtn.setAttribute('aria-pressed', String(isBible));
+  }
+  if (cmtBtn) {
+    cmtBtn.classList.toggle('is-active', isCmt);
+    cmtBtn.setAttribute('aria-pressed', String(isCmt));
   }
   if (dictBtn) {
     dictBtn.classList.toggle('is-active', isDict);
@@ -268,6 +360,8 @@ function syncModeChrome() {
 
   if (isDict) {
     updateDictionaryChrome(getDictionaryViewState());
+  } else if (isCmt) {
+    updateCommentaryChrome(getCommentaryViewState());
   } else {
     refreshQuickBibleTabs();
   }
@@ -291,6 +385,25 @@ function syncDictionariesFromStore() {
     setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
   }
   updateDictionaryChrome({ activeModule: activeDict });
+}
+
+function openCommentaryPickerFrom(anchorEl = null) {
+  const st = store.getState();
+  const targetAnchor = anchorEl || document.getElementById('btn-cmt-picker');
+  openModuleDropdown({
+    kind: 'commentary',
+    anchorEl: targetAnchor,
+    passage: {
+      book: st.book || 1,
+      chapter: st.chapter || 1,
+      verse: st.verse || 1
+    },
+    onSelect: (path) => {
+      recordRecentModule('commentary', path);
+      store.setActiveCommentary(path);
+    },
+    onOpenSources: () => openSettingsModal({ initialTab: 'sources', initialKind: 'commentary' })
+  });
 }
 
 function openBibleSearchDialog(initialQuery = '', autoRun = false) {
@@ -450,7 +563,8 @@ async function navigateToBibleReference({ book, chapter, verse, preferredModuleP
   const targetVerse = Number(verse) || 1;
 
   if (options.recordHistory !== false) {
-    if (store.getActiveMode() === 'dictionary') {
+    const activeMode = store.getActiveMode();
+    if (activeMode === 'dictionary') {
       const dState = getDictionaryViewState();
       const word = dState.currentEntry ? dState.currentEntry.word : '';
       jumpHistory.push({
@@ -458,6 +572,20 @@ async function navigateToBibleReference({ book, chapter, verse, preferredModuleP
         modulePath: dState.activeModulePath || '',
         word,
         label: word ? `Dic: ${word}` : 'Dicionário'
+      });
+      if (jumpHistory.length > 25) {
+        jumpHistory.shift();
+      }
+    } else if (activeMode === 'commentary') {
+      const cState = getCommentaryViewState();
+      const cMod = cState.activeModule;
+      jumpHistory.push({
+        mode: 'commentary',
+        modulePath: cMod ? cMod.path : '',
+        book: cState.book,
+        chapter: cState.chapter,
+        verse: cState.verse || 1,
+        label: `Com: ${formatCompactRef(cState.book, cState.chapter, cState.verse || 1)}`
       });
       if (jumpHistory.length > 25) {
         jumpHistory.shift();
@@ -493,6 +621,7 @@ async function navigateToBibleReference({ book, chapter, verse, preferredModuleP
   }
 
   if (isAlreadyBible && sameModule && sameChapter) {
+    store.setActiveVerse(targetVerse, { silent: true });
     if (!highlightAndScrollToVerse(targetVerse, true)) {
       await renderReader({ resetScroll: false, scrollToVerse: targetVerse });
       highlightAndScrollToVerse(targetVerse, false);
@@ -513,9 +642,9 @@ async function navigateToBibleReference({ book, chapter, verse, preferredModuleP
     suppressModuleAutoLoad = false;
   }
 
-  if (!sameChapter) {
+  if (!sameChapter || curState.verse !== targetVerse) {
     suppressLocationAutoLoad = true;
-    store.setLocation(book, targetChapter);
+    store.setLocation(book, targetChapter, targetVerse);
     suppressLocationAutoLoad = false;
   }
 
@@ -556,6 +685,26 @@ async function goBackFromBibleJump() {
     return;
   }
 
+  if (prev.mode === 'commentary') {
+    rememberBibleScrollIfActive();
+    suppressModeAutoLoad = true;
+    store.setActiveMode('commentary');
+    suppressModeAutoLoad = false;
+
+    if (prev.modulePath) {
+      store.setActiveCommentary(prev.modulePath, { silent: true });
+    }
+    if (prev.book && prev.chapter) {
+      suppressLocationAutoLoad = true;
+      store.setLocation(prev.book, prev.chapter, prev.verse || 1);
+      suppressLocationAutoLoad = false;
+    }
+
+    syncModeChrome();
+    await renderCommentaryView({ resetScroll: true });
+    return;
+  }
+
   const curState = store.getState();
   const curBible = store.getActiveBible();
   const needModule = Boolean(prev.modulePath && (!curBible || curBible.path !== prev.modulePath));
@@ -565,6 +714,7 @@ async function goBackFromBibleJump() {
   if (alreadyBible && !needModule && !needLoc) {
     const scrollBox = document.getElementById('reader-scroll');
     if (prev.verse && highlightAndScrollToVerse(prev.verse, true)) {
+      store.setActiveVerse(prev.verse, { silent: true });
       return;
     }
     if (scrollBox && typeof prev.scrollTop === 'number') {
@@ -585,7 +735,7 @@ async function goBackFromBibleJump() {
   }
   if (needLoc) {
     suppressLocationAutoLoad = true;
-    store.setLocation(prev.book, prev.chapter);
+    store.setLocation(prev.book, prev.chapter, prev.verse || 1);
     suppressLocationAutoLoad = false;
   }
 
@@ -628,8 +778,15 @@ async function openTermInDictionary(term, { searchAll = false, moduleHint = '' }
 
 async function renderActiveMode({ resetScroll = false } = {}) {
   syncModeChrome();
-  if (store.getActiveMode() === 'dictionary') {
+  const mode = store.getActiveMode();
+
+  if (mode === 'dictionary') {
     await loadFirstOrCurrentEntry();
+    return;
+  }
+
+  if (mode === 'commentary') {
+    await renderCommentaryView({ resetScroll: true });
     return;
   }
 
@@ -664,7 +821,7 @@ function bindShellEvents() {
     openViewsDropdown({
       anchorEl: ev.currentTarget,
       onSelectMode: (mode) => {
-        if (mode === 'dictionary') rememberBibleScrollIfActive();
+        if (mode !== 'bible') rememberBibleScrollIfActive();
         store.setActiveMode(mode);
       },
       onOpenBibleSearch: () => openBibleSearchDialog(),
@@ -677,12 +834,16 @@ function bindShellEvents() {
       },
       onOpenSettings: () => openSettingsModal({
         initialTab: 'sources',
-        initialKind: store.getActiveMode() === 'dictionary' ? 'dictionary' : 'bible'
+        initialKind: store.getActiveMode()
       }),
       onOpenLogs: () => openSettingsModal({ initialTab: 'logs' }),
       onQuickSelectBible: (path) => {
         recordRecentModule('bible', path);
         store.setActiveModule(path);
+      },
+      onQuickSelectCommentary: (path) => {
+        recordRecentModule('commentary', path);
+        store.setActiveCommentary(path);
       },
       onQuickSelectDict: (path) => {
         recordRecentModule('dictionary', path);
@@ -697,12 +858,13 @@ function bindShellEvents() {
       anchorEl: ev.currentTarget,
       onOpenSettings: () => openSettingsModal({
         initialTab: 'sources',
-        initialKind: store.getActiveMode() === 'dictionary' ? 'dictionary' : 'bible'
+        initialKind: store.getActiveMode()
       }),
       onOpenLogs: () => openSettingsModal({ initialTab: 'logs' })
     });
   });
 
+  // Barra superior — modo Bíblia
   document.getElementById('btn-top-prev-chapter')?.addEventListener('click', () => {
     stepChapter(-1);
   });
@@ -728,6 +890,25 @@ function bindShellEvents() {
     });
   });
 
+  // Barra superior — modo Comentários
+  document.getElementById('btn-top-prev-cmt-sec')?.addEventListener('click', () => {
+    stepCommentarySection(-1);
+  });
+
+  document.getElementById('btn-top-next-cmt-sec')?.addEventListener('click', () => {
+    stepCommentarySection(1);
+  });
+
+  document.getElementById('btn-cmt-nav-picker')?.addEventListener('click', () => {
+    closeShellPopover();
+    openLocationPickerModal();
+  });
+
+  document.getElementById('btn-cmt-picker')?.addEventListener('click', (ev) => {
+    openCommentaryPickerFrom(ev.currentTarget);
+  });
+
+  // Barra superior — modo Dicionário
   document.getElementById('btn-dict-picker')?.addEventListener('click', (ev) => {
     const dState = getDictionaryViewState();
     openModuleDropdown({
@@ -770,17 +951,24 @@ function bindShellEvents() {
     openActiveDictionaryTerms();
   });
 
+  // Barra inferior (dock)
   document.getElementById('btn-prev-chapter')?.addEventListener('click', () => {
-    if (store.getActiveMode() === 'dictionary') {
+    const mode = store.getActiveMode();
+    if (mode === 'dictionary') {
       stepDictionaryEntry(-1);
+    } else if (mode === 'commentary') {
+      stepCommentarySection(-1);
     } else {
       stepChapter(-1);
     }
   });
 
   document.getElementById('btn-next-chapter')?.addEventListener('click', () => {
-    if (store.getActiveMode() === 'dictionary') {
+    const mode = store.getActiveMode();
+    if (mode === 'dictionary') {
       stepDictionaryEntry(1);
+    } else if (mode === 'commentary') {
+      stepCommentarySection(1);
     } else {
       stepChapter(1);
     }
@@ -808,7 +996,7 @@ function bindShellEvents() {
     closeShellPopover();
     openSettingsModal({
       initialTab: 'sources',
-      initialKind: store.getActiveMode() === 'dictionary' ? 'dictionary' : 'bible'
+      initialKind: store.getActiveMode()
     });
   });
 
@@ -824,6 +1012,11 @@ function bindShellEvents() {
     store.setActiveMode('bible');
   });
 
+  document.getElementById('btn-mode-commentary')?.addEventListener('click', () => {
+    rememberBibleScrollIfActive();
+    store.setActiveMode('commentary');
+  });
+
   document.getElementById('btn-mode-dictionary')?.addEventListener('click', () => {
     rememberBibleScrollIfActive();
     store.setActiveMode('dictionary');
@@ -837,9 +1030,15 @@ function bindStateEvents() {
     applyVisualPrefs(prefs);
     syncDictionaryModules(store.getDictionaries());
     refreshQuickBibleTabs();
+    refreshQuickCommentaryTabs();
     updateDictionaryChrome(getDictionaryViewState());
-    if (store.getActiveMode() === 'dictionary') {
+    updateCommentaryChrome(getCommentaryViewState());
+
+    const mode = store.getActiveMode();
+    if (mode === 'dictionary') {
       renderDictionaryView({ resetScroll: false });
+    } else if (mode === 'commentary') {
+      renderCommentaryView({ resetScroll: false });
     } else {
       renderReader({ resetScroll: false });
     }
@@ -851,15 +1050,22 @@ function bindStateEvents() {
     clearDictionaryLookupCache();
     clearBibleSearchCache();
     clearBibleSearchSession();
+    myswordCommentaryAdapter.clearCache();
+    clearCommentaryLookupCache();
     syncDictionariesFromStore();
     refreshQuickBibleTabs();
-    if (store.getActiveMode() === 'dictionary') {
+    refreshQuickCommentaryTabs();
+
+    const mode = store.getActiveMode();
+    if (mode === 'dictionary') {
       const dState = getDictionaryViewState();
       if (dState.currentEntry) {
         renderDictionaryView({ resetScroll: false });
       } else {
         loadFirstOrCurrentEntry();
       }
+    } else if (mode === 'commentary') {
+      renderCommentaryView({ resetScroll: false });
     } else {
       renderReader({ resetScroll: false });
     }
@@ -874,6 +1080,16 @@ function bindStateEvents() {
     if (suppressModuleAutoLoad) return;
     if (store.getActiveMode() === 'bible') {
       renderReader({ resetScroll: true });
+    }
+  });
+
+  eventBus.on(EVENTS.COMMENTARY_CHANGED, (cmtMod) => {
+    if (cmtMod && cmtMod.path) {
+      recordRecentModule('commentary', cmtMod.path);
+    }
+    refreshQuickCommentaryTabs();
+    if (store.getActiveMode() === 'commentary') {
+      renderCommentaryView({ resetScroll: true });
     }
   });
 
@@ -895,10 +1111,19 @@ function bindStateEvents() {
   eventBus.on(EVENTS.LOCATION_CHANGED, () => {
     savedBibleScrollTop = 0;
     if (suppressLocationAutoLoad) return;
-    if (store.getActiveMode() === 'bible') {
+    const mode = store.getActiveMode();
+    if (mode === 'bible') {
       const verseTarget = pendingScrollVerse;
       pendingScrollVerse = null;
       renderReader({ resetScroll: !verseTarget, scrollToVerse: verseTarget });
+    } else if (mode === 'commentary') {
+      renderCommentaryView({ resetScroll: true });
+    }
+  });
+
+  eventBus.on(EVENTS.VERSE_CHANGED, () => {
+    if (store.getActiveMode() === 'commentary') {
+      renderCommentaryView({ resetScroll: true });
     }
   });
 
@@ -920,14 +1145,16 @@ async function bootstrap() {
   appLogger.setContextProvider(() => {
     const st = store.getState();
     const bible = store.getActiveBible();
+    const cmt = store.getActiveCommentary();
     const dict = store.getActiveDictionary();
     const dState = getDictionaryViewState();
     return {
       'Ambiente nativo': nativeBridge.isNative() ? 'Android (Capacitor)' : 'Navegador Web',
       'Permissão arquivos': st.hasStoragePermission ? 'Concedida' : 'Negada',
       'Modo ativo': store.getActiveMode(),
-      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getDictionaries().length} Dicionário(s)`,
-      'Bíblia ativa': bible ? `${getPreferredModuleLabel(bible)} (${bible.fileName || ''}) • ${formatReference(st.book, st.chapter)}` : 'Nenhuma',
+      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getCommentaries().length} Comentário(s), ${store.getDictionaries().length} Dicionário(s)`,
+      'Bíblia ativa': bible ? `${getPreferredModuleLabel(bible)} (${bible.fileName || ''}) • ${formatReference(st.book, st.chapter, st.verse || 1)}` : 'Nenhuma',
+      'Comentário ativo': cmt ? `${getPreferredModuleLabel(cmt)} (${cmt.fileName || ''})` : 'Nenhum',
       'Dicionário ativo': dict ? `${getPreferredModuleLabel(dict)} (${dict.fileName || ''}) • verbete: ${dState.currentEntry ? dState.currentEntry.word : 'nenhum'}` : 'Nenhum',
       'Opções busca dic.': JSON.stringify(dState.searchOptions || {})
     };
@@ -955,6 +1182,21 @@ async function bootstrap() {
     onLookupDictionary: (term, opts) => openTermInDictionary(term, opts),
     onOpenCompanionGroup: (payload) => handleOpenCompanionGroup(payload),
     onBibleChromeUpdated: () => refreshQuickBibleTabs()
+  });
+
+  initCommentaryView({
+    onOpenSources: () => openSettingsModal({ initialTab: 'sources', initialKind: 'commentary' }),
+    onOpenLogs: () => openSettingsModal({ initialTab: 'logs' }),
+    onOpenFootnote: (ref, text) => openFootnoteModal(ref, text),
+    onToast: showToast,
+    onNavigateBible: (parsed) => {
+      navigateToBibleReference(parsed, { recordHistory: true });
+    },
+    onLookupDictionary: (term, opts) => openTermInDictionary(term, opts),
+    onOpenCommentaryPicker: () => openCommentaryPickerFrom(),
+    onStateMetaChange: (meta) => {
+      updateCommentaryChrome(meta);
+    }
   });
 
   initDictionaryView({
