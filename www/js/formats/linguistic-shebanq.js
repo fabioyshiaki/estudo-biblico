@@ -20,9 +20,10 @@ function cleanText(str) {
 }
 
 function extractTagContent(str, tagName) {
-  const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
+  const re = new RegExp(`<${tagName}(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, 'i');
   const m = re.exec(String(str || ''));
-  return m ? cleanText(m[1]) : '';
+  if (!m) return '';
+  return cleanText(String(m[1] || '').replace(/<[^>]*>/g, ''));
 }
 
 export function isShebanqBhsText(str) {
@@ -130,7 +131,7 @@ function parseInterlinearMnRecord(inner) {
 }
 
 function parseShebanqRecord(inner) {
-  if (/<Mn>[\s\S]*?<\/Mn>/i.test(inner)) {
+  if (/<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>/i.test(inner)) {
     return parseInterlinearMnRecord(inner);
   }
 
@@ -257,7 +258,7 @@ function renderLexRow(items, cls, dataAttr) {
   return `<div class="shb-lex-row" dir="ltr">${chips}</div>`;
 }
 
-function renderMorpheme(item) {
+function renderMorpheme(item, mnCols) {
   const origDir = RE_HEBREW.test(item.surfaceDisplay) ? 'rtl' : 'ltr';
   const origHtml = item.surfaceDisplay
     ? `<span class="shb-orig" dir="${origDir}">${escapeHtml(item.surfaceDisplay)}</span>`
@@ -269,29 +270,38 @@ function renderMorpheme(item) {
     item.sheCode ? `data-she="${escapeHtml(item.sheCode)}"` : ''
   ].filter(Boolean).join(' ');
 
-  // Layout alinhado para Interlinear Br 2023+ (「<Mn>...<WH><WT><Th><Le><Ha><Pt>」)
+  // Layout alinhado para Interlinear Br 2023+ e f35 (renderiza apenas camadas presentes no versículo)
   if (item.mode === 'interlinear_mn') {
-    const thHtml = item.translit
-      ? `<span class="shb-translit shb-th" dir="ltr">${escapeHtml(item.translit)}</span>`
-      : '<span class="shb-translit shb-th is-empty" dir="ltr">&nbsp;</span>';
+    const parts = [origHtml];
 
-    const leHtml = item.phonetic
-      ? `<span class="shb-phonetic" dir="ltr">${escapeHtml(item.phonetic)}</span>`
-      : '<span class="shb-phonetic is-empty" dir="ltr">&nbsp;</span>';
+    if (mnCols.hasStrong) {
+      parts.push(renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong'));
+    }
+    if (mnCols.hasMorph) {
+      parts.push(renderLexRow(item.morphs, 'v-morph shb-tag--morph', 'morph'));
+    }
+    if (mnCols.hasTh) {
+      parts.push(
+        item.translit
+          ? `<span class="shb-translit shb-th" dir="ltr">${escapeHtml(item.translit)}</span>`
+          : '<span class="shb-translit shb-th is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+    if (mnCols.hasLe) {
+      parts.push(
+        item.phonetic
+          ? `<span class="shb-phonetic" dir="ltr">${escapeHtml(item.phonetic)}</span>`
+          : '<span class="shb-phonetic is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+    if (mnCols.hasHgk) {
+      parts.push(renderLexRow(item.hgkList, 'shb-tag--bdb', 'hgk'));
+    }
+    if (mnCols.hasPt) {
+      parts.push(renderGloss(item.gloss, 'shb-pt'));
+    }
 
-    const ptHtml = renderGloss(item.gloss, 'shb-pt');
-
-    return (
-      `<div class="shb-morph is-mn"${attrs ? ` ${attrs}` : ''}>` +
-        origHtml +
-        renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong') +
-        renderLexRow(item.morphs, 'v-morph shb-tag--morph', 'morph') +
-        thHtml +
-        leHtml +
-        renderLexRow(item.hgkList, 'shb-tag--bdb', 'hgk') +
-        ptHtml +
-      '</div>'
-    );
+    return `<div class="shb-morph is-mn"${attrs ? ` ${attrs}` : ''}>${parts.join('')}</div>`;
   }
 
   const translitHtml = item.translit
@@ -349,7 +359,10 @@ function renderMorpheme(item) {
 }
 
 export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
-  const source = String(rawHtml || '').replace(/<KQ>[\s\S]*?<\/?kq>/gi, '');
+  const source = String(rawHtml || '')
+    .replace(/<KQ>[\s\S]*?<\/?kq>/gi, '')
+    .replace(/<(?:CM|CL|CI)>/gi, '');
+
   const groups = [];
   let currentGroup = [];
   let isRtlVerse = false;
@@ -378,6 +391,27 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
 
   if (!groups.length) return '';
 
+  const mnCols = {
+    hasStrong: false,
+    hasMorph: false,
+    hasTh: false,
+    hasLe: false,
+    hasHgk: false,
+    hasPt: false
+  };
+
+  for (const grp of groups) {
+    for (const it of grp) {
+      if (it.mode !== 'interlinear_mn') continue;
+      if (it.strongs && it.strongs.length) mnCols.hasStrong = true;
+      if (it.morphs && it.morphs.length) mnCols.hasMorph = true;
+      if (it.translit) mnCols.hasTh = true;
+      if (it.phonetic) mnCols.hasLe = true;
+      if (it.hgkList && it.hgkList.length) mnCols.hasHgk = true;
+      if (it.gloss) mnCols.hasPt = true;
+    }
+  }
+
   const cards = [];
   if (verseNum) {
     cards.push(`<span class="il-vnum">${verseNum}</span>`);
@@ -387,7 +421,7 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
     const multiClass = grp.length > 1 ? ' is-compound' : '';
     cards.push(
       `<div class="shb-word${multiClass}" dir="${isRtlVerse ? 'rtl' : 'ltr'}">` +
-        grp.map(renderMorpheme).join('') +
+        grp.map((it) => renderMorpheme(it, mnCols)).join('') +
       '</div>'
     );
   }
