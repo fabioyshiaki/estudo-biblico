@@ -3,11 +3,16 @@ import { nativeBridge } from '../bridge/native-bridge.js';
 const IDB_NAME = 'estudo_biblico_media_cache';
 const IDB_VERSION = 1;
 const IDB_STORE = 'images';
-const SQLITE_HEX_CHUNK = 600000;
+const SQLITE_HEX_CHUNK = 250000;
 
 let idbPromise = null;
 const memoryUrlCache = new Map();
+const schemaCache = new Map();
 const dataIndexCache = new Map();
+
+function quoteIdent(name) {
+  return `"${String(name || '').replace(/"/g, '""')}"`;
+}
 
 function getRowField(row, targetLower) {
   if (!row || typeof row !== 'object') return undefined;
@@ -39,7 +44,7 @@ function openMediaDb() {
   return idbPromise;
 }
 
-async function readIdbBlob(key) {
+async function readIdbRecord(key) {
   const db = await openMediaDb();
   if (!db) return null;
 
@@ -47,10 +52,7 @@ async function readIdbBlob(key) {
     try {
       const tx = db.transaction(IDB_STORE, 'readonly');
       const req = tx.objectStore(IDB_STORE).get(key);
-      req.onsuccess = () => {
-        const rec = req.result;
-        resolve(rec && rec.blob instanceof Blob ? rec.blob : null);
-      };
+      req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => resolve(null);
     } catch (err) {
       resolve(null);
@@ -58,16 +60,16 @@ async function readIdbBlob(key) {
   });
 }
 
-async function writeIdbBlob(key, blob) {
+async function writeIdbDataUrl(key, dataUrl) {
   const db = await openMediaDb();
-  if (!db || !(blob instanceof Blob)) return;
+  if (!db || !dataUrl) return;
 
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(IDB_STORE, 'readwrite');
       tx.objectStore(IDB_STORE).put({
         key,
-        blob,
+        dataUrl,
         savedAt: Date.now()
       });
       tx.oncomplete = () => resolve();
@@ -79,13 +81,36 @@ async function writeIdbBlob(key, blob) {
 }
 
 function hexToUint8Array(hexStr) {
-  const clean = String(hexStr || '').trim();
+  const clean = String(hexStr || '').replace(/\s+/g, '');
   const len = Math.floor(clean.length / 2);
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
     bytes[i] = parseInt(clean.substr(i * 2, 2), 16) || 0;
   }
   return bytes;
+}
+
+function uint8ToBase64(bytes) {
+  const chunkSize = 0x8000;
+  const parts = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    parts.push(String.fromCharCode.apply(null, slice));
+  }
+  return btoa(parts.join(''));
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      resolve('');
+    }
+  });
 }
 
 function detectImageMime(fileName, bytes) {
@@ -109,56 +134,130 @@ function detectImageMime(fileName, bytes) {
   return 'image/jpeg';
 }
 
-async function getModuleDataIndex(modulePath) {
+async function resolveDataTableSchema(modulePath) {
+  if (schemaCache.has(modulePath)) {
+    return schemaCache.get(modulePath);
+  }
+
+  try {
+    const tblRes = await nativeBridge.queryModule(
+      modulePath,
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    );
+    const tables = (Array.isArray(tblRes && tblRes.rows) ? tblRes.rows : [])
+      .map((r) => String(getRowField(r, 'name') || ''))
+      .filter(Boolean);
+
+    const preferred = ['data', 'images', 'media', 'blobs', 'files'];
+    let tableName = '';
+    for (const p of preferred) {
+      const hit = tables.find((t) => t.toLowerCase() === p);
+      if (hit) {
+        tableName = hit;
+        break;
+      }
+    }
+
+    if (!tableName) {
+      const empty = { hasData: false };
+      schemaCache.set(modulePath, empty);
+      return empty;
+    }
+
+    const colRes = await nativeBridge.queryModule(
+      modulePath,
+      `PRAGMA table_info(${quoteIdent(tableName)})`
+    );
+    const cols = (Array.isArray(colRes && colRes.rows) ? colRes.rows : [])
+      .map((r) => String(getRowField(r, 'name') || ''))
+      .filter(Boolean);
+
+    const findCol = (names) => {
+      for (const n of names) {
+        const hit = cols.find((c) => c.toLowerCase() === n);
+        if (hit) return hit;
+      }
+      return '';
+    };
+
+    const idCol = findCol(['id', 'name', 'key', 'img_id']);
+    const fileCol = findCol(['filename', 'file', 'file_name', 'fname']);
+    const blobCol = findCol(['content', 'data', 'image', 'blob', 'img', 'bytes']);
+
+    const matchCols = [];
+    if (idCol) matchCols.push(idCol);
+    if (fileCol && fileCol.toLowerCase() !== idCol.toLowerCase()) matchCols.push(fileCol);
+
+    if (!blobCol || !matchCols.length) {
+      const empty = { hasData: false, reason: `Colunas não encontradas em ${tableName}` };
+      schemaCache.set(modulePath, empty);
+      return empty;
+    }
+
+    const schema = {
+      hasData: true,
+      tableName,
+      qTable: quoteIdent(tableName),
+      qBlob: quoteIdent(blobCol),
+      matchCols,
+      qMatchCols: matchCols.map(quoteIdent)
+    };
+    schemaCache.set(modulePath, schema);
+    return schema;
+  } catch (err) {
+    const empty = { hasData: false, reason: err && err.message ? err.message : 'Erro ao inspecionar tabela data' };
+    schemaCache.set(modulePath, empty);
+    return empty;
+  }
+}
+
+function buildWhereClause(schema, term) {
+  const clauses = schema.qMatchCols.map((c) => `${c} = ? COLLATE NOCASE`);
+  const params = schema.qMatchCols.map(() => term);
+  return { whereSql: clauses.join(' OR '), params };
+}
+
+async function getModuleDataIndex(modulePath, schema) {
   if (dataIndexCache.has(modulePath)) {
     return dataIndexCache.get(modulePath);
   }
 
   try {
-    const tableCheck = await nativeBridge.queryModule(
-      modulePath,
-      "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='data' LIMIT 1"
-    );
-    const hasData = Array.isArray(tableCheck && tableCheck.rows) && tableCheck.rows.length > 0;
-    if (!hasData) {
-      const empty = { hasData: false, ids: [], byLower: new Map() };
-      dataIndexCache.set(modulePath, empty);
-      return empty;
-    }
-
+    const selectCols = schema.qMatchCols.join(', ');
     const res = await nativeBridge.queryModule(
       modulePath,
-      'SELECT id, filename FROM data'
+      `SELECT ${selectCols} FROM ${schema.qTable}`
     );
     const rows = Array.isArray(res && res.rows) ? res.rows : [];
     const ids = [];
     const byLower = new Map();
 
     for (const r of rows) {
-      const id = String(getRowField(r, 'id') || '').trim();
-      const fn = String(getRowField(r, 'filename') || '').trim();
-      const primary = id || fn;
-      if (!primary) continue;
+      const vals = schema.matchCols
+        .map((c) => String(getRowField(r, c.toLowerCase()) || '').trim())
+        .filter(Boolean);
+      if (!vals.length) continue;
+      const primary = vals[0];
       ids.push(primary);
-      if (id) byLower.set(id.toLowerCase(), id);
-      if (fn && !byLower.has(fn.toLowerCase())) byLower.set(fn.toLowerCase(), id || fn);
+      for (const v of vals) {
+        if (!byLower.has(v.toLowerCase())) {
+          byLower.set(v.toLowerCase(), primary);
+        }
+      }
     }
 
-    const info = { hasData: true, ids, byLower };
+    const info = { ids, byLower };
     dataIndexCache.set(modulePath, info);
     return info;
   } catch (err) {
-    const empty = { hasData: false, ids: [], byLower: new Map() };
+    const empty = { ids: [], byLower: new Map() };
     dataIndexCache.set(modulePath, empty);
     return empty;
   }
 }
 
-function findRescuedDataId(rawSrc, indexInfo, contextRaw) {
-  if (!indexInfo || !indexInfo.hasData) return '';
-
-  const baseName = String(rawSrc || '').split('/').pop().trim();
-  if (!baseName) return '';
+function findRescuedDataId(baseName, indexInfo, contextRaw) {
+  if (!baseName || !indexInfo) return '';
 
   const exact = indexInfo.byLower.get(baseName.toLowerCase());
   if (exact) return exact;
@@ -168,7 +267,7 @@ function findRescuedDataId(rawSrc, indexInfo, contextRaw) {
   const numSuffix = suffixMatch ? suffixMatch[1] : '';
   const ctxLower = String(contextRaw || '').toLowerCase();
 
-  if (numSuffix && ctxLower) {
+  if (numSuffix && ctxLower && indexInfo.ids.length) {
     const suffixRe = new RegExp(`-${numSuffix}\\.[a-z0-9]+$`, 'i');
     const sameNum = indexInfo.ids.filter((id) => suffixRe.test(id));
     let bestId = '';
@@ -200,32 +299,37 @@ function findRescuedDataId(rawSrc, indexInfo, contextRaw) {
   return '';
 }
 
-async function readEmbeddedImageBlob(modulePath, dataId) {
+async function readEmbeddedImageDataUrl(modulePath, schema, dataKey) {
+  const { whereSql, params } = buildWhereClause(schema, dataKey);
+
   const lenRes = await nativeBridge.queryModule(
     modulePath,
-    'SELECT length(content) AS len FROM data WHERE id = ? COLLATE NOCASE OR filename = ? COLLATE NOCASE LIMIT 1',
-    [dataId, dataId]
+    `SELECT length(${schema.qBlob}) AS len FROM ${schema.qTable} WHERE ${whereSql} LIMIT 1`,
+    params
   );
   const row = lenRes && Array.isArray(lenRes.rows) ? lenRes.rows[0] : null;
+  if (!row) return { url: '', found: false, error: '' };
+
   const totalBytes = Number(getRowField(row, 'len')) || 0;
-  if (totalBytes <= 0) return null;
+  if (totalBytes <= 0) return { url: '', found: true, error: 'BLOB vazio no banco' };
 
   let hexFull = '';
   if (totalBytes <= SQLITE_HEX_CHUNK) {
     const res = await nativeBridge.queryModule(
       modulePath,
-      'SELECT hex(content) AS h FROM data WHERE id = ? COLLATE NOCASE OR filename = ? COLLATE NOCASE LIMIT 1',
-      [dataId, dataId]
+      `SELECT hex(${schema.qBlob}) AS h FROM ${schema.qTable} WHERE ${whereSql} LIMIT 1`,
+      params
     );
     const hRow = res && Array.isArray(res.rows) ? res.rows[0] : null;
     hexFull = String(getRowField(hRow, 'h') || '');
   } else {
     const parts = [];
     for (let offset = 1; offset <= totalBytes; offset += SQLITE_HEX_CHUNK) {
+      const chunkLen = Math.min(SQLITE_HEX_CHUNK, totalBytes - offset + 1);
       const res = await nativeBridge.queryModule(
         modulePath,
-        'SELECT hex(substr(content, ?, ?)) AS h FROM data WHERE id = ? COLLATE NOCASE OR filename = ? COLLATE NOCASE LIMIT 1',
-        [offset, SQLITE_HEX_CHUNK, dataId, dataId]
+        `SELECT hex(substr(${schema.qBlob}, ${offset}, ${chunkLen})) AS h FROM ${schema.qTable} WHERE ${whereSql} LIMIT 1`,
+        params
       );
       const hRow = res && Array.isArray(res.rows) ? res.rows[0] : null;
       parts.push(String(getRowField(hRow, 'h') || ''));
@@ -233,19 +337,20 @@ async function readEmbeddedImageBlob(modulePath, dataId) {
     hexFull = parts.join('');
   }
 
-  if (!hexFull) return null;
-  const bytes = hexToUint8Array(hexFull);
-  if (!bytes.length) return null;
+  if (!hexFull) return { url: '', found: true, error: 'hex(content) retornou vazio' };
 
-  const mime = detectImageMime(dataId, bytes);
-  return new Blob([bytes], { type: mime });
+  const bytes = hexToUint8Array(hexFull);
+  if (!bytes.length) return { url: '', found: true, error: 'Falha ao decodificar bytes hex' };
+
+  const mime = detectImageMime(dataKey, bytes);
+  const b64 = uint8ToBase64(bytes);
+  return { url: `data:${mime};base64,${b64}`, found: true, error: '' };
 }
 
 function normalizeDownloadUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (!/^https?:\/\//i.test(url)) return '';
 
-  // Converte página File: da Wikimedia Commons em endpoint direto da imagem
   const wikiFile = /wikimedia\.org\/wiki\/File:([^?#]+)/i.exec(url)
     || /wikipedia\.org\/wiki\/File:([^?#]+)/i.exec(url);
   if (wikiFile && wikiFile[1]) {
@@ -256,99 +361,130 @@ function normalizeDownloadUrl(rawUrl) {
 
 async function fetchAndCacheExternalImage(rawUrl) {
   const downloadUrl = normalizeDownloadUrl(rawUrl);
-  if (!downloadUrl) return '';
+  if (!downloadUrl) return { url: '', error: '' };
 
   const cacheKey = `ext::${downloadUrl}`;
   if (memoryUrlCache.has(cacheKey)) {
-    return memoryUrlCache.get(cacheKey);
+    return { url: memoryUrlCache.get(cacheKey), error: '' };
   }
 
-  // 1. Verifica primeiro se já foi baixada anteriormente e salva no dispositivo (IndexedDB)
-  const savedBlob = await readIdbBlob(cacheKey);
-  if (savedBlob) {
-    const objUrl = URL.createObjectURL(savedBlob);
-    memoryUrlCache.set(cacheKey, objUrl);
-    return objUrl;
+  // 1. Verifica cache salvo no dispositivo (IndexedDB)
+  const saved = await readIdbRecord(cacheKey);
+  if (saved) {
+    let url = '';
+    if (typeof saved.dataUrl === 'string' && saved.dataUrl) {
+      url = saved.dataUrl;
+    } else if (saved.blob instanceof Blob) {
+      url = await blobToDataUrl(saved.blob);
+    }
+    if (url) {
+      memoryUrlCache.set(cacheKey, url);
+      return { url, error: '' };
+    }
   }
 
-  // 2. Baixa uma única vez e grava permanentemente no dispositivo
+  // 2. Baixa e salva permanentemente em IndexedDB
   try {
     const resp = await fetch(downloadUrl, { mode: 'cors' });
-    if (!resp.ok) return '';
-    const blob = await resp.blob();
-    if (!blob || !blob.size || (blob.type && !blob.type.startsWith('image/'))) {
-      return '';
+    if (resp.ok) {
+      const blob = await resp.blob();
+      if (blob && blob.size && (!blob.type || blob.type.startsWith('image/'))) {
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl) {
+          await writeIdbDataUrl(cacheKey, dataUrl);
+          memoryUrlCache.set(cacheKey, dataUrl);
+          return { url: dataUrl, error: '' };
+        }
+      }
     }
-    await writeIdbBlob(cacheKey, blob);
-    const objUrl = URL.createObjectURL(blob);
-    memoryUrlCache.set(cacheKey, objUrl);
-    return objUrl;
   } catch (err) {
-    return '';
+    // Se CORS bloquear o fetch, devolve URL direta para o <img> tentar exibir
+    return { url: downloadUrl, error: '' };
   }
+
+  return { url: downloadUrl, error: '' };
 }
 
 export async function resolveDictionaryImageUrl(modulePath, rawSrc, options = {}) {
   const src = String(rawSrc || '').trim();
-  if (!src) return '';
+  if (!src) return { url: '', error: 'src vazio' };
 
   if (/^data:image\//i.test(src)) {
-    return src;
+    return { url: src, error: '' };
   }
 
-  // Imagem externa http/https -> baixa uma vez e mantém salva no dispositivo
   if (/^https?:\/\//i.test(src)) {
-    const cachedUrl = await fetchAndCacheExternalImage(src);
-    return cachedUrl || src;
+    return fetchAndCacheExternalImage(src);
   }
 
-  // Imagem embutida na tabela `data` do módulo .dct.mybible
-  const memKey = `mod::${modulePath}::${src.toLowerCase()}`;
+  const baseName = src.split('/').pop().trim();
+  const memKey = `mod::${modulePath}::${baseName.toLowerCase()}`;
   if (memoryUrlCache.has(memKey)) {
-    return memoryUrlCache.get(memKey);
+    return { url: memoryUrlCache.get(memKey), error: '' };
   }
+
+  let lastError = '';
 
   if (modulePath) {
-    const indexInfo = await getModuleDataIndex(modulePath);
-    const matchedId = findRescuedDataId(src, indexInfo, options.contextRaw || '');
-    if (matchedId) {
-      const idbKey = `mod::${modulePath}::${matchedId.toLowerCase()}`;
-      if (memoryUrlCache.has(idbKey)) {
-        const existing = memoryUrlCache.get(idbKey);
-        memoryUrlCache.set(memKey, existing);
-        return existing;
+    const schema = await resolveDataTableSchema(modulePath);
+    if (schema.hasData) {
+      // 1. Busca direta no SQLite (não depende de carregar lista inteira da tabela data)
+      try {
+        const direct = await readEmbeddedImageDataUrl(modulePath, schema, baseName);
+        if (direct.url) {
+          memoryUrlCache.set(memKey, direct.url);
+          return { url: direct.url, error: '' };
+        }
+        if (direct.error) lastError = direct.error;
+      } catch (err) {
+        lastError = err && err.message ? err.message : 'Erro SQL ao ler imagem';
       }
 
+      // 2. Se não encontrou pelo nome exato, tenta resgatar nomes traduzidos (ex.: Beemote-1.jpg -> Behemoth-1.jpg)
       try {
-        const blob = await readEmbeddedImageBlob(modulePath, matchedId);
-        if (blob) {
-          const objUrl = URL.createObjectURL(blob);
-          memoryUrlCache.set(idbKey, objUrl);
-          memoryUrlCache.set(memKey, objUrl);
-          return objUrl;
+        const idxInfo = await getModuleDataIndex(modulePath, schema);
+        const rescuedId = findRescuedDataId(baseName, idxInfo, options.contextRaw || '');
+        if (rescuedId && rescuedId.toLowerCase() !== baseName.toLowerCase()) {
+          const rescuedKey = `mod::${modulePath}::${rescuedId.toLowerCase()}`;
+          if (memoryUrlCache.has(rescuedKey)) {
+            const cached = memoryUrlCache.get(rescuedKey);
+            memoryUrlCache.set(memKey, cached);
+            return { url: cached, error: '' };
+          }
+          const rescued = await readEmbeddedImageDataUrl(modulePath, schema, rescuedId);
+          if (rescued.url) {
+            memoryUrlCache.set(rescuedKey, rescued.url);
+            memoryUrlCache.set(memKey, rescued.url);
+            return { url: rescued.url, error: '' };
+          }
+          if (rescued.error) lastError = rescued.error;
         }
       } catch (err) {
-        // Segue para fallback externo se existir
+        if (!lastError) lastError = err && err.message ? err.message : 'Erro ao buscar índice de imagens';
       }
+    } else if (schema.reason) {
+      lastError = schema.reason;
     }
   }
 
-  // Fallback opcional: se não existir no BLOB local, tenta baixar da URL de crédito da Wikimedia e salva no dispositivo
+  // 3. Fallback externo (Wikimedia) com cache local
   if (options.fallbackUrl) {
-    const extUrl = await fetchAndCacheExternalImage(options.fallbackUrl);
-    if (extUrl) {
-      memoryUrlCache.set(memKey, extUrl);
-      return extUrl;
+    const ext = await fetchAndCacheExternalImage(options.fallbackUrl);
+    if (ext.url) {
+      memoryUrlCache.set(memKey, ext.url);
+      return ext;
     }
   }
 
-  return '';
+  return { url: '', error: lastError || 'Imagem não encontrada na tabela data' };
 }
 
 export function clearMediaIndexCache(modulePath) {
   if (modulePath) {
+    schemaCache.delete(modulePath);
     dataIndexCache.delete(modulePath);
   } else {
+    schemaCache.clear();
     dataIndexCache.clear();
   }
 }
