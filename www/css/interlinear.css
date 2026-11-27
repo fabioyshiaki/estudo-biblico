@@ -70,6 +70,82 @@
   text-align: left;
 }
 
+.verse-text .il-multi-block {
+  gap: 8px;
+}
+
+.verse-text .il-multi-sec {
+  display: block;
+  width: 100%;
+  line-height: 1.55;
+}
+
+.verse-text .il-multi-sec + .il-multi-sec {
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
+}
+
+.verse-text .il-multi-sec.is-ltr {
+  direction: ltr;
+  text-align: left;
+}
+
+.verse-text .il-multi-sec.is-rtl {
+  direction: rtl;
+  text-align: right;
+}
+
+.verse-text .il-multi-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: 6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.68em;
+  font-weight: 700;
+  line-height: 1.35;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.verse-text .il-multi-q-flow {
+  gap: 10px 8px;
+}
+
+.verse-text .il-multi-q-flow > .il-multi-badge {
+  margin-top: 3px;
+  margin-inline-end: 2px;
+}
+
+.verse-text .il-multi-q-flow .il-orig {
+  font-size: 1em;
+  font-weight: 400;
+}
+
+.verse-text .il-multi-q-flow .il-orig[dir="rtl"] {
+  font-size: 1.12em;
+}
+
+.verse-text .il-multi-q-flow .il-translit.is-ancient {
+  font-size: 0.78em;
+}
+
+.verse-text .il-multi-text {
+  font-size: 1em;
+  line-height: 1.55;
+  color: var(--text-main);
+}
+
+.verse-text .il-multi-text.is-hebrew {
+  font-size: 1.12em;
+  line-height: 1.65;
+}
+
 .verse-text .il-header-orig {
   padding: 7px 10px;
   border-radius: var(--radius-sm);
