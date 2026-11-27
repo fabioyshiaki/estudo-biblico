@@ -8,12 +8,24 @@ import {
   buildCompanionBarHtml
 } from '../formats/companion-dicts.js';
 
+const SHORT_BOOK_ABBR = [
+  '',
+  'Gn', 'Êx', 'Lv', 'Nm', 'Dt', 'Js', 'Jz', 'Rt', '1Sm', '2Sm',
+  '1Rs', '2Rs', '1Cr', '2Cr', 'Ed', 'Ne', 'Et', 'Jó', 'Sl', 'Pv',
+  'Ec', 'Ct', 'Is', 'Jr', 'Lm', 'Ez', 'Dn', 'Os', 'Jl', 'Am',
+  'Ob', 'Jn', 'Mq', 'Na', 'Hc', 'Sf', 'Ag', 'Zc', 'Ml',
+  'Mt', 'Mc', 'Lc', 'Jo', 'At', 'Rm', '1Co', '2Co', 'Gl', 'Ef',
+  'Fp', 'Cl', '1Ts', '2Ts', '1Tm', '2Tm', 'Tt', 'Fm', 'Hb', 'Tg',
+  '1Pe', '2Pe', '1Jo', '2Jo', '3Jo', 'Jd', 'Ap'
+];
+
 let callbacks = {
   onOpenSources: () => {},
   onOpenFootnote: () => {},
   onRequestPermission: () => {},
   onLookupDictionary: () => {},
-  onOpenCompanionGroup: () => {}
+  onOpenCompanionGroup: () => {},
+  onBibleChromeUpdated: () => {}
 };
 
 let currentVerses = [];
@@ -27,6 +39,13 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function formatCompactRef(bookId, chapter, verse = 0) {
+  const b = Number(bookId) || 1;
+  const abbr = SHORT_BOOK_ABBR[b] || getBookName(b).slice(0, 4);
+  const vNum = Number(verse) || 0;
+  return vNum > 0 ? `${abbr} ${chapter}:${vNum}` : `${abbr} ${chapter}`;
 }
 
 export async function loadBooksForBible(bible) {
@@ -154,7 +173,6 @@ export function initReaderView(opts = {}) {
       return;
     }
 
-    // Evita alternar seleção do versículo quando o usuário está selecionando uma palavra para buscar
     const sel = window.getSelection ? window.getSelection() : null;
     if (sel && !sel.isCollapsed && sel.toString().trim()) {
       return;
@@ -171,35 +189,39 @@ export function initReaderView(opts = {}) {
       el.classList.remove('is-selected');
     });
 
+    const curState = store.getState();
+    const refLabel = document.getElementById('label-active-ref');
+
     if (!alreadySelected) {
       verseEl.classList.add('is-selected');
+      if (refLabel) {
+        refLabel.textContent = formatCompactRef(curState.book, curState.chapter, verseNum);
+      }
       const verseObj = currentVerses.find((v) => v.verse === verseNum) || null;
       eventBus.emit(EVENTS.VERSE_TAPPED, verseObj);
     } else {
+      if (refLabel) {
+        refLabel.textContent = formatCompactRef(curState.book, curState.chapter, 1);
+      }
       eventBus.emit(EVENTS.VERSE_TAPPED, null);
     }
   });
 }
 
-function updateChrome(bible, bookId, chapter, navLimits = {}) {
+function updateChrome(bible, bookId, chapter, navLimits = {}, verseFocus = 1) {
   const bibleLabel = document.getElementById('label-active-bible');
   const refLabel = document.getElementById('label-active-ref');
   const metaLabel = document.getElementById('chapter-meta');
-  const prevBibleBtn = document.getElementById('btn-prev-bible');
-  const nextBibleBtn = document.getElementById('btn-next-bible');
-  const prevBookBtn = document.getElementById('btn-prev-book');
-  const nextBookBtn = document.getElementById('btn-next-book');
+  const topPrevBtn = document.getElementById('btn-top-prev-chapter');
+  const topNextBtn = document.getElementById('btn-top-next-chapter');
   const prevBtn = document.getElementById('btn-prev-chapter');
   const nextBtn = document.getElementById('btn-next-chapter');
 
-  const bibles = store.getBibles();
-  const bibleIdx = bible ? bibles.findIndex((m) => m.path === bible.path) : -1;
-
   if (bibleLabel) {
-    bibleLabel.textContent = bible ? (bible.abbr || bible.title) : 'Sem Bíblia';
+    bibleLabel.textContent = bible ? (bible.title || bible.abbr) : 'Sem Bíblia';
   }
   if (refLabel) {
-    refLabel.textContent = bible ? formatReference(bookId, chapter) : 'Selecionar';
+    refLabel.textContent = bible ? formatCompactRef(bookId, chapter, verseFocus) : 'Selecionar';
   }
   if (metaLabel && store.getActiveMode() === 'bible') {
     metaLabel.textContent = bible
@@ -207,14 +229,17 @@ function updateChrome(bible, bookId, chapter, navLimits = {}) {
       : 'Nenhuma fonte configurada';
   }
 
-  if (prevBibleBtn) prevBibleBtn.disabled = bibleIdx <= 0;
-  if (nextBibleBtn) nextBibleBtn.disabled = bibleIdx < 0 || bibleIdx >= bibles.length - 1;
-  if (prevBookBtn) prevBookBtn.disabled = !bible || Boolean(navLimits.isFirstBook);
-  if (nextBookBtn) nextBookBtn.disabled = !bible || Boolean(navLimits.isLastBook);
+  const disablePrev = !bible || Boolean(navLimits.isFirst);
+  const disableNext = !bible || Boolean(navLimits.isLast);
+
+  if (topPrevBtn) topPrevBtn.disabled = disablePrev;
+  if (topNextBtn) topNextBtn.disabled = disableNext;
   if (store.getActiveMode() === 'bible') {
-    if (prevBtn) prevBtn.disabled = !bible || Boolean(navLimits.isFirst);
-    if (nextBtn) nextBtn.disabled = !bible || Boolean(navLimits.isLast);
+    if (prevBtn) prevBtn.disabled = disablePrev;
+    if (nextBtn) nextBtn.disabled = disableNext;
   }
+
+  callbacks.onBibleChromeUpdated({ bible, bookId, chapter });
 }
 
 function renderEmptyState({ title, message, primaryLabel, primaryAction, secondaryLabel, secondaryAction }) {
@@ -246,7 +271,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
   const lockedLimits = { isFirst: true, isLast: true, isFirstBook: true, isLastBook: true };
 
   if (nativeBridge.isNative() && !state.hasStoragePermission) {
-    updateChrome(null, state.book, state.chapter, lockedLimits);
+    updateChrome(null, state.book, state.chapter, lockedLimits, 0);
     renderEmptyState({
       title: 'Permissão de leitura necessária',
       message: 'Para abrir suas Bíblias MySword diretamente em modo somente leitura (sem copiar arquivos), conceda acesso aos arquivos do dispositivo. O aplicativo nunca vasculha o armazenamento sozinho.',
@@ -259,7 +284,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
   }
 
   if (!bible) {
-    updateChrome(null, state.book, state.chapter, lockedLimits);
+    updateChrome(null, state.book, state.chapter, lockedLimits, 0);
     renderEmptyState({
       title: 'Nenhuma Bíblia adicionada',
       message: 'Você tem controle total sobre onde o aplicativo lê arquivos. Aponte manualmente um arquivo .bbl.mybible específico ou uma pasta com suas Bíblias MySword.',
@@ -271,7 +296,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
 
   const adapter = getAdapterForModule(bible);
   if (!adapter) {
-    updateChrome(bible, state.book, state.chapter, lockedLimits);
+    updateChrome(bible, state.book, state.chapter, lockedLimits, 0);
     renderEmptyState({
       title: 'Formato não suportado',
       message: `Nenhum adaptador registrado para o formato "${bible.formatId}".`,
@@ -286,7 +311,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
 
     if (!books.length) {
-      updateChrome(bible, state.book, state.chapter, lockedLimits);
+      updateChrome(bible, state.book, state.chapter, lockedLimits, 0);
       renderEmptyState({
         title: 'Módulo vazio ou ilegível',
         message: `Não foi possível encontrar livros em "${bible.title}". Verifique se o arquivo ainda existe no local autorizado.`,
@@ -327,17 +352,18 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     const isFirst = isFirstBook && chapIdx <= 0;
     const isLast = isLastBook && (chapIdx < 0 || chapIdx >= chapters.length - 1);
 
-    updateChrome(bible, targetBook, targetChapter, { isFirst, isLast, isFirstBook, isLastBook });
+    const initialVerseNum = Number(scrollToVerse) || (verses[0] ? verses[0].verse : 1);
+    updateChrome(bible, targetBook, targetChapter, { isFirst, isLast, isFirstBook, isLastBook }, initialVerseNum);
+
     currentVerses = verses;
+    selectedVerseNum = Number(scrollToVerse) || null;
     currentCompanionMap = companionMap || new Map();
-    selectedVerseNum = null;
 
     const hasInterlinear = verses.some((v) => v.html.includes('il-block'));
     const parts = [];
     parts.push(`
       <header class="chapter-header">
         <h1 class="chapter-title">${escapeHtml(getBookName(targetBook))} ${targetChapter}</h1>
-        <p class="chapter-subtitle">${escapeHtml(bible.title)}</p>
       </header>
       <div class="verse-list">
     `);
@@ -406,7 +432,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     }
   } catch (err) {
     if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
-    updateChrome(bible, state.book, state.chapter, lockedLimits);
+    updateChrome(bible, state.book, state.chapter, lockedLimits, 0);
     renderEmptyState({
       title: 'Erro ao ler capítulo',
       message: err && err.message ? err.message : String(err),
