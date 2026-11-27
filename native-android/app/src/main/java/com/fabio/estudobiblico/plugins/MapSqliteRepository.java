@@ -29,6 +29,8 @@ public final class MapSqliteRepository {
         Pattern.compile("(?i)<img[^>]+src\\s*=\\s*['\"]([^'\"]+)['\"]");
     private static final Pattern MAP_KEYWORD_PATTERN =
         Pattern.compile("(?i)(?:^|[^a-z])(map|maps|mapa|mapas|atlas|rumsey|mcnally|geograf|cartograf|terra\\s*santa|holy\\s*land|palestin)");
+    private static final Pattern PHOTO_KEYWORD_PATTERN =
+        Pattern.compile("(?i)(?:^|[^a-z])(photo|photos|foto|fotos|picture|pictures|image|images|imagem|imagens|illustrat|ilustra|gallery|galeria|drawing|drawings|desenho|desenhos|painting|pintura|archaeolog|arqueolog|artifact|artefat|panorama|scenery|dore|doré|chart|charts|diagram|diagrama|infograf)");
     private static final Pattern DOUBLE_PATTERN =
         Pattern.compile("-?\\d+(?:\\.\\d+)?");
 
@@ -78,8 +80,10 @@ public final class MapSqliteRepository {
     }
 
     /**
-     * Valida rigorosamente se o arquivo SQLite é um módulo de mapa/atlas real.
-     * Rejeita livros comuns (.bok.mybible) sem imagens ou sem metadados/tabelas de mapa.
+     * Classifica módulos visuais SQLite em:
+     * - "map": atlas/mapas cartográficos (com tabela `map`, `mapattribution` ou metadados de atlas sem serem fotos).
+     * - "photo": acervos de fotos, ilustrações, gravuras, diagramas ou gráficos bíblicos.
+     * Rejeita livros comuns (.bok.mybible) sem imagens reais em `data`.
      */
     public static JSObject inspectMapModule(File file) {
         SQLiteDatabase db = null;
@@ -127,20 +131,41 @@ public final class MapSqliteRepository {
                 "SELECT COUNT(*) FROM journal WHERE COALESCE(hidden, 0) = 0 AND content LIKE '%<img%'"
             );
 
-            boolean hasOfficialMapStructure = (mapTableRows > 0) || (mapVerseRows > 0) || !attribution.isEmpty();
-            if (!hasOfficialMapStructure) {
-                String metaBag = file.getName() + " " + name + " " + title + " " + abbreviation + " " + description;
-                boolean matchesMapKeyword = MAP_KEYWORD_PATTERN.matcher(metaBag).find();
-                boolean mostlyImages = imgJournalCount >= 3 || (journalCount > 0 && imgJournalCount * 2 >= journalCount);
-                if (!matchesMapKeyword || !mostlyImages) {
-                    return null;
-                }
+            String primaryBag = file.getName() + " " + name + " " + title + " " + abbreviation;
+            String fullBag = primaryBag + " " + description;
+
+            boolean matchesPhotoPrimary = PHOTO_KEYWORD_PATTERN.matcher(primaryBag).find();
+            boolean matchesPhotoFull = matchesPhotoPrimary || PHOTO_KEYWORD_PATTERN.matcher(fullBag).find();
+            boolean matchesMapKeyword = MAP_KEYWORD_PATTERN.matcher(fullBag).find();
+            boolean mostlyImages = imgJournalCount >= 3 || (journalCount > 0 && imgJournalCount * 2 >= journalCount);
+
+            String moduleKind = null;
+
+            // 1. Foto / Ilustração tem prioridade quando não existe tabela georreferenciada `map`
+            if (matchesPhotoPrimary && mapTableRows == 0) {
+                moduleKind = "photo";
+            } else if (mapTableRows > 0) {
+                moduleKind = "map";
+            } else if (matchesPhotoFull && imgJournalCount > 0 && attribution.isEmpty()) {
+                moduleKind = "photo";
+            } else if (mapVerseRows > 0 || !attribution.isEmpty()) {
+                moduleKind = "map";
+            } else if (matchesMapKeyword && mostlyImages) {
+                moduleKind = "map";
+            } else if (imgJournalCount >= 3 && journalCount > 0 && imgJournalCount * 2 >= journalCount) {
+                // Acervos majoritariamente visuais sem palavra-chave explícita entram em Fotos e Ilustrações
+                moduleKind = "photo";
+            }
+
+            if (moduleKind == null) {
+                return null;
             }
 
             JSObject meta = new JSObject();
             meta.put("path", file.getAbsolutePath());
             meta.put("fileName", file.getName());
             meta.put("sizeBytes", file.length());
+            meta.put("moduleKind", moduleKind);
             meta.put("hasMapVerse", mapVerseRows > 0);
             meta.put("hasMapTable", mapTableRows > 0);
             meta.put("hasGeoBounds", mapTableRows > 0);
@@ -172,40 +197,59 @@ public final class MapSqliteRepository {
         Cursor c = null;
         try {
             db = openReadOnly(file);
-            boolean hasMapTable = hasTable(db, "map");
-            c = db.rawQuery(
-                "SELECT rowid, id, title, tags, content FROM journal " +
-                "WHERE COALESCE(hidden, 0) = 0 ORDER BY relativeorder ASC, rowid ASC",
-                null
-            );
-            while (c.moveToNext()) {
-                int rowId = c.getInt(0);
-                String id = c.isNull(1) ? "" : c.getString(1);
-                String title = c.isNull(2) ? "" : c.getString(2);
-                String tags = c.isNull(3) ? "" : c.getString(3);
-                String content = c.isNull(4) ? "" : c.getString(4);
+            boolean hasMapTable = hasTable(db, "map") && countRows(db, "SELECT COUNT(*) FROM map") > 0;
 
-                String firstImg = "";
-                Matcher m = IMG_SRC_PATTERN.matcher(content);
-                if (m.find() && m.group(1) != null) {
-                    firstImg = m.group(1);
-                }
+            if (hasMapTable) {
+                c = db.rawQuery(
+                    "SELECT rowid, id, title, tags, content FROM journal " +
+                    "WHERE COALESCE(hidden, 0) = 0 ORDER BY relativeorder ASC, rowid ASC",
+                    null
+                );
+                while (c.moveToNext()) {
+                    int rowId = c.getInt(0);
+                    String id = c.isNull(1) ? "" : c.getString(1);
+                    String title = c.isNull(2) ? "" : c.getString(2);
+                    String tags = c.isNull(3) ? "" : c.getString(3);
+                    String content = c.isNull(4) ? "" : c.getString(4);
 
-                JSObject item = new JSObject();
-                item.put("rowid", rowId);
-                item.put("id", id);
-                item.put("title", title);
-                item.put("tags", tags);
-                item.put("hasImage", !firstImg.isEmpty());
-                item.put("primaryImage", firstImg);
-
-                if (hasMapTable && !firstImg.isEmpty()) {
-                    JSObject geo = findGeoOverlayForEntry(db, rowId, id, title, firstImg);
-                    if (geo != null && geo.has("bounds")) {
-                        item.put("bounds", geo.optJSONObject("bounds"));
+                    String firstImg = "";
+                    Matcher m = IMG_SRC_PATTERN.matcher(content);
+                    if (m.find() && m.group(1) != null) {
+                        firstImg = m.group(1);
                     }
+
+                    JSObject item = new JSObject();
+                    item.put("rowid", rowId);
+                    item.put("id", id);
+                    item.put("title", title);
+                    item.put("tags", tags);
+                    item.put("hasImage", !firstImg.isEmpty());
+                    item.put("primaryImage", firstImg);
+
+                    if (!firstImg.isEmpty()) {
+                        JSObject geo = findGeoOverlayForEntry(db, rowId, id, title, firstImg);
+                        if (geo != null && geo.has("bounds")) {
+                            item.put("bounds", geo.optJSONObject("bounds"));
+                        }
+                    }
+                    list.put(item);
                 }
-                list.put(item);
+            } else {
+                // Caminho leve para módulos sem tabela `map` (ex.: 2.030 fotos) sem carregar HTML completo
+                c = db.rawQuery(
+                    "SELECT rowid, id, title, tags, CASE WHEN content LIKE '%<img%' THEN 1 ELSE 0 END " +
+                    "FROM journal WHERE COALESCE(hidden, 0) = 0 ORDER BY relativeorder ASC, rowid ASC",
+                    null
+                );
+                while (c.moveToNext()) {
+                    JSObject item = new JSObject();
+                    item.put("rowid", c.getInt(0));
+                    item.put("id", c.isNull(1) ? "" : c.getString(1));
+                    item.put("title", c.isNull(2) ? "" : c.getString(2));
+                    item.put("tags", c.isNull(3) ? "" : c.getString(3));
+                    item.put("hasImage", c.getInt(4) == 1);
+                    list.put(item);
+                }
             }
         } catch (Exception ignored) {
         } finally {
@@ -219,7 +263,13 @@ public final class MapSqliteRepository {
         return list;
     }
 
-    public static Map<Integer, List<JSObject>> getChapterVerseMaps(File file, String moduleTitle, int book, int chapter) {
+    public static Map<Integer, List<JSObject>> getChapterVerseMaps(
+            File file,
+            String moduleTitle,
+            String moduleKind,
+            int book,
+            int chapter
+    ) {
         Map<Integer, List<JSObject>> markers = new HashMap<>();
         SQLiteDatabase db = null;
         Cursor c = null;
@@ -265,6 +315,7 @@ public final class MapSqliteRepository {
                         ref.put("title", mapTitle);
                         ref.put("modulePath", file.getAbsolutePath());
                         ref.put("moduleTitle", moduleTitle);
+                        ref.put("moduleKind", moduleKind);
                         ref.put("sourceType", "mapverse");
                         list.add(ref);
                     }
@@ -387,7 +438,13 @@ public final class MapSqliteRepository {
         }
     }
 
-    public static JSArray searchMaps(File file, String moduleTitle, String query, int limit) {
+    public static JSArray searchMaps(
+            File file,
+            String moduleTitle,
+            String moduleKind,
+            String query,
+            int limit
+    ) {
         JSArray results = new JSArray();
         SQLiteDatabase db = null;
         Cursor c = null;
@@ -413,6 +470,7 @@ public final class MapSqliteRepository {
                 item.put("title", c.isNull(2) ? "" : c.getString(2));
                 item.put("modulePath", file.getAbsolutePath());
                 item.put("moduleTitle", moduleTitle);
+                item.put("moduleKind", moduleKind);
                 results.put(item);
             }
         } catch (Exception ignored) {
@@ -427,10 +485,6 @@ public final class MapSqliteRepository {
         return results;
     }
 
-    /**
-     * Inspeciona dinamicamente a tabela `map` de módulos MySword 9.0+ para localizar
-     * os limites geográficos (south, west, north, east) do mapa aberto.
-     */
     private static JSObject findGeoOverlayForEntry(
             SQLiteDatabase db,
             int journalRowId,
