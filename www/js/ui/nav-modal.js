@@ -3,8 +3,14 @@ import { store } from '../core/store.js';
 import { eventBus, EVENTS } from '../core/events.js';
 import { getBookMeta } from '../core/canon.js';
 import { loadBooksForBible, loadChaptersForBible } from './reader-view.js';
+import { normalizeLookupTerm } from '../formats/mysword-dictionary.js';
+import {
+  findDictionariesWithTerm,
+  getCachedDictionariesWithTerm
+} from '../formats/dictionary-lookup.js';
 
 let activeKeyHandler = null;
+let activeCleanup = null;
 
 function escapeHtml(str) {
   return String(str || '')
@@ -39,6 +45,15 @@ function scrollChildToTop(scrollContainer, targetEl, extraTopOffset = 12) {
 }
 
 export function closeModal() {
+  if (typeof activeCleanup === 'function') {
+    try {
+      activeCleanup();
+    } catch (err) {
+      // Ignora erro na limpeza do modal anterior
+    }
+    activeCleanup = null;
+  }
+
   const root = document.getElementById('modal-root');
   if (root) {
     root.classList.remove('is-open');
@@ -284,17 +299,364 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   });
 }
 
-export function openDictionaryPickerModal({ onOpenSources } = {}) {
-  openModulePickerModal({
-    title: 'Selecionar Dicionário',
-    emptyTitle: 'Nenhum Dicionário registrado',
-    emptyDesc: 'Adicione um arquivo .dct.mybible ou uma pasta em Configurações → Fontes.',
-    unitLabel: 'Dicionário(s)',
-    getList: () => store.getDictionaries(),
-    getActive: () => store.getActiveDictionary(),
-    onSelect: (path) => store.setActiveDictionary(path),
-    onOpenSources
+export function openDictionaryPickerModal({
+  onOpenSources,
+  filterTerm = '',
+  searchBody = false,
+  onSelectDictionary = null
+} = {}) {
+  const cleanFilter = normalizeLookupTerm(filterTerm);
+
+  // Sem termo pesquisado: exibe todos os dicionários normalmente
+  if (!cleanFilter) {
+    openModulePickerModal({
+      title: 'Selecionar Dicionário',
+      emptyTitle: 'Nenhum Dicionário registrado',
+      emptyDesc: 'Adicione um arquivo .dct.mybible ou uma pasta em Configurações → Fontes.',
+      unitLabel: 'Dicionário(s)',
+      getList: () => store.getDictionaries(),
+      getActive: () => store.getActiveDictionary(),
+      onSelect: (path) => {
+        if (typeof onSelectDictionary === 'function') {
+          onSelectDictionary(path, { matchedWord: '', keepFilterTerm: false });
+        } else {
+          store.setActiveDictionary(path);
+        }
+      },
+      onOpenSources
+    });
+    return;
+  }
+
+  const allDictsInitial = store.getDictionaries();
+  const modal = openModalShell({ title: `Dicionários — "${cleanFilter}"` });
+  if (!modal || !modal.body) return;
+
+  if (!allDictsInitial.length) {
+    modal.body.innerHTML = `
+      <div class="empty-state">
+        <h2>Nenhum Dicionário registrado</h2>
+        <p>Adicione um arquivo .dct.mybible ou uma pasta em Configurações → Fontes.</p>
+        <button type="button" class="primary-btn" id="btn-go-sources">Configurar Fontes</button>
+      </div>
+    `;
+    modal.body.querySelector('#btn-go-sources')?.addEventListener('click', () => {
+      closeModal();
+      if (onOpenSources) onOpenSources();
+    });
+    return;
+  }
+
+  let searchQuery = '';
+  let filterEnabled = true;
+  let scanController = null;
+  let scanDone = 0;
+  let scanTotal = allDictsInitial.length;
+  let isScanning = false;
+  let matchedEntries = [];
+
+  const cachedMatches = getCachedDictionariesWithTerm(allDictsInitial, cleanFilter, { searchBody });
+  if (cachedMatches) {
+    matchedEntries = cachedMatches;
+    scanDone = allDictsInitial.length;
+    isScanning = false;
+  } else {
+    isScanning = true;
+  }
+
+  modal.body.innerHTML = `
+    <div class="picker-search-wrap" id="mod-search-wrap">
+      <div class="search-input-box">
+        <input
+          type="search"
+          id="mod-search-input"
+          class="search-input"
+          placeholder="Filtrar nome do dicionário..."
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+        />
+        <button type="button" id="mod-search-clear" class="search-clear-btn hidden" aria-label="Limpar busca">&times;</button>
+      </div>
+      <div class="picker-meta" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <span id="mod-picker-meta"></span>
+        <button type="button" class="secondary-btn" id="btn-toggle-dict-filter" style="padding:3px 10px;font-size:12px;min-height:28px;">
+          Ver todos (${allDictsInitial.length})
+        </button>
+      </div>
+    </div>
+    <div class="module-list" id="mod-picker-list"></div>
+    <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
+      <button type="button" class="secondary-btn" id="btn-manage-sources">Gerenciar fontes</button>
+    </div>
+  `;
+
+  const searchWrap = modal.body.querySelector('#mod-search-wrap');
+  const inputEl = modal.body.querySelector('#mod-search-input');
+  const clearBtn = modal.body.querySelector('#mod-search-clear');
+  const metaEl = modal.body.querySelector('#mod-picker-meta');
+  const toggleFilterBtn = modal.body.querySelector('#btn-toggle-dict-filter');
+  const listEl = modal.body.querySelector('#mod-picker-list');
+
+  function scrollActiveToTop() {
+    window.requestAnimationFrame(() => {
+      const activeRow = listEl && listEl.querySelector('.module-row.active');
+      if (!activeRow) return;
+      const stickyOffset = (searchWrap ? searchWrap.offsetHeight : 0) + 8;
+      scrollChildToTop(modal.body, activeRow, stickyOffset);
+    });
+  }
+
+  function getFreshMatchedEntries() {
+    const allDicts = store.getDictionaries();
+    const byPath = new Map(allDicts.map((m) => [m.path, m]));
+    const origOrder = new Map(allDicts.map((m, idx) => [m.path, idx]));
+    const matchPriority = { exact: 0, prefix: 1, title: 2, body: 3 };
+
+    return matchedEntries
+      .map((item) => {
+        const freshMod = byPath.get(item.module.path);
+        if (!freshMod) return null;
+        return {
+          module: freshMod,
+          word: item.word,
+          matchType: item.matchType
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const favDiff = Number(Boolean(b.module.isFavorite)) - Number(Boolean(a.module.isFavorite));
+        if (favDiff !== 0) return favDiff;
+        const pa = matchPriority[a.matchType] ?? 9;
+        const pb = matchPriority[b.matchType] ?? 9;
+        if (pa !== pb) return pa - pb;
+        return (origOrder.get(a.module.path) ?? 999999) - (origOrder.get(b.module.path) ?? 999999);
+      });
+  }
+
+  function renderRows() {
+    const allDicts = store.getDictionaries();
+    const active = store.getActiveDictionary();
+    const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+    const sortLabel = sortBy === 'title' ? 'Descrição' : 'Abreviação';
+
+    const freshMatches = getFreshMatchedEntries();
+    const matchByPath = new Map(freshMatches.map((item) => [item.module.path, item]));
+    const baseItems = filterEnabled ? freshMatches.map((item) => item.module) : allDicts;
+
+    const norm = normalizeSearch(searchQuery);
+    const terms = norm ? norm.split(/\s+/).filter(Boolean) : [];
+    const filtered = baseItems.filter((m) => matchesModuleQuery(m, terms));
+
+    clearBtn?.classList.toggle('hidden', !searchQuery.length);
+
+    if (toggleFilterBtn) {
+      toggleFilterBtn.textContent = filterEnabled
+        ? `Ver todos (${allDicts.length})`
+        : `Só com "${cleanFilter}"`;
+    }
+
+    if (metaEl) {
+      if (filterEnabled) {
+        if (isScanning) {
+          metaEl.textContent = `Verificando ${scanDone}/${scanTotal} • ${freshMatches.length} com "${cleanFilter}"`;
+        } else {
+          const hiddenCount = Math.max(0, allDicts.length - freshMatches.length);
+          metaEl.textContent = terms.length
+            ? `${filtered.length} de ${freshMatches.length} com "${cleanFilter}"`
+            : `${freshMatches.length} com "${cleanFilter}" (${hiddenCount} oculto(s))`;
+        }
+      } else {
+        metaEl.textContent = terms.length
+          ? `${filtered.length} de ${allDicts.length} Dicionário(s) • Ordem: ${sortLabel}`
+          : `${allDicts.length} Dicionário(s) • Ordem: ${sortLabel}`;
+      }
+    }
+
+    if (!listEl) return;
+
+    if (!filtered.length) {
+      if (filterEnabled && isScanning) {
+        listEl.innerHTML = `<div class="picker-empty">Procurando "${escapeHtml(cleanFilter)}" nos dicionários (${scanDone}/${scanTotal})...</div>`;
+        return;
+      }
+      if (filterEnabled && !terms.length) {
+        listEl.innerHTML = `
+          <div class="picker-empty">
+            <p style="margin:0 0 10px;">Nenhum dicionário possui "${escapeHtml(cleanFilter)}".</p>
+            <button type="button" class="secondary-btn" id="btn-show-all-empty">Mostrar todos os dicionários</button>
+          </div>
+        `;
+        listEl.querySelector('#btn-show-all-empty')?.addEventListener('click', () => {
+          filterEnabled = false;
+          renderRows();
+          scrollActiveToTop();
+        });
+        return;
+      }
+      listEl.innerHTML = `<div class="picker-empty">Nenhum dicionário encontrado para "${escapeHtml(searchQuery.trim())}".</div>`;
+      return;
+    }
+
+    const matchLabels = {
+      exact: 'Exato',
+      prefix: 'Início',
+      title: 'Título',
+      body: 'No texto'
+    };
+
+    listEl.innerHTML = filtered.map((m) => {
+      const isActive = active && active.path === m.path;
+      const mainLabel = sortBy === 'title' ? (m.title || m.abbr) : (m.abbr || m.title);
+      const secondaryLabel = sortBy === 'title' ? (m.abbr || '') : (m.title || '');
+      const matchInfo = filterEnabled ? matchByPath.get(m.path) : null;
+      const matchLine = matchInfo
+        ? `Verbete: ${matchInfo.word} (${matchLabels[matchInfo.matchType] || 'Encontrado'})`
+        : '';
+      const extraMeta = [m.language, m.hasStrongs ? 'Strong' : ''].filter(Boolean).join(' • ');
+      const fileLine = [m.fileName, extraMeta].filter(Boolean).join(' • ');
+
+      return `
+        <div class="module-row ${isActive ? 'active' : ''}">
+          <button type="button" class="row-main" data-select-path="${escapeHtml(m.path)}">
+            <div class="row-title">${escapeHtml(mainLabel)}</div>
+            ${secondaryLabel ? `<div class="row-sub">${escapeHtml(secondaryLabel)}</div>` : ''}
+            ${matchLine ? `<div class="row-file" style="color:var(--accent);font-weight:600;">${escapeHtml(matchLine)}</div>` : ''}
+            ${fileLine ? `<div class="row-file">${escapeHtml(fileLine)}</div>` : ''}
+          </button>
+          <button
+            type="button"
+            class="fav-btn ${m.isFavorite ? 'is-fav' : ''}"
+            data-fav-id="${m.id}"
+            data-fav-next="${m.isFavorite ? '0' : '1'}"
+            aria-label="Favoritar módulo"
+          >${m.isFavorite ? '&#9733;' : '&#9734;'}</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function startScanIfNeeded() {
+    if (!isScanning) return;
+    if (scanController) scanController.abort();
+    scanController = new AbortController();
+    const signal = scanController.signal;
+    const active = store.getActiveDictionary();
+
+    activeCleanup = () => {
+      if (scanController) {
+        scanController.abort();
+        scanController = null;
+      }
+    };
+
+    findDictionariesWithTerm(store.getDictionaries(), cleanFilter, {
+      searchBody,
+      activePath: active ? active.path : '',
+      concurrency: 4,
+      signal,
+      onProgress: (done, total, partial) => {
+        if (signal.aborted) return;
+        scanDone = done;
+        scanTotal = total;
+        matchedEntries = partial;
+        renderRows();
+      }
+    })
+      .then((finalList) => {
+        if (signal.aborted) return;
+        isScanning = false;
+        scanDone = scanTotal;
+        matchedEntries = finalList;
+        renderRows();
+        if (!searchQuery.trim() && filterEnabled) {
+          scrollActiveToTop();
+        }
+      })
+      .catch(() => {
+        if (signal.aborted) return;
+        isScanning = false;
+        renderRows();
+      });
+  }
+
+  toggleFilterBtn?.addEventListener('click', () => {
+    filterEnabled = !filterEnabled;
+    renderRows();
+    if (!searchQuery.trim()) {
+      scrollActiveToTop();
+    }
   });
+
+  inputEl?.addEventListener('input', (ev) => {
+    searchQuery = ev.target.value || '';
+    renderRows();
+    if (searchQuery.trim()) {
+      modal.body.scrollTop = 0;
+    } else {
+      scrollActiveToTop();
+    }
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    searchQuery = '';
+    if (inputEl) {
+      inputEl.value = '';
+      inputEl.focus();
+    }
+    renderRows();
+    scrollActiveToTop();
+  });
+
+  listEl?.addEventListener('click', async (ev) => {
+    const favBtn = ev.target.closest('[data-fav-id]');
+    if (favBtn) {
+      try {
+        const res = await nativeBridge.setModuleFavorite(
+          Number(favBtn.dataset.favId),
+          favBtn.dataset.favNext === '1'
+        );
+        if (res && Array.isArray(res.modules)) {
+          store.setModulesOnly(res.modules);
+        }
+        renderRows();
+      } catch (err) {
+        eventBus.emit(EVENTS.TOAST, err.message || 'Erro ao favoritar módulo.');
+      }
+      return;
+    }
+
+    const selectBtn = ev.target.closest('[data-select-path]');
+    if (selectBtn) {
+      const selectedPath = selectBtn.dataset.selectPath;
+      const freshMatches = getFreshMatchedEntries();
+      const matchInfo = filterEnabled
+        ? freshMatches.find((item) => item.module.path === selectedPath)
+        : null;
+
+      if (typeof onSelectDictionary === 'function') {
+        onSelectDictionary(selectedPath, {
+          matchedWord: matchInfo ? matchInfo.word : '',
+          keepFilterTerm: Boolean(filterEnabled && matchInfo)
+        });
+      } else {
+        store.setActiveDictionary(selectedPath);
+      }
+      closeModal();
+    }
+  });
+
+  modal.body.querySelector('#btn-manage-sources')?.addEventListener('click', () => {
+    closeModal();
+    if (onOpenSources) onOpenSources();
+  });
+
+  renderRows();
+  if (!isScanning) {
+    scrollActiveToTop();
+  } else {
+    startScanIfNeeded();
+  }
 }
 
 export async function openLocationPickerModal() {
