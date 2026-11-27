@@ -11,6 +11,10 @@ import {
   loadMapMarkersForChapter,
   buildVerseMapPinHtml
 } from '../formats/map-service.js';
+import {
+  extractFsCodeFromElement,
+  normalizeFsCode
+} from '../formats/fs-internal-lookup.js';
 
 const SHORT_BOOK_ABBR = [
   '',
@@ -60,6 +64,27 @@ function getPreferredBibleLabel(bible) {
   return sortBy === 'title'
     ? (bible.title || bible.abbr || bible.fileName || 'Sem Bíblia')
     : (bible.abbr || bible.title || bible.fileName || 'Sem Bíblia');
+}
+
+function resolveTappedFsCode(targetEl) {
+  if (!targetEl || typeof targetEl.closest !== 'function') return '';
+  const tagged = targetEl.closest('[data-fs], [data-fl], [data-figure], fl');
+  if (tagged) {
+    const code = extractFsCodeFromElement(tagged);
+    if (code) return code;
+  }
+  const directCode = extractFsCodeFromElement(targetEl);
+  if (directCode) return directCode;
+
+  // Fallback caso o usuário toque diretamente em um token/elemento com código FS24B / FS184A
+  if (targetEl.childElementCount === 0) {
+    const raw = String(targetEl.textContent || '').trim();
+    const match = /\b(FS\d+[A-Z0-9]*)\b/i.exec(raw);
+    if (match && match[1]) {
+      return normalizeFsCode(match[1]);
+    }
+  }
+  return '';
 }
 
 export async function loadBooksForBible(bible) {
@@ -139,6 +164,18 @@ export function initReaderView(opts = {}) {
         const refLabel = formatReference(verseObj.book, verseObj.chapter, verseObj.verse);
         callbacks.onOpenCompanionGroup({ verseObj, group, refLabel });
       }
+      return;
+    }
+
+    // Códigos de figuras de linguagem FS... (ex.: FS24B, FS184A) na tabela interna do módulo
+    const fsCode = resolveTappedFsCode(ev.target);
+    if (fsCode) {
+      ev.stopPropagation();
+      const activeBible = store.getActiveBible();
+      callbacks.onLookupDictionary(fsCode, {
+        moduleHint: 'fs',
+        sourceModulePath: activeBible ? activeBible.path : ''
+      });
       return;
     }
 
