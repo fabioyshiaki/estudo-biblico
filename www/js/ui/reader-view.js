@@ -3,15 +3,21 @@ import { eventBus, EVENTS } from '../core/events.js';
 import { getBookName, formatReference } from '../core/canon.js';
 import { getAdapterForModule } from '../formats/format-registry.js';
 import { nativeBridge } from '../bridge/native-bridge.js';
+import {
+  loadCompanionRefsForChapter,
+  buildCompanionBarHtml
+} from '../formats/companion-dicts.js';
 
 let callbacks = {
   onOpenSources: () => {},
   onOpenFootnote: () => {},
   onRequestPermission: () => {},
-  onLookupDictionary: () => {}
+  onLookupDictionary: () => {},
+  onOpenCompanionGroup: () => {}
 };
 
 let currentVerses = [];
+let currentCompanionMap = new Map();
 let selectedVerseNum = null;
 let renderSeq = 0;
 
@@ -66,6 +72,27 @@ export function initReaderView(opts = {}) {
       if (verseObj && verseObj.footnotes && verseObj.footnotes[fnIdx]) {
         const ref = formatReference(verseObj.book, verseObj.chapter, verseObj.verse);
         callbacks.onOpenFootnote(ref, verseObj.footnotes[fnIdx]);
+      }
+      return;
+    }
+
+    // Símbolos dos dicionários ilustrados (_br): Animais, Plantas e Objetos
+    const cmpBtn = ev.target.closest('.v-companion-btn');
+    if (cmpBtn) {
+      ev.stopPropagation();
+      const vNum = Number(cmpBtn.dataset.cmpVerse);
+      const cat = cmpBtn.dataset.cmpCat || '';
+      const groups = currentCompanionMap.get(vNum) || [];
+      const group = groups.find((g) => g.category === cat);
+      if (group) {
+        const curState = store.getState();
+        const verseObj = currentVerses.find((v) => v.verse === vNum) || {
+          book: curState.book,
+          chapter: curState.chapter,
+          verse: vNum
+        };
+        const refLabel = formatReference(verseObj.book, verseObj.chapter, verseObj.verse);
+        callbacks.onOpenCompanionGroup({ verseObj, group, refLabel });
       }
       return;
     }
@@ -195,6 +222,7 @@ function renderEmptyState({ title, message, primaryLabel, primaryAction, seconda
   if (!container) return;
   container.classList.remove('has-interlinear');
   currentVerses = [];
+  currentCompanionMap = new Map();
   selectedVerseNum = null;
 
   container.innerHTML = `
@@ -282,10 +310,14 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
     }
 
     const prefs = store.getPrefs();
-    const verses = await adapter.getChapterVerses(bible.path, targetBook, targetChapter, {
-      showStrongs: prefs.showStrongs,
-      showMorph: prefs.showMorph
-    });
+    const [verses, companionMap] = await Promise.all([
+      adapter.getChapterVerses(bible.path, targetBook, targetChapter, {
+        showStrongs: prefs.showStrongs,
+        showMorph: prefs.showMorph
+      }),
+      loadCompanionRefsForChapter(store.getDictionaries(), targetBook, targetChapter)
+        .catch(() => new Map())
+    ]);
     if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
 
     const bookIdx = books.indexOf(targetBook);
@@ -297,6 +329,7 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
 
     updateChrome(bible, targetBook, targetChapter, { isFirst, isLast, isFirstBook, isLastBook });
     currentVerses = verses;
+    currentCompanionMap = companionMap || new Map();
     selectedVerseNum = null;
 
     const hasInterlinear = verses.some((v) => v.html.includes('il-block'));
@@ -317,17 +350,33 @@ export async function renderReader({ resetScroll = true, restoreScrollTop = null
       }
       const isInterlinear = v.html.includes('il-block');
       const isQInterlinear = v.html.includes('il-q-flow');
+      const hasBlockContent =
+        isInterlinear ||
+        v.html.includes('v-rtl') ||
+        v.html.includes('v-parallel-sep') ||
+        v.html.includes('ucrt-');
+      const hasRtlContent =
+        !isInterlinear &&
+        v.html.includes('v-rtl') &&
+        !v.html.includes('v-ltr');
+
       const itemClasses = [
         'verse-item',
         isInterlinear ? 'is-interlinear' : '',
-        isQInterlinear ? 'is-q-interlinear' : ''
+        isQInterlinear ? 'is-q-interlinear' : '',
+        hasBlockContent ? 'has-block-content' : '',
+        hasRtlContent ? 'has-rtl-content' : ''
       ].filter(Boolean).join(' ');
+
+      const companionGroups = currentCompanionMap.get(v.verse) || [];
+      const companionHtml = buildCompanionBarHtml(v.verse, companionGroups);
 
       parts.push(
         `<div class="${itemClasses}" data-book="${v.book}" data-chapter="${v.chapter}" data-verse="${v.verse}">` +
           `<span class="verse-num">${v.verse}</span>` +
           `<span class="verse-text">${v.html}</span>` +
-        `</div>`
+          companionHtml +
+        '</div>'
       );
     }
 
