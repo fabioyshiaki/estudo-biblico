@@ -6,6 +6,7 @@ import {
 } from './map-gazetteer.js';
 
 const PREF_ACTIVE_ATLAS_KEY = 'estudo_biblico_active_map_module_v1';
+const PREF_ACTIVE_PHOTO_KEY = 'estudo_biblico_active_photo_module_v1';
 const PREF_MAP_UI_KEY = 'estudo_biblico_map_ui_prefs_v2';
 
 export const BASE_MAP_LAYERS = [
@@ -47,7 +48,132 @@ export const BASE_MAP_LAYERS = [
   }
 ];
 
-let cachedModules = null;
+// Termos de busca em inglês/português para encontrar fotos em acervos internacionais (ex.: Bible Maps Location Photos)
+const PHOTO_PLACE_TERMS = {
+  'jerusalem': ['Jerusalem', 'Jerusalém', 'Temple Mount', 'City of David'],
+  'belem': ['Bethlehem', 'Belém'],
+  'nazare': ['Nazareth', 'Nazaré'],
+  'cafarnaum': ['Capernaum', 'Cafarnaum'],
+  'betsaida': ['Bethsaida', 'Betsaida'],
+  'cana': ['Cana', 'Caná'],
+  'corazim': ['Chorazin', 'Korazim', 'Corazim'],
+  'magdala': ['Magdala'],
+  'naim': ['Nain', 'Naim'],
+  'tiberiades': ['Tiberias', 'Tiberíades'],
+  'gadara': ['Gadara', 'Gerasa', 'Jerash'],
+  'betania': ['Bethany', 'Betânia'],
+  'emaus': ['Emmaus', 'Emaús'],
+  'getsemani': ['Gethsemane', 'Getsêmani'],
+  'golgota': ['Golgotha', 'Calvary', 'Gólgota'],
+  'siloe': ['Siloam', 'Siloé'],
+  'jerico': ['Jericho', 'Jericó'],
+  'hebrom': ['Hebron', 'Hebrom', 'Mamre'],
+  'betel': ['Bethel', 'Betel'],
+  'siquem': ['Shechem', 'Sychar', 'Siquém'],
+  'berseba': ['Beersheba', 'Beer-sheba', 'Berseba'],
+  'silo': ['Shiloh', 'Siló'],
+  'gilgal': ['Gilgal'],
+  'gibeom': ['Gibeon', 'Gibeah', 'Gibeom'],
+  'rama': ['Ramah', 'Arimathea', 'Ramá'],
+  'mispa': ['Mizpah', 'Mispá'],
+  'megido': ['Megiddo', 'Armageddon', 'Megido'],
+  'jezreel': ['Jezreel'],
+  'da': ['Dan', 'Tel Dan'],
+  'hazor': ['Hazor'],
+  'laquis': ['Lachish', 'Laquis'],
+  'en-gedi': ['En-gedi', 'Engedi', 'Ein Gedi'],
+  'gaza': ['Gaza'],
+  'asdode': ['Ashdod', 'Azotus', 'Asdode'],
+  'ascalom': ['Ashkelon', 'Ascalon', 'Ascalom'],
+  'ecrom': ['Ekron', 'Ecrom'],
+  'gate': ['Gath', 'Gate'],
+  'jope': ['Joppa', 'Jaffa', 'Jope'],
+  'lida': ['Lydda', 'Lod', 'Lida'],
+  'cesareia': ['Caesarea', 'Cesareia'],
+  'tiro': ['Tyre', 'Tiro'],
+  'sidom': ['Sidon', 'Sidom'],
+  'damasco': ['Damascus', 'Damasco'],
+  'samaria': ['Samaria', 'Sebaste'],
+  'sodoma': ['Sodom', 'Sodoma'],
+  'ur': ['Ur'],
+  'hara': ['Haran', 'Harran', 'Harã'],
+  'canaa': ['Canaan', 'Canaã'],
+  'egito': ['Egypt', 'Egito'],
+  'gosen': ['Goshen', 'Gósen'],
+  'menfis': ['Memphis', 'Mênfis'],
+  'sinai': ['Sinai', 'Horeb'],
+  'cades-barneia': ['Kadesh-barnea', 'Kadesh', 'Cades'],
+  'midia': ['Midian', 'Midiã'],
+  'edom': ['Edom', 'Seir', 'Bozrah', 'Petra'],
+  'moabe': ['Moab', 'Moabe'],
+  'amom': ['Ammon', 'Rabbah', 'Amman'],
+  'gileade': ['Gilead', 'Gileade'],
+  'basa': ['Bashan', 'Basã'],
+  'babilonia': ['Babylon', 'Babel', 'Babilônia'],
+  'ninive': ['Nineveh', 'Nínive'],
+  'assiria': ['Assyria', 'Assíria'],
+  'persia': ['Persia', 'Susa', 'Persepolis', 'Pérsia'],
+  'carquemis': ['Carchemish', 'Carquemis'],
+  'ararate': ['Ararat', 'Ararate'],
+  'mesopotamia': ['Mesopotamia', 'Mesopotâmia'],
+  'siria': ['Syria', 'Aram', 'Síria'],
+  'fenicia': ['Phoenicia', 'Fenícia'],
+  'arabia': ['Arabia', 'Arábia'],
+  'etiopia': ['Ethiopia', 'Cush', 'Etiópia'],
+  'libia': ['Libya', 'Cyrene', 'Líbia'],
+  'tarsis': ['Tarshish', 'Társis'],
+  'galileia': ['Galilee', 'Galileia'],
+  'judeia': ['Judea', 'Judaea', 'Judeia'],
+  'pereia': ['Perea', 'Pereia'],
+  'decapolis': ['Decapolis', 'Decápolis'],
+  'idumeia': ['Idumea', 'Idumeia'],
+  'antioquia': ['Antioch', 'Antioquia'],
+  'tarso': ['Tarsus', 'Tarso'],
+  'chipre': ['Cyprus', 'Salamis', 'Paphos', 'Chipre'],
+  'perge': ['Perga', 'Pamphylia', 'Attalia', 'Perge'],
+  'iconio': ['Iconium', 'Icônio'],
+  'listra': ['Lystra', 'Derbe', 'Listra'],
+  'galacia': ['Galatia', 'Phrygia', 'Galácia'],
+  'troade': ['Troas', 'Trôade'],
+  'macedonia': ['Macedonia', 'Neapolis', 'Macedônia'],
+  'filipos': ['Philippi', 'Filipos'],
+  'tessalonica': ['Thessalonica', 'Berea', 'Tessalônica'],
+  'atenas': ['Athens', 'Greece', 'Achaia', 'Atenas'],
+  'corinto': ['Corinth', 'Cenchreae', 'Corinto'],
+  'efeso': ['Ephesus', 'Éfeso'],
+  'esmirna': ['Smyrna', 'Esmirna'],
+  'pergamo': ['Pergamum', 'Pergamos', 'Pérgamo'],
+  'tiatira': ['Thyatira', 'Tiatira'],
+  'sardes': ['Sardis', 'Sardes'],
+  'filadelfia': ['Philadelphia', 'Filadélfia'],
+  'laodiceia': ['Laodicea', 'Laodiceia'],
+  'patmos': ['Patmos'],
+  'colossos': ['Colossae', 'Hierapolis', 'Colossos'],
+  'mileto': ['Miletus', 'Mileto'],
+  'asia': ['Asia'],
+  'capadocia': ['Cappadocia', 'Bithynia', 'Cilicia', 'Lycia', 'Capadócia'],
+  'creta': ['Crete', 'Creta'],
+  'malta': ['Malta', 'Melita'],
+  'siracusa': ['Syracuse', 'Rhegium', 'Puteoli', 'Siracusa'],
+  'roma': ['Rome', 'Italy', 'Roma'],
+  'alexandria': ['Alexandria'],
+  'rio jordao': ['Jordan River', 'Jordan', 'Jordão'],
+  'rio eufrates': ['Euphrates', 'Eufrates'],
+  'rio tigre': ['Tigris', 'Tigre'],
+  'rio nilo': ['Nile', 'Nilo'],
+  'mar vermelho': ['Red Sea', 'Mar Vermelho'],
+  'mar morto': ['Dead Sea', 'Salt Sea', 'Mar Morto'],
+  'mar da galileia': ['Sea of Galilee', 'Gennesaret', 'Galilee', 'Tiberias'],
+  'monte das oliveiras': ['Mount of Olives', 'Olivet', 'Oliveiras'],
+  'monte carmelo': ['Mount Carmel', 'Carmel', 'Carmelo'],
+  'monte hermom': ['Mount Hermon', 'Hermon', 'Hermom'],
+  'monte tabor': ['Mount Tabor', 'Tabor'],
+  'monte nebo': ['Mount Nebo', 'Nebo', 'Pisgah'],
+  'monte siao': ['Mount Zion', 'Zion', 'Moriah', 'Sião'],
+  'libano': ['Lebanon', 'Líbano']
+};
+
+let cachedAllVisualModules = null;
 let cachedDirPath = '';
 const mapIndexCache = new Map();
 const chapterNativeCache = new Map();
@@ -72,7 +198,7 @@ export function convertLocalFileToSrc(filePath) {
 }
 
 export function clearMapServiceCache() {
-  cachedModules = null;
+  cachedAllVisualModules = null;
   cachedDirPath = '';
   mapIndexCache.clear();
   chapterNativeCache.clear();
@@ -92,6 +218,26 @@ export function setSavedActiveMapModulePath(modulePath) {
       window.localStorage.setItem(PREF_ACTIVE_ATLAS_KEY, String(modulePath));
     } else {
       window.localStorage.removeItem(PREF_ACTIVE_ATLAS_KEY);
+    }
+  } catch (err) {
+    // Ignora caso localStorage esteja indisponível
+  }
+}
+
+export function getSavedActivePhotoModulePath() {
+  try {
+    return window.localStorage.getItem(PREF_ACTIVE_PHOTO_KEY) || '';
+  } catch (err) {
+    return '';
+  }
+}
+
+export function setSavedActivePhotoModulePath(modulePath) {
+  try {
+    if (modulePath) {
+      window.localStorage.setItem(PREF_ACTIVE_PHOTO_KEY, String(modulePath));
+    } else {
+      window.localStorage.removeItem(PREF_ACTIVE_PHOTO_KEY);
     }
   } catch (err) {
     // Ignora caso localStorage esteja indisponível
@@ -148,7 +294,7 @@ export async function getMapDirectory() {
 export async function pickMapDirectory() {
   const plugin = getMapPlugin();
   if (!plugin) {
-    throw new Error('Seletor de pasta de mapas disponível apenas no aplicativo Android.');
+    throw new Error('Seletor de pasta disponível apenas no aplicativo Android.');
   }
   const res = await plugin.pickMapDirectory();
   clearMapServiceCache();
@@ -159,7 +305,7 @@ export async function pickMapDirectory() {
 export async function setMapDirectory(path) {
   const plugin = getMapPlugin();
   if (!plugin) {
-    throw new Error('Configuração de pasta de mapas disponível apenas no aplicativo Android.');
+    throw new Error('Configuração de pasta disponível apenas no aplicativo Android.');
   }
   const res = await plugin.setMapDirectory({ path: String(path || '').trim() });
   clearMapServiceCache();
@@ -167,24 +313,47 @@ export async function setMapDirectory(path) {
   return res;
 }
 
-export async function listMapModules({ forceRefresh = false } = {}) {
+export async function listAllVisualModules({ forceRefresh = false } = {}) {
   const plugin = getMapPlugin();
   if (!plugin) {
     return { dirPath: '', modules: [] };
   }
-  if (!forceRefresh && Array.isArray(cachedModules)) {
-    return { dirPath: cachedDirPath, modules: cachedModules };
+  if (!forceRefresh && Array.isArray(cachedAllVisualModules)) {
+    return { dirPath: cachedDirPath, modules: cachedAllVisualModules };
   }
 
   try {
     const res = await plugin.listMapModules();
     cachedDirPath = (res && res.dirPath) || '';
-    cachedModules = Array.isArray(res && res.modules) ? res.modules : [];
-    return { dirPath: cachedDirPath, modules: cachedModules };
+    cachedAllVisualModules = Array.isArray(res && res.modules) ? res.modules : [];
+    return { dirPath: cachedDirPath, modules: cachedAllVisualModules };
   } catch (err) {
-    appLogger.error('MAP_LIST', 'Erro ao listar módulos de mapas', err);
+    appLogger.error('MAP_LIST', 'Erro ao listar módulos visuais', err);
     return { dirPath: cachedDirPath, modules: [] };
   }
+}
+
+/**
+ * Retorna exclusivamente módulos cartográficos (mapas/atlas),
+ * excluindo coleções de fotos e ilustrações (como Bible Maps Location Photos).
+ */
+export async function listMapModules({ forceRefresh = false } = {}) {
+  const { dirPath, modules } = await listAllVisualModules({ forceRefresh });
+  return {
+    dirPath,
+    modules: modules.filter((m) => (m && m.moduleKind ? m.moduleKind !== 'photo' : true))
+  };
+}
+
+/**
+ * Retorna exclusivamente módulos de fotos, ilustrações, gravuras e diagramas.
+ */
+export async function listPhotoModules({ forceRefresh = false } = {}) {
+  const { dirPath, modules } = await listAllVisualModules({ forceRefresh });
+  return {
+    dirPath,
+    modules: modules.filter((m) => m && m.moduleKind === 'photo')
+  };
 }
 
 export async function getMapModuleIndex(modulePath) {
@@ -201,7 +370,7 @@ export async function getMapModuleIndex(modulePath) {
     mapIndexCache.set(modulePath, items);
     return items;
   } catch (err) {
-    appLogger.error('MAP_INDEX', `Erro ao carregar índice do atlas: ${modulePath}`, err);
+    appLogger.error('MAP_INDEX', `Erro ao carregar índice do módulo visual: ${modulePath}`, err);
     return [];
   }
 }
@@ -274,7 +443,7 @@ export async function getMapEntry({ modulePath, id = '', rowid = -1, title = '' 
   };
 }
 
-export async function searchMaps(query, { modulePath = '', limit = 20 } = {}) {
+export async function searchMaps(query, { modulePath = '', limit = 20, kind = 'map' } = {}) {
   const plugin = getMapPlugin();
   const clean = String(query || '').trim();
   if (!plugin || !clean) return [];
@@ -283,13 +452,18 @@ export async function searchMaps(query, { modulePath = '', limit = 20 } = {}) {
     const res = await plugin.searchMaps({
       query: clean,
       modulePath: modulePath || '',
+      kind: kind || '',
       limit
     });
     return Array.isArray(res && res.results) ? res.results : [];
   } catch (err) {
-    appLogger.warn('MAP_SEARCH', `Falha ao pesquisar "${clean}" nos mapas`, err);
+    appLogger.warn('MAP_SEARCH', `Falha ao pesquisar "${clean}" nos módulos visuais`, err);
     return [];
   }
+}
+
+export async function searchPhotos(query, { modulePath = '', limit = 40 } = {}) {
+  return searchMaps(query, { modulePath, limit, kind: 'photo' });
 }
 
 function normalizeAscii(str) {
@@ -304,10 +478,36 @@ export function isTocTitle(title) {
   return norm.includes('indice dos mapas') || norm === 'table of contents' || norm === 'contents';
 }
 
+export function getPhotoSearchTermsForPlace(placeOrName) {
+  const name = typeof placeOrName === 'string'
+    ? placeOrName
+    : (placeOrName && placeOrName.name) || '';
+  const key = normalizeAscii(name).trim();
+  const out = [];
+  const pushUnique = (t) => {
+    const clean = String(t || '').trim();
+    if (!clean) return;
+    if (!out.some((x) => normalizeAscii(x) === normalizeAscii(clean))) {
+      out.push(clean);
+    }
+  };
+
+  if (key && PHOTO_PLACE_TERMS[key]) {
+    for (const term of PHOTO_PLACE_TERMS[key]) {
+      pushUnique(term);
+    }
+  }
+  pushUnique(name);
+  if (placeOrName && Array.isArray(placeOrName.aliases)) {
+    for (const a of placeOrName.aliases) {
+      pushUnique(a);
+    }
+  }
+  return out;
+}
+
 /**
  * Carrega todos os marcadores de localização/mapa de um capítulo bíblico.
- * Mantém os pinos de localizações bíblicas ativos mesmo sem módulos externos instalados,
- * e mescla vínculos exatos da tabela `mapverse` quando houver atlas com essa tabela.
  */
 export async function loadMapMarkersForChapter(book, chapter, verses = []) {
   const resultMap = new Map();
@@ -318,7 +518,7 @@ export async function loadMapMarkersForChapter(book, chapter, verses = []) {
   if (!nativeByVerse) {
     nativeByVerse = {};
     if (plugin) {
-      const { modules } = await listMapModules();
+      const { modules } = await listAllVisualModules();
       const hasAnyMapVerse = modules.some((m) => Boolean(m && m.hasMapVerse));
       if (hasAnyMapVerse) {
         try {
@@ -340,17 +540,20 @@ export async function loadMapMarkersForChapter(book, chapter, verses = []) {
     const vNum = Number(vObj && vObj.verse);
     if (!vNum) continue;
 
-    const nativeMaps = Array.isArray(nativeByVerse[String(vNum)])
+    const allNative = Array.isArray(nativeByVerse[String(vNum)])
       ? nativeByVerse[String(vNum)]
       : [];
+    const nativeMaps = allNative.filter((item) => !item.moduleKind || item.moduleKind !== 'photo');
+    const nativePhotos = allNative.filter((item) => item.moduleKind === 'photo');
     const locations = detectLocationsInVerse(vObj.html || vObj.text || '');
 
-    if (nativeMaps.length || locations.length) {
+    if (nativeMaps.length || nativePhotos.length || locations.length) {
       resultMap.set(vNum, {
         book: Number(book),
         chapter: Number(chapter),
         verse: vNum,
         nativeMaps,
+        nativePhotos,
         locations
       });
     }
@@ -390,9 +593,7 @@ export function buildVerseMapPinHtml(verseNum, markerInfo) {
 }
 
 /**
- * Retorna os mapas de imagem sobreponíveis recomendados para um versículo ou local.
- * Prioriza: (1) vínculo exato `mapverse`, (2) cobertura geográfica real via tabela `map`,
- * (3) correspondência de nome/período nos títulos dos atlas.
+ * Retorna apenas mapas cartográficos (nunca fotos) recomendados para sobreposição.
  */
 export async function resolveMapsForMarker(markerInfo) {
   const { modules } = await listMapModules();
@@ -403,13 +604,13 @@ export async function resolveMapsForMarker(markerInfo) {
 
   const pushCandidate = (item, score) => {
     const key = `${item.modulePath}::${item.rowid || item.id || item.title}`;
-    const existing = seenKey.has(key);
-    if (existing) return;
+    if (seenKey.has(key)) return;
     seenKey.add(key);
     scored.push({ ...item, score });
   };
 
   for (const nm of (markerInfo && markerInfo.nativeMaps) || []) {
+    if (nm.moduleKind === 'photo') continue;
     pushCandidate(nm, 120);
   }
 
@@ -440,11 +641,9 @@ export async function resolveMapsForMarker(markerInfo) {
       let score = 0;
       let matchedReason = '';
 
-      // Pontuação geográfica real quando o módulo possui tabela `map` com bounds
       if (primaryLoc && isValidGeoBounds(item.bounds)) {
         if (isPointInBounds(primaryLoc.lat, primaryLoc.lng, item.bounds)) {
           const span = Math.abs(item.bounds.north - item.bounds.south) * Math.abs(item.bounds.east - item.bounds.west);
-          // Prefere mapas com cobertura mais focada na região, mas mantém mapas amplos na lista
           const focusBonus = span < 20 ? 30 : (span < 180 ? 20 : 12);
           score += 65 + focusBonus;
           matchedReason = `Cobre ${primaryLoc.name}`;
@@ -487,9 +686,6 @@ export async function resolveMapsForMarker(markerInfo) {
   return scored.slice(0, 22);
 }
 
-/**
- * Busca sobreposições de mapa recomendadas para uma única localização geográfica.
- */
 export async function resolveOverlaysForPlace(place) {
   if (!place) return [];
   return resolveMapsForMarker({
@@ -502,10 +698,92 @@ export async function resolveOverlaysForPlace(place) {
 }
 
 /**
- * Interpreta links internos do HTML de mapas MySword:
- * - #d2&popup=2 -> rowid = 2
- * - #j Título do Mapa -> title = "Título do Mapa"
+ * Busca fotos e ilustrações correspondentes a um local ou lista de locais bíblicos
+ * em todos os módulos classificados como "photo" (ex.: Bible Maps Location Photos).
  */
+export async function resolvePhotosForPlace(placeOrName, { limit = 30 } = {}) {
+  const { modules } = await listPhotoModules();
+  if (!modules.length) return [];
+
+  const terms = getPhotoSearchTermsForPlace(placeOrName);
+  if (!terms.length) return [];
+
+  const normTerms = terms.map((t) => normalizeAscii(t)).filter((t) => t.length >= 2);
+  const scored = [];
+  const seen = new Set();
+
+  await Promise.all(modules.map(async (mod) => {
+    const items = await getMapModuleIndex(mod.path);
+    const modTitle = mod.title || mod.name || mod.fileName;
+
+    for (const item of items) {
+      if (!item.title || isTocTitle(item.title) || item.hasImage === false) continue;
+      const titleNorm = normalizeAscii(item.title).trim();
+      const tagsNorm = normalizeAscii(item.tags || '').trim();
+
+      let score = 0;
+      for (let i = 0; i < normTerms.length; i++) {
+        const needle = normTerms[i];
+        const weight = i === 0 ? 1.15 : 1.0;
+
+        if (titleNorm === needle) {
+          score = Math.max(score, Math.round(110 * weight));
+        } else if (titleNorm.startsWith(`${needle} `) || titleNorm.startsWith(`${needle},`) || titleNorm.startsWith(`${needle}-`)) {
+          score = Math.max(score, Math.round(92 * weight));
+        } else if (needle.length >= 4 && titleNorm.includes(needle)) {
+          score = Math.max(score, Math.round(68 * weight));
+        } else if (needle.length >= 4 && tagsNorm.includes(needle)) {
+          score = Math.max(score, Math.round(45 * weight));
+        }
+      }
+
+      if (score > 0) {
+        const key = `${mod.path}::${item.rowid || item.id || item.title}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          scored.push({
+            id: item.id,
+            rowid: item.rowid,
+            title: item.title,
+            modulePath: mod.path,
+            moduleTitle: modTitle,
+            score
+          });
+        }
+      }
+    }
+  }));
+
+  scored.sort((a, b) => (b.score - a.score) || a.title.localeCompare(b.title));
+  return scored.slice(0, limit);
+}
+
+export async function resolvePhotosForMarker(markerInfo, { limit = 30 } = {}) {
+  const results = [];
+  const seen = new Set();
+
+  const pushUnique = (item) => {
+    const key = `${item.modulePath}::${item.rowid || item.id || item.title}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(item);
+  };
+
+  for (const np of (markerInfo && markerInfo.nativePhotos) || []) {
+    pushUnique(np);
+  }
+
+  const locs = (markerInfo && markerInfo.locations) || [];
+  for (const loc of locs) {
+    const hits = await resolvePhotosForPlace(loc, { limit });
+    for (const h of hits) {
+      pushUnique(h);
+    }
+  }
+
+  return results.slice(0, limit);
+}
+
 export function parseInternalMapHref(rawHref) {
   const href = String(rawHref || '').trim();
   if (!href) return null;
