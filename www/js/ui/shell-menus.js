@@ -1,6 +1,7 @@
 import { nativeBridge } from '../bridge/native-bridge.js';
 import { store } from '../core/store.js';
 import { eventBus, EVENTS } from '../core/events.js';
+import { formatReference } from '../core/canon.js';
 import {
   normalizeLookupTerm,
   normalizeDictSearchOptions
@@ -9,6 +10,10 @@ import {
   findDictionariesWithTerm,
   getCachedDictionariesWithTerm
 } from '../formats/dictionary-lookup.js';
+import {
+  findCommentariesForPassage,
+  getCachedCommentariesForPassage
+} from '../formats/mysword-commentary.js';
 
 const RECENT_STORAGE_KEY = 'estudo_biblico_recent_mods_v1';
 const MAX_RECENT = 14;
@@ -16,17 +21,23 @@ const MAX_RECENT = 14;
 let recentMap = loadRecents();
 let activePopoverCleanup = null;
 
+function normalizeKind(kind) {
+  if (kind === 'dictionary' || kind === 'commentary') return kind;
+  return 'bible';
+}
+
 function loadRecents() {
   try {
     const raw = window.localStorage.getItem(RECENT_STORAGE_KEY);
-    if (!raw) return { bible: [], dictionary: [] };
+    if (!raw) return { bible: [], commentary: [], dictionary: [] };
     const parsed = JSON.parse(raw);
     return {
       bible: Array.isArray(parsed && parsed.bible) ? parsed.bible.slice(0, MAX_RECENT) : [],
+      commentary: Array.isArray(parsed && parsed.commentary) ? parsed.commentary.slice(0, MAX_RECENT) : [],
       dictionary: Array.isArray(parsed && parsed.dictionary) ? parsed.dictionary.slice(0, MAX_RECENT) : []
     };
   } catch (err) {
-    return { bible: [], dictionary: [] };
+    return { bible: [], commentary: [], dictionary: [] };
   }
 }
 
@@ -89,15 +100,16 @@ function getModuleTooltip(mod) {
 }
 
 export function recordRecentModule(kind, modulePath) {
-  const k = kind === 'dictionary' ? 'dictionary' : 'bible';
+  const k = normalizeKind(kind);
   const p = String(modulePath || '').trim();
   if (!p) return;
-  recentMap[k] = [p, ...recentMap[k].filter((x) => x !== p)].slice(0, MAX_RECENT);
+  const current = Array.isArray(recentMap[k]) ? recentMap[k] : [];
+  recentMap[k] = [p, ...current.filter((x) => x !== p)].slice(0, MAX_RECENT);
   saveRecents();
 }
 
 export function getQuickModulesList(kind, modules, activePath = '', maxItems = 8) {
-  const k = kind === 'dictionary' ? 'dictionary' : 'bible';
+  const k = normalizeKind(kind);
   const list = Array.isArray(modules) ? modules : [];
   if (!list.length) return [];
 
@@ -250,21 +262,36 @@ export function openViewsDropdown({
   onOpenSettings,
   onOpenLogs,
   onQuickSelectBible,
+  onQuickSelectCommentary,
   onQuickSelectDict
 } = {}) {
   const pop = createAnchoredPopover({ anchorEl, align: 'left', width: 290 });
   const mode = store.getActiveMode();
-  const activeBible = store.getActiveBible();
-  const activeDict = store.getActiveDictionary();
-  const quickBibles = getQuickModulesList('bible', store.getBibles(), '', 7);
-  const quickDicts = getQuickModulesList('dictionary', store.getDictionaries(), '', 7);
-
+  const isBible = mode === 'bible';
+  const isCmt = mode === 'commentary';
   const isDict = mode === 'dictionary';
-  const quickList = isDict ? quickDicts : quickBibles;
-  const quickActivePath = isDict
-    ? (activeDict ? activeDict.path : '')
-    : (activeBible ? activeBible.path : '');
-  const quickTitle = isDict ? 'Dicionários rápidos' : 'Bíblias rápidas';
+
+  const activeBible = store.getActiveBible();
+  const activeCmt = store.getActiveCommentary();
+  const activeDict = store.getActiveDictionary();
+
+  let quickList = [];
+  let quickActivePath = '';
+  let quickTitle = '';
+
+  if (isDict) {
+    quickList = getQuickModulesList('dictionary', store.getDictionaries(), '', 7);
+    quickActivePath = activeDict ? activeDict.path : '';
+    quickTitle = 'Dicionários rápidos';
+  } else if (isCmt) {
+    quickList = getQuickModulesList('commentary', store.getCommentaries(), '', 7);
+    quickActivePath = activeCmt ? activeCmt.path : '';
+    quickTitle = 'Comentários rápidos';
+  } else {
+    quickList = getQuickModulesList('bible', store.getBibles(), '', 7);
+    quickActivePath = activeBible ? activeBible.path : '';
+    quickTitle = 'Bíblias rápidas';
+  }
 
   const quickRowsHtml = quickList.map((m) => {
     const isAct = m.path === quickActivePath;
@@ -284,10 +311,16 @@ export function openViewsDropdown({
 
   pop.panel.innerHTML = `
     <div class="ms-popover-list">
-      <div class="ms-dropdown-row${!isDict ? ' is-active' : ''}">
+      <div class="ms-dropdown-row${isBible ? ' is-active' : ''}">
         <button type="button" class="ms-dropdown-btn" data-drawer-act="bible">
           <span class="ms-res-badge ms-res-badge--bible">&#10013;</span>
           <span class="ms-dropdown-title">Bíblias</span>
+        </button>
+      </div>
+      <div class="ms-dropdown-row${isCmt ? ' is-active' : ''}">
+        <button type="button" class="ms-dropdown-btn" data-drawer-act="commentary">
+          <span class="ms-res-badge ms-res-badge--commentary">C</span>
+          <span class="ms-dropdown-title">Comentários</span>
         </button>
       </div>
       <div class="ms-dropdown-row${isDict ? ' is-active' : ''}">
@@ -331,6 +364,7 @@ export function openViewsDropdown({
       const act = actBtn.getAttribute('data-drawer-act');
       pop.close();
       if (act === 'bible' && onSelectMode) onSelectMode('bible');
+      if (act === 'commentary' && onSelectMode) onSelectMode('commentary');
       if (act === 'dictionary' && onSelectMode) onSelectMode('dictionary');
       if (act === 'bible-search' && onOpenBibleSearch) onOpenBibleSearch();
       if (act === 'dict-terms' && onOpenDictTerms) onOpenDictTerms();
@@ -344,7 +378,8 @@ export function openViewsDropdown({
       const path = modBtn.getAttribute('data-drawer-mod') || '';
       pop.close();
       if (isDict && onQuickSelectDict) onQuickSelectDict(path);
-      else if (!isDict && onQuickSelectBible) onQuickSelectBible(path);
+      else if (isCmt && onQuickSelectCommentary) onQuickSelectCommentary(path);
+      else if (onQuickSelectBible) onQuickSelectBible(path);
     }
   });
 }
@@ -354,25 +389,51 @@ export function openModuleDropdown({
   anchorEl,
   filterTerm = '',
   searchOptions = null,
+  passage = null,
   onSelect,
   onOpenSources
 } = {}) {
-  const isDict = kind === 'dictionary';
+  const normKind = normalizeKind(kind);
+  const isDict = normKind === 'dictionary';
+  const isCmt = normKind === 'commentary';
+
   const cleanFilter = isDict ? normalizeLookupTerm(filterTerm) : '';
   const effectiveOpts = isDict
     ? normalizeDictSearchOptions(searchOptions || {})
     : null;
 
+  const hasPassageFilter = Boolean(
+    isCmt &&
+    passage &&
+    Number(passage.book) > 0 &&
+    Number(passage.chapter) > 0
+  );
+  const pBook = hasPassageFilter ? Number(passage.book) : 1;
+  const pChapter = hasPassageFilter ? Number(passage.chapter) : 1;
+  const pVerse = hasPassageFilter ? (Number(passage.verse) || 1) : 1;
+  const passageLabel = hasPassageFilter ? formatReference(pBook, pChapter, pVerse) : '';
+
   const pop = createAnchoredPopover({ anchorEl, align: 'left', width: 340, maxHeightRatio: 0.86 });
 
-  const getAll = () => (isDict ? store.getDictionaries() : store.getBibles());
-  const getActive = () => (isDict ? store.getActiveDictionary() : store.getActiveBible());
+  const getAll = () => {
+    if (isDict) return store.getDictionaries();
+    if (isCmt) return store.getCommentaries();
+    return store.getBibles();
+  };
+  const getActive = () => {
+    if (isDict) return store.getActiveDictionary();
+    if (isCmt) return store.getActiveCommentary();
+    return store.getActiveBible();
+  };
+
+  const singularLabel = isDict ? 'dicionário' : (isCmt ? 'comentário' : 'Bíblia');
+  const pluralLabel = isDict ? 'dicionário(s)' : (isCmt ? 'comentário(s)' : 'Bíblia(s)');
 
   const initialList = getAll();
   if (!initialList.length) {
     pop.panel.innerHTML = `
       <div class="ms-popover-empty">
-        <p style="margin:0 0 10px;">Nenhum ${isDict ? 'dicionário' : 'módulo bíblico'} registrado.</p>
+        <p style="margin:0 0 10px;">Nenhum ${isDict ? 'dicionário' : (isCmt ? 'comentário' : 'módulo bíblico')} registrado.</p>
         <button type="button" class="primary-btn" id="ms-pop-go-sources">Configurar Fontes</button>
       </div>
     `;
@@ -384,19 +445,30 @@ export function openModuleDropdown({
   }
 
   let searchQuery = '';
-  let filterEnabled = Boolean(cleanFilter);
+  const hasAutoFilter = Boolean(cleanFilter || hasPassageFilter);
+  let filterEnabled = hasAutoFilter;
   let scanController = null;
   let scanDone = 0;
   let scanTotal = initialList.length;
   let isScanning = false;
   let matchedEntries = [];
 
-  if (filterEnabled) {
+  if (filterEnabled && isDict) {
     const targetPool = effectiveOpts.favoritesOnly
       ? initialList.filter((m) => m.isFavorite)
       : initialList;
     scanTotal = targetPool.length;
     const cached = getCachedDictionariesWithTerm(initialList, cleanFilter, effectiveOpts);
+    if (cached) {
+      matchedEntries = cached;
+      scanDone = scanTotal;
+      isScanning = false;
+    } else if (scanTotal > 0) {
+      isScanning = true;
+    }
+  } else if (filterEnabled && hasPassageFilter) {
+    scanTotal = initialList.length;
+    const cached = getCachedCommentariesForPassage(initialList, pBook, pChapter, pVerse);
     if (cached) {
       matchedEntries = cached;
       scanDone = scanTotal;
@@ -413,7 +485,7 @@ export function openModuleDropdown({
           type="search"
           class="ms-popover-input"
           id="ms-pop-input"
-          placeholder="Filtrar ${isDict ? 'dicionário' : 'Bíblia'}..."
+          placeholder="Filtrar ${singularLabel}..."
           autocomplete="off"
           autocorrect="off"
           spellcheck="false"
@@ -422,7 +494,7 @@ export function openModuleDropdown({
       </div>
       <div class="ms-popover-meta">
         <span id="ms-pop-meta"></span>
-        ${cleanFilter ? '<button type="button" class="ms-popover-toggle-btn" id="ms-pop-toggle-filter"></button>' : ''}
+        ${hasAutoFilter ? '<button type="button" class="ms-popover-toggle-btn" id="ms-pop-toggle-filter"></button>' : ''}
       </div>
     </div>
     <div class="ms-popover-list" id="ms-pop-list"></div>
@@ -442,19 +514,23 @@ export function openModuleDropdown({
     const all = getAll();
     const byPath = new Map(all.map((m) => [m.path, m]));
     const origOrder = new Map(all.map((m, idx) => [m.path, idx]));
-    const pri = { exact: 0, prefix: 1, title: 2, body: 3 };
+    const pri = isCmt
+      ? { verse: 0, range: 1, chapter: 2, multiChapter: 3, bookIntro: 4 }
+      : { exact: 0, prefix: 1, title: 2, body: 3 };
 
     return matchedEntries
       .map((item) => {
         const fresh = byPath.get(item.module.path);
         if (!fresh) return null;
-        return { module: fresh, word: item.word, matchType: item.matchType };
+        return { ...item, module: fresh };
       })
       .filter(Boolean)
       .sort((a, b) => {
         const favDiff = Number(Boolean(b.module.isFavorite)) - Number(Boolean(a.module.isFavorite));
         if (favDiff !== 0) return favDiff;
-        const pDiff = (pri[a.matchType] ?? 9) - (pri[b.matchType] ?? 9);
+        const ka = isCmt ? a.scopeKind : a.matchType;
+        const kb = isCmt ? b.scopeKind : b.matchType;
+        const pDiff = (pri[ka] ?? 9) - (pri[kb] ?? 9);
         if (pDiff !== 0) return pDiff;
         return (origOrder.get(a.module.path) ?? 999999) - (origOrder.get(b.module.path) ?? 999999);
       });
@@ -484,23 +560,28 @@ export function openModuleDropdown({
     clearBtn?.classList.toggle('hidden', !searchQuery.length);
 
     if (toggleBtn) {
-      toggleBtn.textContent = filterEnabled
-        ? `Ver todos (${all.length})`
-        : `Só "${cleanFilter}"`;
+      if (filterEnabled) {
+        toggleBtn.textContent = `Ver todos (${all.length})`;
+      } else {
+        toggleBtn.textContent = isCmt ? `Só ${passageLabel}` : `Só "${cleanFilter}"`;
+      }
     }
 
     if (metaEl) {
       if (filterEnabled) {
+        const targetLabel = isCmt ? passageLabel : `"${cleanFilter}"`;
         if (isScanning) {
-          metaEl.textContent = `Verificando ${scanDone}/${scanTotal} • ${freshMatches.length} com "${cleanFilter}"`;
+          metaEl.textContent = `Verificando ${scanDone}/${scanTotal} • ${freshMatches.length} em ${targetLabel}`;
         } else {
           const hiddenCount = Math.max(0, all.length - freshMatches.length);
-          metaEl.textContent = `${freshMatches.length} com "${cleanFilter}" (${hiddenCount} oculto(s))`;
+          metaEl.textContent = isCmt
+            ? `${freshMatches.length} cobrem ${passageLabel} (${hiddenCount} oculto(s))`
+            : `${freshMatches.length} com "${cleanFilter}" (${hiddenCount} oculto(s))`;
         }
       } else {
         metaEl.textContent = terms.length
           ? `${filtered.length} de ${all.length} • Ordem: ${sortLabel}`
-          : `${all.length} ${isDict ? 'dicionário(s)' : 'Bíblia(s)'} • Ordem: ${sortLabel}`;
+          : `${all.length} ${pluralLabel} • Ordem: ${sortLabel}`;
       }
     }
 
@@ -508,13 +589,19 @@ export function openModuleDropdown({
 
     if (!filtered.length) {
       if (filterEnabled && isScanning) {
-        listEl.innerHTML = `<div class="ms-popover-empty">Procurando "${escapeHtml(cleanFilter)}" (${scanDone}/${scanTotal})...</div>`;
+        const scanningMsg = isCmt
+          ? `Verificando comentários em ${escapeHtml(passageLabel)} (${scanDone}/${scanTotal})...`
+          : `Procurando "${escapeHtml(cleanFilter)}" (${scanDone}/${scanTotal})...`;
+        listEl.innerHTML = `<div class="ms-popover-empty">${scanningMsg}</div>`;
         return;
       }
       if (filterEnabled && !terms.length) {
+        const noneMsg = isCmt
+          ? `Nenhum comentário cobre ${escapeHtml(passageLabel)}.`
+          : `Nenhum dicionário contém "${escapeHtml(cleanFilter)}".`;
         listEl.innerHTML = `
           <div class="ms-popover-empty">
-            <p style="margin:0 0 8px;">Nenhum dicionário contém "${escapeHtml(cleanFilter)}".</p>
+            <p style="margin:0 0 8px;">${noneMsg}</p>
             <button type="button" class="ms-popover-toggle-btn" id="ms-pop-show-all">Ver todos (${all.length})</button>
           </div>
         `;
@@ -536,12 +623,19 @@ export function openModuleDropdown({
       const hitInfo = filterEnabled ? matchByPath.get(m.path) : null;
       const extraMeta = [m.language, m.hasStrongs ? 'Strong' : ''].filter(Boolean).join(' • ');
 
+      let hitLineHtml = '';
+      if (hitInfo) {
+        hitLineHtml = isCmt
+          ? `<span class="ms-dropdown-hit">${escapeHtml(hitInfo.badge)} • ${escapeHtml(hitInfo.label)}</span>`
+          : `<span class="ms-dropdown-hit">Verbete: ${escapeHtml(hitInfo.word)}</span>`;
+      }
+
       return `
         <div class="ms-dropdown-row${isAct ? ' is-active' : ''}">
           <button type="button" class="ms-dropdown-btn" data-pop-select="${escapeHtml(m.path)}">
             <span class="ms-dropdown-text">
               <span class="ms-dropdown-title">${escapeHtml(primary)}</span>
-              ${hitInfo ? `<span class="ms-dropdown-hit">Verbete: ${escapeHtml(hitInfo.word)}</span>` : ''}
+              ${hitLineHtml}
               ${secondary ? `<span class="ms-dropdown-sub">${escapeHtml(secondary)}</span>` : ''}
               ${extraMeta ? `<span class="ms-dropdown-sub" style="opacity:0.78;">${escapeHtml(extraMeta)}</span>` : ''}
             </span>
@@ -569,19 +663,34 @@ export function openModuleDropdown({
     });
 
     const active = getActive();
-    findDictionariesWithTerm(getAll(), cleanFilter, {
-      ...effectiveOpts,
-      activePath: active ? active.path : '',
-      concurrency: 4,
-      signal,
-      onProgress: (done, total, partial) => {
-        if (signal.aborted) return;
-        scanDone = done;
-        scanTotal = total;
-        matchedEntries = partial;
-        renderRows();
-      }
-    })
+    const scanPromise = isCmt
+      ? findCommentariesForPassage(getAll(), pBook, pChapter, pVerse, {
+          activePath: active ? active.path : '',
+          concurrency: 4,
+          signal,
+          onProgress: (done, total, partial) => {
+            if (signal.aborted) return;
+            scanDone = done;
+            scanTotal = total;
+            matchedEntries = partial;
+            renderRows();
+          }
+        })
+      : findDictionariesWithTerm(getAll(), cleanFilter, {
+          ...effectiveOpts,
+          activePath: active ? active.path : '',
+          concurrency: 4,
+          signal,
+          onProgress: (done, total, partial) => {
+            if (signal.aborted) return;
+            scanDone = done;
+            scanTotal = total;
+            matchedEntries = partial;
+            renderRows();
+          }
+        });
+
+    scanPromise
       .then((finalList) => {
         if (signal.aborted) return;
         isScanning = false;
@@ -653,8 +762,9 @@ export function openModuleDropdown({
       pop.close();
       if (typeof onSelect === 'function') {
         onSelect(selectedPath, {
-          matchedWord: matchInfo ? matchInfo.word : '',
-          keepFilterTerm: Boolean(filterEnabled && matchInfo)
+          matchedWord: isDict && matchInfo ? matchInfo.word : '',
+          keepFilterTerm: Boolean(isDict && filterEnabled && matchInfo),
+          matchInfo: matchInfo || null
         });
       }
     }
