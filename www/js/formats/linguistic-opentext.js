@@ -144,8 +144,8 @@ const OPENTEXT_CSS = `
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 7px;
-  padding: 8px;
+  gap: 6px;
+  padding: 7px;
 }
 
 .verse-text .ot-group {
@@ -218,8 +218,8 @@ const OPENTEXT_CSS = `
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 6px;
-  padding: 6px;
+  gap: 5px;
+  padding: 5px;
 }
 
 .verse-text .ot-word {
@@ -227,8 +227,8 @@ const OPENTEXT_CSS = `
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  min-width: 56px;
-  padding: 5px 8px 6px;
+  min-width: 54px;
+  padding: 5px 7px 6px;
   border-radius: var(--radius-sm, 6px);
   background: var(--ot-word-bg);
   border: 1px solid var(--ot-word-border);
@@ -295,7 +295,7 @@ const OPENTEXT_CSS = `
 `;
 
 const RE_OPENTEXT_CL = /<cl\b[^>]*>\s*<div\b[^>]*class=['"][^'"]*\bc\b[^'"]*['"]/i;
-const RE_OPENTEXT_WG = /<wg\b[^>]*>\s*<div\b[^>]*class=['"][^'"]*\bd\b[^'"]*['"][\s\S]*?<w\b[^>]*>\s*<div\b[^>]*class=['"][^'"]*\bw\b[^'"]*['"]/i;
+const RE_OPENTEXT_WG = /(?:<wg\b[^>]*>\s*)?<div\b[^>]*class=['"][^'"]*\bd\b[^'"]*['"][\s\S]*?(?:<w\b[^>]*>\s*)?<div\b[^>]*class=['"][^'"]*\bw\b[^'"]*['"]/i;
 const RE_GREEK = /[\u0370-\u03FF\u1F00-\u1FFF]/;
 
 function ensureOpenTextStyles() {
@@ -346,7 +346,22 @@ function classifyRole(roleText) {
   return '';
 }
 
+function getOtNodeType(el) {
+  if (!el || el.nodeType !== 1) return '';
+  const attr = el.getAttribute('data-ot');
+  if (attr === 'cl' || attr === 'wg' || attr === 'w') return attr;
+  if (el.tagName === 'DIV') {
+    if (el.classList.contains('c')) return 'cl';
+    if (el.classList.contains('w')) return 'w';
+    if (el.classList.contains('d')) return 'wg';
+  }
+  return '';
+}
+
 function getDirectOtContainer(el, className) {
+  if (el.tagName === 'DIV' && el.classList.contains(className)) {
+    return el;
+  }
   for (const child of el.children) {
     if (child.tagName === 'DIV' && child.classList.contains(className)) {
       return child;
@@ -378,15 +393,17 @@ function parseWordNode(wordEl) {
   const linkEl = inner.querySelector('a');
   let greek = linkEl ? cleanText(linkEl.textContent) : '';
 
-  const glossEl = inner.querySelector('t');
+  const trEl = inner.querySelector('[data-ot="tr"]');
+  let translit = trEl ? cleanText(trEl.textContent) : '';
+
+  const glossEl = inner.querySelector('pt, t');
   let gloss = glossEl ? cleanText(glossEl.textContent) : '';
 
-  // Extrai linhas restantes (ex.: transliteração no módulo TrsTxIMS)
+  // Extrai eventuais linhas soltas restantes (compatível com variações do módulo)
   const clone = inner.cloneNode(true);
-  clone.querySelectorAll('n, a, t').forEach((n) => n.remove());
+  clone.querySelectorAll('n, a, t, pt, [data-ot="tr"]').forEach((n) => n.remove());
   const extraLines = extractLinesFromNode(clone);
 
-  let translit = '';
   for (const line of extraLines) {
     if (!greek && RE_GREEK.test(line)) {
       greek = line;
@@ -429,7 +446,7 @@ function parseLabelHeader(container) {
 function parseGroupNode(wgEl) {
   const container = getDirectOtContainer(wgEl, 'd');
   const otChildren = Array.from(container.children).filter((ch) =>
-    ch.hasAttribute('data-ot')
+    Boolean(getOtNodeType(ch))
   );
 
   // Grupo somente-rótulo (cabeçalho do grupo pai)
@@ -445,7 +462,7 @@ function parseGroupNode(wgEl) {
   const items = [];
 
   for (const ch of otChildren) {
-    const otType = ch.getAttribute('data-ot');
+    const otType = getOtNodeType(ch);
     if (otType === 'w') {
       items.push(parseWordNode(ch));
     } else if (otType === 'wg') {
@@ -477,7 +494,7 @@ function parseClauseNode(clEl) {
   const items = [];
 
   for (const ch of container.children) {
-    const otType = ch.getAttribute('data-ot');
+    const otType = getOtNodeType(ch);
     if (otType === 'wg') {
       const parsed = parseGroupNode(ch);
       if (parsed.kind !== 'label') items.push(parsed);
@@ -604,7 +621,7 @@ export function formatOpenTextHtml(rawHtml) {
 
   ensureOpenTextStyles();
 
-  // Normaliza tags customizadas para divs/spans seguros antes de montar a árvore DOM
+  // Normaliza tags customizadas (inclusive <Tr>, que o navegador descartaria como <tr> fora de <table>)
   const normalized = source
     .replace(/<(\/?)cl\b([^>]*)>/gi, (_, sl, a) => (sl ? '</div>' : `<div data-ot="cl"${a}>`))
     .replace(/<(\/?)wg\b([^>]*)>/gi, (_, sl, a) => (sl ? '</div>' : `<div data-ot="wg"${a}>`))
@@ -618,7 +635,7 @@ export function formatOpenTextHtml(rawHtml) {
   const looseItems = [];
 
   for (const ch of tpl.content.children) {
-    const otType = ch.getAttribute('data-ot');
+    const otType = getOtNodeType(ch);
     if (otType === 'cl') {
       rendered.push(renderClause(parseClauseNode(ch)));
     } else if (otType === 'wg') {
