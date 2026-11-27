@@ -16,6 +16,8 @@ const RE_STRUCTURED_ROW = /<R(?:\s+[^>]*)?>[\s\S]*?<T1(?:\s+[^>]*)?>/;
 const RE_REF_EMBED = /<VT(?:\s+[^>]*)?>[\s\S]*?<\/?VT>|<(?:NT|OT)(?:\s+[^>]*)?>\s*(?:[123]\s*)?[A-Za-zÀ-ÿ]{2,6}\.?\s+\d+[:.]\d+(?:\s*[-–—]\s*\d+)?\s*<\/?(?:NT|OT)>/gi;
 const RE_PAIR_TAG = /<(heb|grk|gk|arm|orig)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>\s*<(hbint|grint|gkint|arint|int|trans)(?:\s+[^>]*)?>([\s\S]*?)<\/\3>/gi;
 const RE_ANCIENT_RUN = /([\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF][\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u0001\u0003\u00040-9\s\u05BE\u05C0\u05C3\u05F3\u05F4׃:־'’·;,.-]*[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u05C3:]|[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]+)/g;
+const RE_STRONG_TAG = /<W([GH])(\d[^<>]*)>/gi;
+const RE_MORPH_TAG = /<WT([^<>]+)>/gi;
 
 function escapeHtml(str) {
   return String(str || '')
@@ -31,6 +33,10 @@ function cleanText(str) {
 
 function stripAllTagsKeepSpaces(str) {
   return cleanText(String(str || '').replace(/<\/?[a-zA-Z][^>]*>/g, ''));
+}
+
+function pushUnique(arr, val) {
+  if (val && !arr.includes(val)) arr.push(val);
 }
 
 function formatClauseInlineHtml(raw) {
@@ -55,6 +61,151 @@ function formatClauseInlineHtml(raw) {
 
 export function hasHebrewScript(str) {
   return RE_HEBREW.test(String(str || ''));
+}
+
+export function isReverseInterlinearQ(str) {
+  const s = String(str || '');
+  if (!RE_INTERLINEAR_Q.test(s)) return false;
+
+  const blockRe = /<Q(?:\s+[^>]*)?>([\s\S]*?)(?:<\/Q>|<q>)/g;
+  let m;
+  while ((m = blockRe.exec(s)) !== null) {
+    const inner = m[1] || '';
+    const eMatch = /<E(?:\s+[^>]*)?>([\s\S]*?)(?:<\/E>|<e>)/.exec(inner);
+    if (!eMatch) continue;
+    const eInner = eMatch[1] || '';
+    if (/<(G|H)(?:\s+[^>]*)?>[\s\S]*?(?:<\/\1>|<[gh]>)/.test(eInner)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function formatReverseInterlinearQHtml(rawHtml, verseNum = null) {
+  const source = String(rawHtml || '')
+    .replace(/<KQ>[\s\S]*?<\/?kq>/gi, '')
+    .replace(/<RX(?:(?!>|<).)*>/gi, '');
+
+  const blockRe = /<Q(?:\s+[^>]*)?>([\s\S]*?)(?:<\/Q>|<q>)/g;
+  const items = [];
+  let hasStrong = false;
+  let hasMorph = false;
+  let bm;
+
+  while ((bm = blockRe.exec(source)) !== null) {
+    const inner = bm[1] || '';
+
+    const strongs = [];
+    RE_STRONG_TAG.lastIndex = 0;
+    let sm;
+    while ((sm = RE_STRONG_TAG.exec(inner)) !== null) {
+      const num = String(sm[2] || '').replace(/\uFF0B/g, '+').trim();
+      if (!num || num === '0') continue;
+      pushUnique(strongs, `${sm[1].toUpperCase()}${num}`);
+    }
+
+    const morphs = [];
+    RE_MORPH_TAG.lastIndex = 0;
+    let mm;
+    while ((mm = RE_MORPH_TAG.exec(inner)) !== null) {
+      const cleanMorph = cleanText(String(mm[1] || '').replace(/\s+l="[^"]*"/gi, ''));
+      if (cleanMorph) pushUnique(morphs, cleanMorph);
+    }
+
+    const origParts = [];
+    const eRe = /<E(?:\s+[^>]*)?>([\s\S]*?)(?:<\/E>|<e>)/g;
+    let em;
+    while ((em = eRe.exec(inner)) !== null) {
+      const eInner = em[1] || '';
+      const ghRe = /<(G|H)(?:\s+[^>]*)?>([\s\S]*?)(?:<\/\1>|<[gh]>)/g;
+      let ghm;
+      let matchedGh = false;
+      while ((ghm = ghRe.exec(eInner)) !== null) {
+        matchedGh = true;
+        const val = stripAllTagsKeepSpaces(ghm[2]);
+        if (val) origParts.push(val);
+      }
+      if (!matchedGh) {
+        const fallbackOrig = stripAllTagsKeepSpaces(eInner);
+        if (fallbackOrig) origParts.push(fallbackOrig);
+      }
+    }
+
+    const glossRaw = inner
+      .replace(/<E(?:\s+[^>]*)?>[\s\S]*?(?:<\/E>|<e>)/g, ' ')
+      .replace(RE_STRONG_TAG, ' ')
+      .replace(RE_MORPH_TAG, ' ');
+    const gloss = stripAllTagsKeepSpaces(glossRaw);
+    const orig = origParts.join(' ');
+
+    if (!gloss && !orig && !strongs.length && !morphs.length) continue;
+
+    if (strongs.length) hasStrong = true;
+    if (morphs.length) hasMorph = true;
+
+    const isAllCaps = /[A-ZÀ-Ý]/.test(gloss) && !/[a-zà-ÿ]/.test(gloss);
+    items.push({ gloss, isAllCaps, orig, strongs, morphs });
+  }
+
+  if (!items.length) return '';
+
+  const cards = [];
+  if (verseNum) {
+    cards.push(`<span class="il-vnum">${verseNum}</span>`);
+  }
+
+  for (const it of items) {
+    const lines = [];
+
+    const capsCls = it.isAllCaps ? ' is-allcaps' : '';
+    lines.push(
+      it.gloss
+        ? `<span class="il-rev-en${capsCls}" dir="ltr">${escapeHtml(it.gloss)}</span>`
+        : '<span class="il-rev-en is-empty" dir="ltr">&nbsp;</span>'
+    );
+
+    const origDir = hasHebrewScript(it.orig) ? ' dir="rtl"' : '';
+    lines.push(
+      it.orig
+        ? `<span class="il-orig"${origDir}>${escapeHtml(it.orig)}</span>`
+        : '<span class="il-orig il-orig-empty">&middot;</span>'
+    );
+
+    if (hasStrong || hasMorph) {
+      const lexRows = [];
+      if (hasStrong) {
+        if (it.strongs.length) {
+          const sTags = it.strongs
+            .map((code) => `<span class="v-strong il-rev-tag il-rev-strong" data-strong="${escapeHtml(code)}">${escapeHtml(code)}</span>`)
+            .join('');
+          lexRows.push(`<div class="il-rev-lex" dir="ltr">${sTags}</div>`);
+        } else {
+          lexRows.push('<div class="il-rev-lex is-empty" dir="ltr">&nbsp;</div>');
+        }
+      }
+
+      if (hasMorph) {
+        if (it.morphs.length) {
+          const mTags = it.morphs
+            .map((code) => `<span class="v-morph il-rev-tag il-rev-morph" data-morph="${escapeHtml(code)}">${escapeHtml(code)}</span>`)
+            .join('');
+          lexRows.push(`<div class="il-rev-lex" dir="ltr">${mTags}</div>`);
+        } else {
+          lexRows.push('<div class="il-rev-lex is-empty" dir="ltr">&nbsp;</div>');
+        }
+      }
+
+      lines.push(`<div class="il-rev-lex-block">${lexRows.join('')}</div>`);
+    }
+
+    cards.push(`<span class="il-stack il-rev-stack">${lines.join('')}</span>`);
+  }
+
+  return (
+    '<div class="il-block il-q-block il-rev-block">' +
+      `<div class="il-flow il-q-flow il-rev-flow" dir="ltr">${cards.join('')}</div>` +
+    '</div>'
+  );
 }
 
 export function isBilingualAncientText(str) {
@@ -388,6 +539,11 @@ export function formatInterlinearHtml(rawHtml, verseNum = null) {
   if (isLinguisticClauseHtml(rawHtml)) {
     const bhHtml = formatLinguisticClauseHtml(rawHtml);
     if (bhHtml) return bhHtml;
+  }
+
+  if (isReverseInterlinearQ(rawHtml)) {
+    const revHtml = formatReverseInterlinearQHtml(rawHtml, verseNum);
+    if (revHtml) return revHtml;
   }
 
   if (RE_INTERLINEAR_Q.test(rawHtml)) {
