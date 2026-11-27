@@ -2,7 +2,9 @@ import { closeModal } from './nav-modal.js';
 import { eventBus, EVENTS } from '../core/events.js';
 import { formatReference } from '../core/canon.js';
 import { appLogger } from '../core/logger.js';
+import { getAllKnownPlaces } from '../formats/map-gazetteer.js';
 import {
+  BASE_MAP_LAYERS,
   isMapReaderAvailable,
   getMapDirectory,
   pickMapDirectory,
@@ -12,10 +14,20 @@ import {
   getMapEntry,
   searchMaps,
   resolveMapsForMarker,
-  parseInternalMapHref,
+  resolveOverlaysForPlace,
+  isTocTitle,
+  isValidGeoBounds,
+  isPointInBounds,
   getSavedActiveMapModulePath,
-  setSavedActiveMapModulePath
+  setSavedActiveMapModulePath,
+  getSavedMapUiPrefs,
+  saveMapUiPrefs
 } from '../formats/map-service.js';
+
+const LEAFLET_FALLBACK_CSS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+const LEAFLET_FALLBACK_JS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+
+let leafletLoadPromise = null;
 
 function escapeHtml(str) {
   return String(str || '')
@@ -32,23 +44,94 @@ function normalizeAscii(str) {
     .toLowerCase();
 }
 
-function sanitizeMapHtml(rawHtml) {
-  return String(rawHtml || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<img[^>]*>/gi, '')
-    .replace(/\son[a-z]+\s*=\s*["'][^"']*["']/gi, '');
-}
-
 function getModuleDisplayName(mod) {
   if (!mod) return 'Atlas';
   return mod.title || mod.name || mod.abbreviation || mod.fileName || 'Atlas';
 }
 
+function formatCoord(lat, lng) {
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return '';
+  const ns = la >= 0 ? 'N' : 'S';
+  const ew = ln >= 0 ? 'E' : 'O';
+  return `${Math.abs(la).toFixed(4)}°${ns}, ${Math.abs(ln).toFixed(4)}°${ew}`;
+}
+
+function ensureLeafletLoaded(timeoutMs = 4500) {
+  if (typeof window !== 'undefined' && window.L) {
+    return Promise.resolve(window.L);
+  }
+  if (leafletLoadPromise) {
+    return leafletLoadPromise;
+  }
+
+  leafletLoadPromise = new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+
+    const timer = window.setTimeout(() => {
+      finish(window.L || null);
+    }, timeoutMs);
+
+    // Aguarda breve janela caso o <script async> de index.html esteja finalizando
+    let polls = 0;
+    const pollId = window.setInterval(() => {
+      polls += 1;
+      if (window.L) {
+        window.clearInterval(pollId);
+        window.clearTimeout(timer);
+        finish(window.L);
+        return;
+      }
+      if (polls === 6) {
+        // Injeta fallback jsDelivr caso unpkg não tenha respondido
+        if (!document.querySelector('link[data-leaflet-fallback]')) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = LEAFLET_FALLBACK_CSS;
+          link.setAttribute('data-leaflet-fallback', '1');
+          document.head.appendChild(link);
+        }
+        if (!document.querySelector('script[data-leaflet-fallback]')) {
+          const script = document.createElement('script');
+          script.src = LEAFLET_FALLBACK_JS;
+          script.async = true;
+          script.setAttribute('data-leaflet-fallback', '1');
+          script.onload = () => {
+            window.clearInterval(pollId);
+            window.clearTimeout(timer);
+            finish(window.L || null);
+          };
+          script.onerror = () => {
+            window.clearInterval(pollId);
+            window.clearTimeout(timer);
+            finish(window.L || null);
+          };
+          document.head.appendChild(script);
+        }
+      }
+      if (polls > 40) {
+        window.clearInterval(pollId);
+        window.clearTimeout(timer);
+        finish(window.L || null);
+      }
+    }, 100);
+  });
+
+  return leafletLoadPromise.then((L) => {
+    if (!L) leafletLoadPromise = null;
+    return L;
+  });
+}
+
 export function openMapViewerModal({
   markerInfo = null,
   initialModulePath = '',
-  initialQuery = '',
   onMapsDirectoryChanged = null
 } = {}) {
   closeModal();
@@ -56,26 +139,50 @@ export function openMapViewerModal({
   const root = document.getElementById('modal-root');
   if (!root) return;
 
+  const savedPrefs = getSavedMapUiPrefs();
+  const allPlaces = getAllKnownPlaces();
+  const defaultJerusalem = allPlaces.find((p) => p.name === 'Jerusalém') || {
+    name: 'Jerusalém',
+    lat: 31.7781,
+    lng: 35.2353,
+    info: 'Cidade de Davi e sede do Templo (Judeia)'
+  };
+
+  let uiPrefs = { ...savedPrefs };
   let dirPath = '';
   let modules = [];
   let activeModulePath = initialModulePath || getSavedActiveMapModulePath();
   let activeIndex = [];
-  let currentEntry = null;
-  let activeImageIdx = 0;
+  let currentOverlayEntry = null;
   let recommendedMaps = [];
-  let openDrawer = ''; // '' | 'index' | 'folder'
-  let indexFilterText = initialQuery || '';
+
+  let activePins = (markerInfo && Array.isArray(markerInfo.locations) && markerInfo.locations.length)
+    ? markerInfo.locations.slice()
+    : [defaultJerusalem];
+  let focusedPin = activePins[0] || defaultJerusalem;
+
+  let openDrawer = ''; // '' | 'places' | 'maps' | 'folder'
+  let showLayersPopover = false;
+  let infoCardMode = ''; // '' | 'map' | 'location'
+  let viewMode = 'geo'; // 'geo' | 'image'
+  let placeFilterText = '';
+  let mapFilterText = '';
   let globalSearchResults = null;
-  let loadingText = 'Carregando atlas de mapas...';
-  let errorText = '';
 
-  // Estado do zoom e arraste no palco do mapa
-  let zoomScale = 1;
-  let panX = 0;
-  let panY = 0;
+  let leafletMap = null;
+  let baseTileLayer = null;
+  let imageOverlayLayer = null;
+  let activePinsLayer = null;
+  let allPinsLayer = null;
+  let leafletUnavailable = false;
 
-  let keyHandler = null;
+  // Estado de zoom/pan para modo imagem pura (ou fallback offline)
+  let rawZoom = 1;
+  let rawPanX = 0;
+  let rawPanY = 0;
+
   let isClosed = false;
+  let keyHandler = null;
 
   function cleanupAndClose() {
     isClosed = true;
@@ -83,12 +190,31 @@ export function openMapViewerModal({
       window.removeEventListener('keydown', keyHandler);
       keyHandler = null;
     }
+    if (leafletMap) {
+      try {
+        leafletMap.remove();
+      } catch (err) {
+        // Ignora erro na desmontagem
+      }
+      leafletMap = null;
+    }
     closeModal();
   }
 
   keyHandler = (ev) => {
     if (ev.key === 'Escape') {
-      cleanupAndClose();
+      if (infoCardMode) {
+        infoCardMode = '';
+        renderInfoCard();
+      } else if (showLayersPopover) {
+        showLayersPopover = false;
+        renderLayersPopover();
+      } else if (openDrawer) {
+        openDrawer = '';
+        renderDrawersAndResize();
+      } else {
+        cleanupAndClose();
+      }
     }
   };
   window.addEventListener('keydown', keyHandler);
@@ -98,75 +224,34 @@ export function openMapViewerModal({
     return modules.find((m) => m.path === activeModulePath) || modules[0];
   }
 
-  function resetTransform() {
-    zoomScale = 1;
-    panX = 0;
-    panY = 0;
-    applyStageTransform();
-  }
-
-  function clampPan(stageEl) {
-    if (!stageEl || zoomScale <= 1.01) {
-      panX = 0;
-      panY = 0;
-      return;
-    }
-    const maxX = Math.max(0, (stageEl.clientWidth * (zoomScale - 1)) / 2 + 120);
-    const maxY = Math.max(0, (stageEl.clientHeight * (zoomScale - 1)) / 2 + 120);
-    panX = Math.max(-maxX, Math.min(maxX, panX));
-    panY = Math.max(-maxY, Math.min(maxY, panY));
-  }
-
-  function applyStageTransform() {
-    const imgEl = document.getElementById('map-stage-img');
-    const stageEl = document.getElementById('map-stage');
-    const badgeEl = document.getElementById('map-zoom-badge');
-    const resetBtn = document.getElementById('map-btn-zoom-reset');
-
-    clampPan(stageEl);
-    if (imgEl) {
-      imgEl.style.transform = `translate3d(${panX.toFixed(1)}px, ${panY.toFixed(1)}px, 0) scale(${zoomScale.toFixed(3)})`;
-    }
-    const pct = `${Math.round(zoomScale * 100)}%`;
-    if (badgeEl) {
-      badgeEl.textContent = pct;
-      badgeEl.style.opacity = zoomScale > 1.02 ? '1' : '0.68';
-    }
-    if (resetBtn) {
-      resetBtn.textContent = pct;
-    }
-  }
-
-  function setZoom(nextScale) {
-    zoomScale = Math.max(1, Math.min(6, Number(nextScale) || 1));
-    if (zoomScale <= 1.03) {
-      zoomScale = 1;
-      panX = 0;
-      panY = 0;
-    }
-    applyStageTransform();
+  function getActiveBaseLayerConfig() {
+    return BASE_MAP_LAYERS.find((l) => l.id === uiPrefs.baseLayerId) || BASE_MAP_LAYERS[0];
   }
 
   function renderShell() {
     root.innerHTML = `
-      <div class="map-viewer-backdrop" id="map-viewer-backdrop" role="dialog" aria-modal="true" aria-label="Leitor de Mapas" data-bref-skip="1">
+      <div class="map-viewer-backdrop" id="map-viewer-backdrop" role="dialog" aria-modal="true" aria-label="Aplicativo de Mapas Bíblicos" data-bref-skip="1">
         <header class="map-viewer-header">
-          <button type="button" class="map-hdr-btn" id="map-btn-close" aria-label="Fechar mapas" title="Voltar">
+          <button type="button" class="map-hdr-btn" id="map-btn-close" aria-label="Voltar para a Bíblia" title="Voltar">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
           </button>
 
           <div class="map-hdr-titles">
-            <h1 class="map-hdr-title" id="map-hdr-title">Atlas e Mapas</h1>
-            <span class="map-hdr-sub" id="map-hdr-sub">Carregando...</span>
+            <h1 class="map-hdr-title" id="map-hdr-title">Mapas Bíblicos</h1>
+            <span class="map-hdr-sub" id="map-hdr-sub">Carregando mapa interativo...</span>
           </div>
 
-          <button type="button" class="map-hdr-btn" id="map-btn-index" title="Escolher atlas e lista de mapas">
-            &#9776; Índice
+          <button type="button" class="map-hdr-btn" id="map-btn-places" title="Buscar localizações bíblicas">
+            &#128205; Locais
           </button>
 
-          <button type="button" class="map-hdr-btn" id="map-btn-folder" title="Escolher pasta dos arquivos de mapa">
+          <button type="button" class="map-hdr-btn" id="map-btn-index" title="Escolher mapa histórico para sobrepor">
+            &#9776; Mapas
+          </button>
+
+          <button type="button" class="map-hdr-btn" id="map-btn-folder" title="Escolher pasta dos módulos de mapa">
             &#128193; Pasta
           </button>
         </header>
@@ -174,23 +259,64 @@ export function openMapViewerModal({
         <section class="map-verse-strip hidden" id="map-verse-strip"></section>
         <section class="map-drawer hidden" id="map-drawer"></section>
 
-        <main class="map-main-area" id="map-main-area"></main>
+        <main class="map-main-area" id="map-main-area">
+          <div class="map-leaflet-host" id="map-leaflet-host"></div>
+
+          <div class="map-raw-stage hidden" id="map-raw-stage"></div>
+
+          <div class="map-float-left" id="map-float-left">
+            <div class="map-float-stack">
+              <button type="button" class="map-float-btn" id="map-zoom-in" aria-label="Aumentar zoom" title="Aumentar zoom">+</button>
+              <button type="button" class="map-float-btn" id="map-zoom-out" aria-label="Diminuir zoom" title="Diminuir zoom">&minus;</button>
+            </div>
+            <button type="button" class="map-float-single" id="map-focus-pin" aria-label="Centralizar no pino" title="Centralizar no local marcado">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="map-float-right" id="map-float-right">
+            <button type="button" class="map-float-single" id="map-layers-btn" aria-label="Camadas do mapa" title="Camadas e pinos">
+              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                <polyline points="2 17 12 22 22 17"></polyline>
+                <polyline points="2 12 12 17 22 12"></polyline>
+              </svg>
+            </button>
+          </div>
+
+          <div class="map-layers-popover hidden" id="map-layers-popover"></div>
+
+          <div class="map-opacity-bar hidden" id="map-opacity-bar">
+            <button type="button" class="map-opacity-toggle" id="map-overlay-toggle" title="Mostrar ou ocultar sobreposição do mapa">Mapa ON</button>
+            <input
+              type="range"
+              class="map-opacity-slider"
+              id="map-opacity-slider"
+              min="0"
+              max="100"
+              step="1"
+              value="${Math.round(uiPrefs.overlayOpacity * 100)}"
+              aria-label="Transparência da sobreposição do mapa"
+            />
+            <span class="map-opacity-val" id="map-opacity-val">${Math.round(uiPrefs.overlayOpacity * 100)}%</span>
+          </div>
+
+          <div class="map-info-card hidden" id="map-info-card"></div>
+        </main>
 
         <footer class="map-bottom-bar" id="map-bottom-bar">
-          <div class="map-bar-group">
-            <button type="button" class="map-ctrl-btn" id="map-btn-prev" title="Mapa anterior">&larr;</button>
-            <button type="button" class="map-ctrl-btn" id="map-btn-next" title="Próximo mapa">&rarr;</button>
-          </div>
+          <button type="button" class="map-bottom-back" id="map-bottom-back" aria-label="Voltar" title="Voltar">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+          </button>
 
-          <div class="map-bar-group">
-            <button type="button" class="map-ctrl-btn" id="map-btn-zoom-out" title="Diminuir zoom">&minus;</button>
-            <button type="button" class="map-ctrl-btn" id="map-btn-zoom-reset" title="Resetar zoom">100%</button>
-            <button type="button" class="map-ctrl-btn" id="map-btn-zoom-in" title="Aumentar zoom">+</button>
-          </div>
+          <div class="map-attrib-text" id="map-attrib-text">Leaflet • OpenStreetMap</div>
 
-          <div class="map-bar-group">
-            <button type="button" class="map-ctrl-btn" id="map-btn-foot-close">Fechar</button>
-          </div>
+          <button type="button" class="map-ctrl-btn hidden" id="map-mode-toggle" title="Alternar entre Mapa Interativo e Imagem Pura">Imagem</button>
         </footer>
       </div>
     `;
@@ -199,45 +325,118 @@ export function openMapViewerModal({
     root.setAttribute('aria-hidden', 'false');
 
     document.getElementById('map-btn-close')?.addEventListener('click', cleanupAndClose);
-    document.getElementById('map-btn-foot-close')?.addEventListener('click', cleanupAndClose);
+    document.getElementById('map-bottom-back')?.addEventListener('click', cleanupAndClose);
+
+    document.getElementById('map-btn-places')?.addEventListener('click', () => {
+      showLayersPopover = false;
+      openDrawer = openDrawer === 'places' ? '' : 'places';
+      renderDrawersAndResize();
+    });
 
     document.getElementById('map-btn-index')?.addEventListener('click', () => {
-      openDrawer = openDrawer === 'index' ? '' : 'index';
-      renderHeaderAndDrawers();
+      showLayersPopover = false;
+      openDrawer = openDrawer === 'maps' ? '' : 'maps';
+      renderDrawersAndResize();
     });
 
     document.getElementById('map-btn-folder')?.addEventListener('click', () => {
+      showLayersPopover = false;
       openDrawer = openDrawer === 'folder' ? '' : 'folder';
-      renderHeaderAndDrawers();
+      renderDrawersAndResize();
     });
 
-    document.getElementById('map-btn-prev')?.addEventListener('click', () => stepMapInAtlas(-1));
-    document.getElementById('map-btn-next')?.addEventListener('click', () => stepMapInAtlas(1));
-    document.getElementById('map-btn-zoom-out')?.addEventListener('click', () => setZoom(zoomScale - 0.5));
-    document.getElementById('map-btn-zoom-in')?.addEventListener('click', () => setZoom(zoomScale + 0.6));
-    document.getElementById('map-btn-zoom-reset')?.addEventListener('click', resetTransform);
+    document.getElementById('map-layers-btn')?.addEventListener('click', () => {
+      showLayersPopover = !showLayersPopover;
+      renderLayersPopover();
+    });
+
+    document.getElementById('map-zoom-in')?.addEventListener('click', () => {
+      if (viewMode === 'image') {
+        setRawZoom(rawZoom + 0.5);
+      } else if (leafletMap) {
+        leafletMap.zoomIn();
+      }
+    });
+
+    document.getElementById('map-zoom-out')?.addEventListener('click', () => {
+      if (viewMode === 'image') {
+        setRawZoom(rawZoom - 0.5);
+      } else if (leafletMap) {
+        leafletMap.zoomOut();
+      }
+    });
+
+    document.getElementById('map-focus-pin')?.addEventListener('click', () => {
+      if (viewMode === 'image') {
+        resetRawTransform();
+      } else {
+        focusMapOnPinsAndOverlay({ preferPin: true });
+      }
+    });
+
+    document.getElementById('map-overlay-toggle')?.addEventListener('click', () => {
+      uiPrefs = saveMapUiPrefs({ overlayVisible: !uiPrefs.overlayVisible });
+      applyOverlayToLeaflet();
+      syncOpacityBar();
+    });
+
+    document.getElementById('map-opacity-slider')?.addEventListener('input', (ev) => {
+      const pct = Number(ev.target.value);
+      const nextOp = Math.max(0, Math.min(1, pct / 100));
+      uiPrefs = saveMapUiPrefs({
+        overlayOpacity: nextOp,
+        overlayVisible: nextOp > 0
+      });
+      if (imageOverlayLayer && typeof imageOverlayLayer.setOpacity === 'function') {
+        imageOverlayLayer.setOpacity(uiPrefs.overlayVisible ? uiPrefs.overlayOpacity : 0);
+      }
+      syncOpacityBar();
+    });
+
+    document.getElementById('map-mode-toggle')?.addEventListener('click', () => {
+      if (leafletUnavailable) {
+        eventBus.emit(EVENTS.TOAST, 'Mapa base indisponível offline; exibindo imagem do módulo.');
+        return;
+      }
+      viewMode = viewMode === 'geo' ? 'image' : 'geo';
+      syncViewMode();
+    });
   }
 
   function updateHeader() {
     const titleEl = document.getElementById('map-hdr-title');
     const subEl = document.getElementById('map-hdr-sub');
+    const placesBtn = document.getElementById('map-btn-places');
     const idxBtn = document.getElementById('map-btn-index');
     const dirBtn = document.getElementById('map-btn-folder');
 
-    const activeMod = getActiveModule();
     if (titleEl) {
-      titleEl.textContent = currentEntry && currentEntry.title
-        ? currentEntry.title
-        : (activeMod ? getModuleDisplayName(activeMod) : 'Atlas e Mapas');
+      if (focusedPin && focusedPin.name) {
+        titleEl.textContent = focusedPin.name;
+      } else if (currentOverlayEntry && currentOverlayEntry.title) {
+        titleEl.textContent = currentOverlayEntry.title;
+      } else {
+        titleEl.textContent = 'Mapas Bíblicos';
+      }
     }
+
     if (subEl) {
-      const modName = activeMod ? getModuleDisplayName(activeMod) : 'Nenhum atlas carregado';
-      const refPart = markerInfo
-        ? `${formatReference(markerInfo.book, markerInfo.chapter, markerInfo.verse)} • `
-        : '';
-      subEl.textContent = `${refPart}${modName}`;
+      const parts = [];
+      if (markerInfo && markerInfo.book) {
+        parts.push(formatReference(markerInfo.book, markerInfo.chapter, markerInfo.verse));
+      }
+      if (currentOverlayEntry && currentOverlayEntry.title) {
+        parts.push(currentOverlayEntry.title);
+      } else if (modules.length) {
+        parts.push(`${modules.length} atlas disponíveis`);
+      } else {
+        parts.push('Mapa base OpenStreetMap');
+      }
+      subEl.textContent = parts.join(' • ');
     }
-    if (idxBtn) idxBtn.classList.toggle('is-active', openDrawer === 'index');
+
+    if (placesBtn) placesBtn.classList.toggle('is-active', openDrawer === 'places');
+    if (idxBtn) idxBtn.classList.toggle('is-active', openDrawer === 'maps');
     if (dirBtn) dirBtn.classList.toggle('is-active', openDrawer === 'folder');
   }
 
@@ -245,44 +444,53 @@ export function openMapViewerModal({
     const strip = document.getElementById('map-verse-strip');
     if (!strip) return;
 
-    const locs = (markerInfo && Array.isArray(markerInfo.locations)) ? markerInfo.locations : [];
-    if (!markerInfo || (!locs.length && !recommendedMaps.length)) {
+    const showPinsRow = activePins.length > 0 && Boolean(markerInfo || activePins.length > 1 || focusedPin);
+    const showRecsRow = recommendedMaps.length > 0;
+
+    if (!showPinsRow && !showRecsRow) {
       strip.classList.add('hidden');
       strip.innerHTML = '';
       return;
     }
 
     strip.classList.remove('hidden');
-    const refTxt = formatReference(markerInfo.book, markerInfo.chapter, markerInfo.verse);
+    const refTxt = (markerInfo && markerInfo.book)
+      ? formatReference(markerInfo.book, markerInfo.chapter, markerInfo.verse)
+      : 'Local';
 
-    const locsHtml = locs.length
+    const pinsHtml = showPinsRow
       ? (
         '<div class="map-verse-row">' +
           `<span class="map-verse-tag">${escapeHtml(refTxt)}:</span>` +
-          locs.map((l) => (
-            `<button type="button" class="map-loc-pill" data-map-loc-search="${escapeHtml(l.name)}">&#128205; ${escapeHtml(l.name)}</button>`
-          )).join('') +
+          activePins.map((loc, idx) => {
+            const isCur = focusedPin && focusedPin.name === loc.name;
+            return (
+              `<button type="button" class="map-loc-pill${isCur ? ' is-active' : ''}" data-pin-idx="${idx}">` +
+                `&#128205; ${escapeHtml(loc.name)}` +
+              '</button>'
+            );
+          }).join('') +
         '</div>'
       )
       : '';
 
-    const recsHtml = recommendedMaps.length
+    const recsHtml = showRecsRow
       ? (
         '<div class="map-verse-row">' +
-          '<span class="map-verse-tag">Mapas:</span>' +
+          '<span class="map-verse-tag">Sobreposição:</span>' +
+          `<button type="button" class="map-rec-chip${!currentOverlayEntry ? ' is-active' : ''}" data-map-rec-clear="1">Nenhuma</button>` +
           recommendedMaps.map((m, idx) => {
             const isCur = Boolean(
-              currentEntry &&
-              currentEntry.modulePath === m.modulePath &&
+              currentOverlayEntry &&
+              currentOverlayEntry.modulePath === m.modulePath &&
               (
-                (Number(m.rowid) > 0 && Number(currentEntry.rowid) === Number(m.rowid)) ||
-                (m.id && currentEntry.id && m.id.toLowerCase() === currentEntry.id.toLowerCase()) ||
-                (m.title && currentEntry.title && m.title.toLowerCase() === currentEntry.title.toLowerCase())
+                (Number(m.rowid) > 0 && Number(currentOverlayEntry.rowid) === Number(m.rowid)) ||
+                (m.title && currentOverlayEntry.title && m.title.toLowerCase() === currentOverlayEntry.title.toLowerCase())
               )
             );
-            const modShort = m.moduleTitle ? ` (${m.moduleTitle})` : '';
+            const titleTooltip = m.moduleTitle ? `${m.title} (${m.moduleTitle})` : m.title;
             return (
-              `<button type="button" class="map-rec-chip${isCur ? ' is-active' : ''}" data-map-rec-idx="${idx}" title="${escapeHtml(`${m.title}${modShort}`)}">` +
+              `<button type="button" class="map-rec-chip${isCur ? ' is-active' : ''}" data-map-rec-idx="${idx}" title="${escapeHtml(titleTooltip)}">` +
                 escapeHtml(m.title) +
               '</button>'
             );
@@ -291,17 +499,26 @@ export function openMapViewerModal({
       )
       : '';
 
-    strip.innerHTML = `${locsHtml}${recsHtml}`;
+    strip.innerHTML = `${pinsHtml}${recsHtml}`;
 
-    strip.querySelectorAll('[data-map-loc-search]').forEach((btn) => {
+    strip.querySelectorAll('[data-pin-idx]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const term = btn.getAttribute('data-map-loc-search') || '';
-        if (!term) return;
-        indexFilterText = term;
-        openDrawer = 'index';
-        globalSearchResults = await searchMaps(term, { limit: 25 });
-        if (!isClosed) renderHeaderAndDrawers();
+        const idx = Number(btn.getAttribute('data-pin-idx'));
+        const loc = activePins[idx];
+        if (!loc) return;
+        focusedPin = loc;
+        renderVerseStrip();
+        updateHeader();
+        renderActivePinsOnLeaflet();
+        if (leafletMap && viewMode === 'geo') {
+          leafletMap.setView([loc.lat, loc.lng], Math.max(leafletMap.getZoom(), 6), { animate: true });
+        }
+        if (infoCardMode === 'location') renderInfoCard();
       });
+    });
+
+    strip.querySelector('[data-map-rec-clear]')?.addEventListener('click', () => {
+      clearOverlay();
     });
 
     strip.querySelectorAll('[data-map-rec-idx]').forEach((btn) => {
@@ -309,8 +526,7 @@ export function openMapViewerModal({
         const idx = Number(btn.getAttribute('data-map-rec-idx'));
         const item = recommendedMaps[idx];
         if (!item) return;
-        openDrawer = '';
-        loadSpecificEntry({
+        loadOverlayEntry({
           modulePath: item.modulePath,
           id: item.id,
           rowid: item.rowid,
@@ -334,7 +550,7 @@ export function openMapViewerModal({
 
     if (openDrawer === 'folder') {
       drawer.innerHTML = `
-        <div class="map-verse-tag">Pasta atual dos arquivos de mapa (.bok.mybible / .map.mybible):</div>
+        <div class="map-verse-tag">Pasta dos arquivos de mapa (apenas módulos de mapa válidos são carregados):</div>
         <div class="map-path-box">${escapeHtml(dirPath || 'Nenhuma pasta configurada')}</div>
         <div class="map-drawer-row">
           <button type="button" class="primary-btn" id="map-pick-dir-btn">Escolher pasta (Android)</button>
@@ -360,7 +576,7 @@ export function openMapViewerModal({
           if (res && res.path) {
             dirPath = res.path;
             eventBus.emit(EVENTS.TOAST, `Pasta de mapas definida: ${dirPath}`);
-            await reloadModulesAndRefresh({ notifyParent: true });
+            await reloadModules({ notifyParent: true });
           }
         } catch (err) {
           eventBus.emit(EVENTS.TOAST, err && err.message ? err.message : 'Seleção de pasta cancelada.');
@@ -368,8 +584,8 @@ export function openMapViewerModal({
       });
 
       drawer.querySelector('#map-refresh-dir-btn')?.addEventListener('click', async () => {
-        await reloadModulesAndRefresh({ notifyParent: true });
-        eventBus.emit(EVENTS.TOAST, `${modules.length} arquivo(s) de mapa encontrado(s).`);
+        await reloadModules({ notifyParent: true });
+        eventBus.emit(EVENTS.TOAST, `${modules.length} módulo(s) de mapa válido(s).`);
       });
 
       drawer.querySelector('#map-manual-dir-form')?.addEventListener('submit', async (ev) => {
@@ -381,24 +597,115 @@ export function openMapViewerModal({
           const res = await setMapDirectory(nextPath);
           dirPath = (res && res.path) || nextPath;
           eventBus.emit(EVENTS.TOAST, 'Pasta de mapas atualizada.');
-          await reloadModulesAndRefresh({ notifyParent: true });
+          await reloadModules({ notifyParent: true });
         } catch (err) {
-          eventBus.emit(EVENTS.TOAST, err && err.message ? err.message : 'Não foi possível usar o caminho informado.');
+          eventBus.emit(EVENTS.TOAST, err && err.message ? err.message : 'Caminho inválido.');
         }
       });
       return;
     }
 
-    // Gaveta de Índice e Busca de Mapas
+    if (openDrawer === 'places') {
+      const q = normalizeAscii(placeFilterText).trim();
+      const filteredPlaces = allPlaces.filter((p) => {
+        if (!q) return true;
+        return normalizeAscii(`${p.name} ${p.info || ''} ${(p.aliases || []).join(' ')}`).includes(q);
+      });
+
+      const itemsHtml = filteredPlaces.slice(0, 50).map((p, idx) => {
+        const isCur = focusedPin && focusedPin.name === p.name;
+        return (
+          `<button type="button" class="map-index-item${isCur ? ' is-active' : ''}" data-place-pos="${idx}">` +
+            `<span>&#128205; ${escapeHtml(p.name)}</span>` +
+            `<span class="map-index-sub">${escapeHtml(formatCoord(p.lat, p.lng))}</span>` +
+          '</button>'
+        );
+      }).join('');
+
+      drawer.innerHTML = `
+        <div class="map-drawer-row">
+          <input
+            type="search"
+            class="map-text-input"
+            id="map-place-search-input"
+            value="${escapeHtml(placeFilterText)}"
+            placeholder="Buscar cidade, monte, rio ou região bíblica..."
+            autocomplete="off"
+          />
+        </div>
+        <div class="map-index-list" id="map-places-list">
+          ${itemsHtml || '<div style="font-size:13px;color:var(--map-muted);padding:6px;">Nenhum local encontrado.</div>'}
+        </div>
+      `;
+
+      const placeInput = drawer.querySelector('#map-place-search-input');
+      placeInput?.addEventListener('input', () => {
+        placeFilterText = placeInput.value || '';
+        renderDrawer();
+      });
+
+      drawer.querySelector('#map-places-list')?.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('[data-place-pos]');
+        if (!btn) return;
+        const pos = Number(btn.getAttribute('data-place-pos'));
+        const place = filteredPlaces[pos];
+        if (!place) return;
+
+        openDrawer = '';
+        focusedPin = place;
+        if (!activePins.some((p) => p.name === place.name)) {
+          activePins = [place];
+        }
+        renderDrawersAndResize();
+        renderActivePinsOnLeaflet();
+        if (leafletMap && viewMode === 'geo') {
+          leafletMap.setView([place.lat, place.lng], 6, { animate: true });
+        }
+
+        // Busca automaticamente mapas históricos compatíveis com o local escolhido
+        const recs = await resolveOverlaysForPlace(place);
+        if (isClosed) return;
+        recommendedMaps = recs;
+        renderVerseStrip();
+        if (recs.length) {
+          const best = recs[0];
+          await loadOverlayEntry({
+            modulePath: best.modulePath,
+            id: best.id,
+            rowid: best.rowid,
+            title: best.title
+          });
+        }
+      });
+      return;
+    }
+
+    // Gaveta de Mapas Históricos para Sobreposição
+    if (!modules.length) {
+      drawer.innerHTML = `
+        <div class="map-verse-tag">Nenhum módulo de mapa encontrado na pasta atual.</div>
+        <div class="map-drawer-row">
+          <button type="button" class="primary-btn" id="map-no-mod-folder">Escolher pasta de mapas</button>
+        </div>
+      `;
+      drawer.querySelector('#map-no-mod-folder')?.addEventListener('click', () => {
+        openDrawer = 'folder';
+        renderDrawersAndResize();
+      });
+      return;
+    }
+
     const atlasOptionsHtml = modules.map((m) => {
-      const label = `${getModuleDisplayName(m)} (${m.mapCount || 0})`;
+      const geoTag = m.hasGeoBounds ? ' • Geo' : '';
+      const label = `${getModuleDisplayName(m)} (${m.mapCount || 0}${geoTag})`;
       return `<option value="${escapeHtml(m.path)}"${m.path === activeModulePath ? ' selected' : ''}>${escapeHtml(label)}</option>`;
     }).join('');
 
-    const cleanQ = normalizeAscii(indexFilterText).trim();
+    const cleanQ = normalizeAscii(mapFilterText).trim();
     const listItems = Array.isArray(globalSearchResults)
       ? globalSearchResults
       : activeIndex
+          .filter((it) => it.hasImage !== false && !isTocTitle(it.title))
           .filter((it) => !cleanQ || normalizeAscii(`${it.title} ${it.tags || ''}`).includes(cleanQ))
           .map((it) => ({
             ...it,
@@ -409,36 +716,35 @@ export function openMapViewerModal({
     const itemsHtml = listItems.length
       ? listItems.map((it, idx) => {
           const isCur = Boolean(
-            currentEntry &&
-            currentEntry.modulePath === it.modulePath &&
-            Number(currentEntry.rowid) === Number(it.rowid)
+            currentOverlayEntry &&
+            currentOverlayEntry.modulePath === it.modulePath &&
+            Number(currentOverlayEntry.rowid) === Number(it.rowid)
           );
+          const subTag = it.moduleTitle || (isValidGeoBounds(it.bounds) ? 'Georreferenciado' : 'Atlas');
           return (
             `<button type="button" class="map-index-item${isCur ? ' is-active' : ''}" data-map-idx-pos="${idx}">` +
               `<span>${escapeHtml(it.title || it.id || `Mapa ${it.rowid}`)}</span>` +
-              (it.moduleTitle ? `<span class="map-index-sub">${escapeHtml(it.moduleTitle)}</span>` : '') +
+              `<span class="map-index-sub">${escapeHtml(subTag)}</span>` +
             '</button>'
           );
         }).join('')
-      : '<div style="font-size:13px;color:var(--map-muted);padding:8px 2px;">Nenhum mapa encontrado para este filtro.</div>';
+      : '<div style="font-size:13px;color:var(--map-muted);padding:8px 2px;">Nenhum mapa de imagem encontrado para este filtro.</div>';
 
     drawer.innerHTML = `
-      ${modules.length ? `
-        <select class="map-select" id="map-atlas-select" aria-label="Escolher módulo de atlas">
-          ${atlasOptionsHtml}
-        </select>
-      ` : ''}
+      <select class="map-select" id="map-atlas-select" aria-label="Escolher módulo de atlas">
+        ${atlasOptionsHtml}
+      </select>
       <form class="map-drawer-row" id="map-idx-search-form">
         <input
           type="search"
           class="map-text-input"
           id="map-idx-search-input"
-          value="${escapeHtml(indexFilterText)}"
-          placeholder="Filtrar índice ou buscar em todos os atlas..."
+          value="${escapeHtml(mapFilterText)}"
+          placeholder="Filtrar mapas ou buscar em todos os atlas..."
           autocomplete="off"
         />
         <button type="submit" class="secondary-btn">Todos</button>
-        ${globalSearchResults ? '<button type="button" class="secondary-btn" id="map-idx-clear-global">Índice</button>' : ''}
+        ${currentOverlayEntry ? '<button type="button" class="secondary-btn" id="map-clear-overlay-btn">Remover</button>' : ''}
       </form>
       <div class="map-index-list" id="map-index-list">${itemsHtml}</div>
     `;
@@ -450,25 +756,12 @@ export function openMapViewerModal({
       setSavedActiveMapModulePath(nextPath);
       globalSearchResults = null;
       activeIndex = await getMapModuleIndex(nextPath);
-      if (isClosed) return;
-      renderDrawer();
-      if (activeIndex.length) {
-        const firstNonToc = activeIndex.find((it) => {
-          const n = normalizeAscii(it.title);
-          return !n.includes('indice dos mapas') && n !== 'table of contents';
-        }) || activeIndex[0];
-        await loadSpecificEntry({
-          modulePath: nextPath,
-          id: firstNonToc.id,
-          rowid: firstNonToc.rowid,
-          title: firstNonToc.title
-        });
-      }
+      if (!isClosed) renderDrawer();
     });
 
     const searchInput = drawer.querySelector('#map-idx-search-input');
     searchInput?.addEventListener('input', () => {
-      indexFilterText = searchInput.value || '';
+      mapFilterText = searchInput.value || '';
       globalSearchResults = null;
       renderDrawer();
     });
@@ -476,7 +769,7 @@ export function openMapViewerModal({
     drawer.querySelector('#map-idx-search-form')?.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const q = searchInput ? searchInput.value.trim() : '';
-      indexFilterText = q;
+      mapFilterText = q;
       if (!q) {
         globalSearchResults = null;
         renderDrawer();
@@ -486,10 +779,10 @@ export function openMapViewerModal({
       if (!isClosed) renderDrawer();
     });
 
-    drawer.querySelector('#map-idx-clear-global')?.addEventListener('click', () => {
-      globalSearchResults = null;
-      indexFilterText = '';
-      renderDrawer();
+    drawer.querySelector('#map-clear-overlay-btn')?.addEventListener('click', () => {
+      openDrawer = '';
+      clearOverlay();
+      renderDrawersAndResize();
     });
 
     drawer.querySelector('#map-index-list')?.addEventListener('click', (ev) => {
@@ -499,7 +792,8 @@ export function openMapViewerModal({
       const chosen = listItems[pos];
       if (!chosen) return;
       openDrawer = '';
-      loadSpecificEntry({
+      renderDrawersAndResize();
+      loadOverlayEntry({
         modulePath: chosen.modulePath || activeModulePath,
         id: chosen.id,
         rowid: chosen.rowid,
@@ -508,275 +802,492 @@ export function openMapViewerModal({
     });
   }
 
-  function renderHeaderAndDrawers() {
+  function renderDrawersAndResize() {
     updateHeader();
     renderVerseStrip();
     renderDrawer();
-    syncBottomButtons();
+    renderLayersPopover();
+    window.requestAnimationFrame(() => {
+      if (leafletMap) leafletMap.invalidateSize();
+    });
   }
 
-  function syncBottomButtons() {
-    const prevBtn = document.getElementById('map-btn-prev');
-    const nextBtn = document.getElementById('map-btn-next');
-    const zOut = document.getElementById('map-btn-zoom-out');
-    const zIn = document.getElementById('map-btn-zoom-in');
-    const zReset = document.getElementById('map-btn-zoom-reset');
+  function renderLayersPopover() {
+    const pop = document.getElementById('map-layers-popover');
+    const btn = document.getElementById('map-layers-btn');
+    if (btn) btn.classList.toggle('is-active', showLayersPopover);
+    if (!pop) return;
 
-    const hasImages = Boolean(currentEntry && Array.isArray(currentEntry.images) && currentEntry.images.length > 0);
-    const curPos = currentEntry && activeIndex.length
-      ? activeIndex.findIndex((it) => Number(it.rowid) === Number(currentEntry.rowid))
-      : -1;
+    if (!showLayersPopover) {
+      pop.classList.add('hidden');
+      pop.innerHTML = '';
+      return;
+    }
 
-    if (prevBtn) prevBtn.disabled = curPos <= 0;
-    if (nextBtn) nextBtn.disabled = curPos < 0 || curPos >= activeIndex.length - 1;
-    if (zOut) zOut.disabled = !hasImages;
-    if (zIn) zIn.disabled = !hasImages;
-    if (zReset) zReset.disabled = !hasImages;
+    pop.classList.remove('hidden');
+    const baseBtns = BASE_MAP_LAYERS.map((layer) => (
+      `<button type="button" class="map-layer-opt${layer.id === uiPrefs.baseLayerId ? ' is-active' : ''}" data-base-layer="${layer.id}">` +
+        `<span>${layer.id === uiPrefs.baseLayerId ? '&#9679;' : '&#9675;'}</span>` +
+        `<span>${escapeHtml(layer.name)}</span>` +
+      '</button>'
+    )).join('');
+
+    pop.innerHTML = `
+      <div class="map-layers-heading">Mapa Base</div>
+      ${baseBtns}
+      <div class="map-layers-heading" style="margin-top:6px;">Marcadores</div>
+      <button type="button" class="map-layer-opt${uiPrefs.showAllPins ? ' is-active' : ''}" id="map-toggle-all-pins">
+        <span>${uiPrefs.showAllPins ? '&#9745;' : '&#9744;'}</span>
+        <span>Mostrar todos os locais (${allPlaces.length})</span>
+      </button>
+    `;
+
+    pop.querySelectorAll('[data-base-layer]').forEach((optBtn) => {
+      optBtn.addEventListener('click', () => {
+        const nextId = optBtn.getAttribute('data-base-layer');
+        uiPrefs = saveMapUiPrefs({ baseLayerId: nextId });
+        applyBaseLayerToLeaflet();
+        updateAttributionBar();
+        renderLayersPopover();
+      });
+    });
+
+    pop.querySelector('#map-toggle-all-pins')?.addEventListener('click', () => {
+      uiPrefs = saveMapUiPrefs({ showAllPins: !uiPrefs.showAllPins });
+      renderAllPlacesLayer();
+      renderLayersPopover();
+    });
   }
 
-  function bindTouchGestures(stageEl) {
-    if (!stageEl) return;
+  function syncOpacityBar() {
+    const bar = document.getElementById('map-opacity-bar');
+    const toggleBtn = document.getElementById('map-overlay-toggle');
+    const slider = document.getElementById('map-opacity-slider');
+    const valEl = document.getElementById('map-opacity-val');
+
+    const hasImg = Boolean(
+      currentOverlayEntry &&
+      Array.isArray(currentOverlayEntry.images) &&
+      currentOverlayEntry.images.length > 0
+    );
+
+    if (!bar) return;
+    bar.classList.toggle('hidden', !hasImg || viewMode !== 'geo');
+
+    const pct = Math.round(uiPrefs.overlayOpacity * 100);
+    if (toggleBtn) {
+      toggleBtn.textContent = uiPrefs.overlayVisible ? 'Mapa ON' : 'Mapa OFF';
+      toggleBtn.classList.toggle('is-active', uiPrefs.overlayVisible);
+    }
+    if (slider) {
+      slider.value = String(pct);
+    }
+    if (valEl) {
+      valEl.textContent = `${pct}%`;
+    }
+  }
+
+  function updateAttributionBar() {
+    const attribEl = document.getElementById('map-attrib-text');
+    const modeBtn = document.getElementById('map-mode-toggle');
+    const hasImg = Boolean(
+      currentOverlayEntry &&
+      Array.isArray(currentOverlayEntry.images) &&
+      currentOverlayEntry.images.length > 0
+    );
+
+    if (modeBtn) {
+      modeBtn.classList.toggle('hidden', !hasImg);
+      modeBtn.textContent = viewMode === 'geo' ? 'Imagem' : 'Mapa';
+      modeBtn.classList.toggle('is-active', viewMode === 'image');
+    }
+
+    if (!attribEl) return;
+
+    const baseCfg = getActiveBaseLayerConfig();
+    const parts = [];
+    if (!leafletUnavailable && viewMode === 'geo') {
+      parts.push('Leaflet');
+    }
+    if (currentOverlayEntry) {
+      const srcLabel = currentOverlayEntry.attribution || currentOverlayEntry.title || 'Sobreposição';
+      parts.push(`Sobreposição: ${escapeHtml(srcLabel)}`);
+      parts.push('<button type="button" class="map-attrib-link" data-info-open="map">(Mapa Info)</button>');
+    }
+    if (focusedPin) {
+      parts.push('<button type="button" class="map-attrib-link" data-info-open="location">(Informação de localização)</button>');
+    }
+    if (!leafletUnavailable && viewMode === 'geo') {
+      parts.push(baseCfg.attribution);
+    }
+
+    attribEl.innerHTML = parts.join(' &bull; ');
+    attribEl.querySelectorAll('[data-info-open]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const nextMode = b.getAttribute('data-info-open');
+        infoCardMode = infoCardMode === nextMode ? '' : nextMode;
+        renderInfoCard();
+      });
+    });
+  }
+
+  function renderInfoCard() {
+    const card = document.getElementById('map-info-card');
+    if (!card) return;
+
+    if (!infoCardMode) {
+      card.classList.add('hidden');
+      card.innerHTML = '';
+      return;
+    }
+
+    let heading = '';
+    let bodyHtml = '';
+
+    if (infoCardMode === 'location' && focusedPin) {
+      heading = focusedPin.name;
+      bodyHtml = `
+        <div>${escapeHtml(focusedPin.info || 'Localização bíblica cadastrada no atlas.')}</div>
+        <div style="margin-top:6px;font-size:12px;color:var(--map-muted);">
+          Coordenadas: ${escapeHtml(formatCoord(focusedPin.lat, focusedPin.lng))}
+        </div>
+      `;
+    } else if (infoCardMode === 'map' && currentOverlayEntry) {
+      const b = currentOverlayEntry.resolvedBounds;
+      const geoStatus = b && b.exact
+        ? 'Coordenadas geográficas exatas (tabela map do módulo)'
+        : 'Enquadramento estimado automaticamente pelo título do mapa';
+      heading = currentOverlayEntry.title || 'Informações do Mapa';
+      bodyHtml = `
+        ${currentOverlayEntry.attribution ? `<div style="margin-bottom:4px;">${escapeHtml(currentOverlayEntry.attribution)}</div>` : ''}
+        <div style="font-size:12px;color:var(--map-muted);">${escapeHtml(geoStatus)}</div>
+        ${b ? `<div style="margin-top:4px;font-size:11.5px;color:var(--map-muted);">Limites: S ${b.south.toFixed(2)}° • O ${b.west.toFixed(2)}° • N ${b.north.toFixed(2)}° • L ${b.east.toFixed(2)}°</div>` : ''}
+      `;
+    } else {
+      card.classList.add('hidden');
+      return;
+    }
+
+    card.classList.remove('hidden');
+    card.innerHTML = `
+      <div class="map-info-card-head">
+        <strong>${escapeHtml(heading)}</strong>
+        <button type="button" class="map-ctrl-btn" id="map-info-close">&times;</button>
+      </div>
+      ${bodyHtml}
+    `;
+    card.querySelector('#map-info-close')?.addEventListener('click', () => {
+      infoCardMode = '';
+      renderInfoCard();
+    });
+  }
+
+  function applyBaseLayerToLeaflet() {
+    if (!leafletMap || !window.L) return;
+    if (baseTileLayer) {
+      try {
+        leafletMap.removeLayer(baseTileLayer);
+      } catch (err) {
+        // Ignora
+      }
+      baseTileLayer = null;
+    }
+
+    const cfg = getActiveBaseLayerConfig();
+    if (!cfg || !cfg.url) return;
+
+    const opts = {
+      maxZoom: cfg.maxZoom || 18,
+      attribution: cfg.attribution || ''
+    };
+    if (cfg.subdomains) {
+      opts.subdomains = cfg.subdomains;
+    }
+    baseTileLayer = window.L.tileLayer(cfg.url, opts).addTo(leafletMap);
+  }
+
+  function createPinIcon(isSecondary = false) {
+    if (!window.L) return null;
+    return window.L.divIcon({
+      className: 'map-bible-pin',
+      html: `<div class="map-bible-pin-dot${isSecondary ? ' map-bible-pin-dot--secondary' : ''}"></div>`,
+      iconSize: isSecondary ? [10, 10] : [14, 14],
+      iconAnchor: isSecondary ? [5, 5] : [7, 7]
+    });
+  }
+
+  function renderActivePinsOnLeaflet() {
+    if (!leafletMap || !window.L) return;
+    if (activePinsLayer) {
+      activePinsLayer.clearLayers();
+    } else {
+      activePinsLayer = window.L.layerGroup().addTo(leafletMap);
+    }
+
+    for (const loc of activePins) {
+      if (!Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng))) continue;
+      const marker = window.L.marker([loc.lat, loc.lng], {
+        icon: createPinIcon(false),
+        zIndexOffset: 500
+      });
+      marker.bindTooltip(escapeHtml(loc.name), {
+        permanent: true,
+        direction: 'bottom',
+        offset: [0, 7],
+        className: 'map-pin-tooltip'
+      });
+      marker.on('click', () => {
+        focusedPin = loc;
+        infoCardMode = 'location';
+        updateHeader();
+        renderVerseStrip();
+        renderInfoCard();
+      });
+      marker.addTo(activePinsLayer);
+    }
+  }
+
+  function renderAllPlacesLayer() {
+    if (!leafletMap || !window.L) return;
+    if (allPinsLayer) {
+      allPinsLayer.clearLayers();
+    } else {
+      allPinsLayer = window.L.layerGroup().addTo(leafletMap);
+    }
+
+    if (!uiPrefs.showAllPins) return;
+
+    const activeNames = new Set(activePins.map((p) => p.name));
+    for (const place of allPlaces) {
+      if (activeNames.has(place.name)) continue;
+      const m = window.L.marker([place.lat, place.lng], {
+        icon: createPinIcon(true),
+        zIndexOffset: 100
+      });
+      m.bindTooltip(escapeHtml(place.name), {
+        direction: 'top',
+        offset: [0, -6],
+        className: 'map-pin-tooltip'
+      });
+      m.on('click', () => {
+        focusedPin = place;
+        infoCardMode = 'location';
+        updateHeader();
+        renderInfoCard();
+      });
+      m.addTo(allPinsLayer);
+    }
+  }
+
+  function applyOverlayToLeaflet() {
+    if (!leafletMap || !window.L) return;
+    if (imageOverlayLayer) {
+      try {
+        leafletMap.removeLayer(imageOverlayLayer);
+      } catch (err) {
+        // Ignora
+      }
+      imageOverlayLayer = null;
+    }
+
+    if (!currentOverlayEntry || !Array.isArray(currentOverlayEntry.images) || !currentOverlayEntry.images.length) {
+      return;
+    }
+
+    const img = currentOverlayEntry.images[0];
+    const b = currentOverlayEntry.resolvedBounds;
+    if (!img || !img.url || !isValidGeoBounds(b)) return;
+
+    const bounds = [[b.south, b.west], [b.north, b.east]];
+    imageOverlayLayer = window.L.imageOverlay(img.url, bounds, {
+      opacity: uiPrefs.overlayVisible ? uiPrefs.overlayOpacity : 0,
+      interactive: false
+    }).addTo(leafletMap);
+  }
+
+  function focusMapOnPinsAndOverlay({ preferPin = false } = {}) {
+    if (!leafletMap || !window.L) return;
+
+    if (preferPin && focusedPin && Number.isFinite(Number(focusedPin.lat))) {
+      leafletMap.setView([focusedPin.lat, focusedPin.lng], 6, { animate: true });
+      return;
+    }
+
+    const b = currentOverlayEntry && currentOverlayEntry.resolvedBounds;
+    if (b && isValidGeoBounds(b)) {
+      if (focusedPin && isPointInBounds(focusedPin.lat, focusedPin.lng, b)) {
+        const spanLat = b.north - b.south;
+        const spanLng = b.east - b.west;
+        if (spanLat > 16 || spanLng > 22) {
+          leafletMap.setView([focusedPin.lat, focusedPin.lng], 5, { animate: false });
+        } else {
+          leafletMap.fitBounds([[b.south, b.west], [b.north, b.east]], { padding: [18, 18], maxZoom: 9 });
+        }
+        return;
+      }
+      if (!markerInfo) {
+        leafletMap.fitBounds([[b.south, b.west], [b.north, b.east]], { padding: [18, 18], maxZoom: 9 });
+        return;
+      }
+    }
+
+    if (activePins.length > 1) {
+      const latLngs = activePins
+        .filter((p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)))
+        .map((p) => [p.lat, p.lng]);
+      if (latLngs.length > 1) {
+        leafletMap.fitBounds(latLngs, { padding: [46, 46], maxZoom: 8 });
+        return;
+      }
+    }
+
+    if (focusedPin && Number.isFinite(Number(focusedPin.lat))) {
+      leafletMap.setView([focusedPin.lat, focusedPin.lng], 6, { animate: false });
+    }
+  }
+
+  function clearOverlay() {
+    currentOverlayEntry = null;
+    applyOverlayToLeaflet();
+    if (viewMode === 'image' && !leafletUnavailable) {
+      viewMode = 'geo';
+    }
+    syncViewMode();
+    updateHeader();
+    renderVerseStrip();
+    syncOpacityBar();
+    updateAttributionBar();
+    if (infoCardMode === 'map') {
+      infoCardMode = '';
+      renderInfoCard();
+    }
+  }
+
+  // Palco de Imagem Pura (usado no botão "Imagem" ou se Leaflet estiver offline)
+  function applyRawTransform() {
+    const imgEl = document.getElementById('map-raw-img');
+    const stageEl = document.getElementById('map-raw-stage');
+    if (!imgEl || !stageEl) return;
+    if (rawZoom <= 1.02) {
+      rawZoom = 1;
+      rawPanX = 0;
+      rawPanY = 0;
+    } else {
+      const maxX = Math.max(0, (stageEl.clientWidth * (rawZoom - 1)) / 2 + 120);
+      const maxY = Math.max(0, (stageEl.clientHeight * (rawZoom - 1)) / 2 + 120);
+      rawPanX = Math.max(-maxX, Math.min(maxX, rawPanX));
+      rawPanY = Math.max(-maxY, Math.min(maxY, rawPanY));
+    }
+    imgEl.style.transform = `translate3d(${rawPanX.toFixed(1)}px, ${rawPanY.toFixed(1)}px, 0) scale(${rawZoom.toFixed(3)})`;
+  }
+
+  function setRawZoom(next) {
+    rawZoom = Math.max(1, Math.min(6, Number(next) || 1));
+    applyRawTransform();
+  }
+
+  function resetRawTransform() {
+    rawZoom = 1;
+    rawPanX = 0;
+    rawPanY = 0;
+    applyRawTransform();
+  }
+
+  function renderRawImageStage() {
+    const rawStage = document.getElementById('map-raw-stage');
+    if (!rawStage) return;
+    const img = currentOverlayEntry && currentOverlayEntry.images && currentOverlayEntry.images[0];
+    if (!img || !img.url) {
+      rawStage.innerHTML = '<div style="padding:20px;text-align:center;color:var(--map-muted);">Selecione um mapa no botão <strong>&#9776; Mapas</strong>.</div>';
+      return;
+    }
+    rawStage.innerHTML = `<img id="map-raw-img" class="map-stage-img" src="${escapeHtml(img.url)}" alt="${escapeHtml(currentOverlayEntry.title || 'Mapa')}" draggable="false" />`;
+    resetRawTransform();
 
     let dragging = false;
+    let pinching = false;
     let dragStartX = 0;
     let dragStartY = 0;
     let startPanX = 0;
     let startPanY = 0;
+    let pinchDist = 0;
+    let pinchScale = 1;
+    let lastTap = 0;
 
-    let pinching = false;
-    let pinchStartDist = 0;
-    let pinchStartScale = 1;
-
-    let lastTapTs = 0;
-
-    const getTouchDist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-
-    stageEl.addEventListener('touchstart', (ev) => {
+    rawStage.ontouchstart = (ev) => {
       if (ev.touches.length === 2) {
         ev.preventDefault();
         dragging = false;
         pinching = true;
-        pinchStartDist = getTouchDist(ev.touches[0], ev.touches[1]);
-        pinchStartScale = zoomScale;
-        return;
-      }
-
-      if (ev.touches.length === 1) {
+        pinchDist = Math.hypot(
+          ev.touches[1].clientX - ev.touches[0].clientX,
+          ev.touches[1].clientY - ev.touches[0].clientY
+        );
+        pinchScale = rawZoom;
+      } else if (ev.touches.length === 1) {
         const now = Date.now();
-        if (now - lastTapTs < 290) {
+        if (now - lastTap < 280) {
           ev.preventDefault();
-          lastTapTs = 0;
-          if (zoomScale > 1.2) {
-            resetTransform();
-          } else {
-            setZoom(2.4);
-          }
+          lastTap = 0;
+          setRawZoom(rawZoom > 1.2 ? 1 : 2.5);
           return;
         }
-        lastTapTs = now;
-
+        lastTap = now;
         pinching = false;
         dragging = true;
         dragStartX = ev.touches[0].clientX;
         dragStartY = ev.touches[0].clientY;
-        startPanX = panX;
-        startPanY = panY;
+        startPanX = rawPanX;
+        startPanY = rawPanY;
       }
-    }, { passive: false });
+    };
 
-    stageEl.addEventListener('touchmove', (ev) => {
+    rawStage.ontouchmove = (ev) => {
       if (pinching && ev.touches.length === 2) {
         ev.preventDefault();
-        const dist = getTouchDist(ev.touches[0], ev.touches[1]);
-        if (pinchStartDist > 0) {
-          const next = pinchStartScale * (dist / pinchStartDist);
-          setZoom(next);
-        }
-        return;
-      }
-
-      if (dragging && ev.touches.length === 1 && zoomScale > 1.02) {
+        const dist = Math.hypot(
+          ev.touches[1].clientX - ev.touches[0].clientX,
+          ev.touches[1].clientY - ev.touches[0].clientY
+        );
+        if (pinchDist > 0) setRawZoom(pinchScale * (dist / pinchDist));
+      } else if (dragging && ev.touches.length === 1 && rawZoom > 1.02) {
         ev.preventDefault();
-        panX = startPanX + (ev.touches[0].clientX - dragStartX);
-        panY = startPanY + (ev.touches[0].clientY - dragStartY);
-        applyStageTransform();
+        rawPanX = startPanX + (ev.touches[0].clientX - dragStartX);
+        rawPanY = startPanY + (ev.touches[0].clientY - dragStartY);
+        applyRawTransform();
       }
-    }, { passive: false });
+    };
 
-    stageEl.addEventListener('touchend', (ev) => {
-      if (ev.touches.length === 1) {
-        pinching = false;
-        dragging = true;
-        dragStartX = ev.touches[0].clientX;
-        dragStartY = ev.touches[0].clientY;
-        startPanX = panX;
-        startPanY = panY;
-      } else if (ev.touches.length === 0) {
-        pinching = false;
-        dragging = false;
-      }
-    });
-
-    stageEl.addEventListener('touchcancel', () => {
-      pinching = false;
+    rawStage.ontouchend = () => {
       dragging = false;
-    });
-
-    // Suporte a roda do mouse / arraste desktop caso aberto em navegador
-    stageEl.addEventListener('wheel', (ev) => {
-      ev.preventDefault();
-      const delta = ev.deltaY < 0 ? 0.35 : -0.35;
-      setZoom(zoomScale + delta);
-    }, { passive: false });
+      pinching = false;
+    };
   }
 
-  function renderMainArea() {
-    const main = document.getElementById('map-main-area');
-    if (!main) return;
+  function syncViewMode() {
+    const host = document.getElementById('map-leaflet-host');
+    const rawStage = document.getElementById('map-raw-stage');
+    const rightCtrl = document.getElementById('map-float-right');
 
-    if (!isMapReaderAvailable()) {
-      main.innerHTML = `
-        <div class="map-empty-box">
-          <h2>Leitor de Mapas disponível no Android</h2>
-          <p>O plugin nativo de leitura de mapas SQLite funciona no aplicativo Android instalado no dispositivo.</p>
-        </div>
-      `;
-      syncBottomButtons();
-      return;
+    const isImg = viewMode === 'image';
+    if (host) host.classList.toggle('hidden', isImg);
+    if (rawStage) rawStage.classList.toggle('hidden', !isImg);
+    if (rightCtrl) rightCtrl.classList.toggle('hidden', isImg);
+
+    if (isImg) {
+      showLayersPopover = false;
+      renderLayersPopover();
+      renderRawImageStage();
+    } else if (leafletMap) {
+      window.requestAnimationFrame(() => leafletMap.invalidateSize());
     }
 
-    if (loadingText) {
-      main.innerHTML = `
-        <div class="map-empty-box">
-          <p>${escapeHtml(loadingText)}</p>
-        </div>
-      `;
-      syncBottomButtons();
-      return;
-    }
-
-    if (errorText) {
-      main.innerHTML = `
-        <div class="map-empty-box">
-          <h2>Não foi possível abrir o mapa</h2>
-          <p>${escapeHtml(errorText)}</p>
-          <button type="button" class="secondary-btn" id="map-err-open-folder">Escolher pasta de mapas</button>
-        </div>
-      `;
-      main.querySelector('#map-err-open-folder')?.addEventListener('click', () => {
-        openDrawer = 'folder';
-        renderHeaderAndDrawers();
-      });
-      syncBottomButtons();
-      return;
-    }
-
-    if (!modules.length) {
-      main.innerHTML = `
-        <div class="map-empty-box">
-          <h2>Nenhum arquivo de mapa encontrado</h2>
-          <p>Pasta atual: <strong>${escapeHtml(dirPath || 'Não configurada')}</strong>.<br/>Escolha a pasta onde estão seus arquivos de mapa (.bok.mybible ou .map.mybible).</p>
-          <button type="button" class="primary-btn" id="map-empty-pick-dir">Escolher pasta de mapas</button>
-        </div>
-      `;
-      main.querySelector('#map-empty-pick-dir')?.addEventListener('click', () => {
-        openDrawer = 'folder';
-        renderHeaderAndDrawers();
-      });
-      syncBottomButtons();
-      return;
-    }
-
-    if (!currentEntry) {
-      main.innerHTML = `
-        <div class="map-empty-box">
-          <h2>Selecione um mapa</h2>
-          <p>Toque em <strong>&#9776; Índice</strong> no topo para escolher um atlas ou mapa.</p>
-        </div>
-      `;
-      syncBottomButtons();
-      return;
-    }
-
-    const images = Array.isArray(currentEntry.images) ? currentEntry.images : [];
-
-    if (images.length > 0) {
-      const safeIdx = Math.max(0, Math.min(activeImageIdx, images.length - 1));
-      const activeImg = images[safeIdx];
-
-      const switcherHtml = images.length > 1
-        ? (
-          '<div class="map-img-switcher">' +
-            images.map((im, idx) => (
-              `<button type="button" class="map-rec-chip${idx === safeIdx ? ' is-active' : ''}" data-map-img-idx="${idx}">` +
-                escapeHtml(im.fileName || `Mapa ${idx + 1}`) +
-              '</button>'
-            )).join('') +
-          '</div>'
-        )
-        : '';
-
-      main.innerHTML = `
-        ${switcherHtml}
-        <div class="map-stage" id="map-stage">
-          <img
-            class="map-stage-img"
-            id="map-stage-img"
-            src="${escapeHtml(activeImg.url)}"
-            alt="${escapeHtml(currentEntry.title || activeImg.fileName || 'Mapa bíblico')}"
-            draggable="false"
-          />
-          <div class="map-zoom-badge" id="map-zoom-badge">100%</div>
-        </div>
-      `;
-
-      main.querySelectorAll('[data-map-img-idx]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          activeImageIdx = Number(btn.getAttribute('data-map-img-idx')) || 0;
-          resetTransform();
-          renderMainArea();
-        });
-      });
-
-      const stageEl = main.querySelector('#map-stage');
-      bindTouchGestures(stageEl);
-      resetTransform();
-      syncBottomButtons();
-      return;
-    }
-
-    // Página HTML (ex.: Índice dos Mapas / Table of Contents sem imagem direta)
-    const safeHtml = sanitizeMapHtml(currentEntry.content || '');
-    main.innerHTML = `
-      <div class="map-html-scroll">
-        <div class="map-html-content" id="map-html-content">${safeHtml || '<p>Sem conteúdo visual nesta entrada.</p>'}</div>
-      </div>
-    `;
-
-    main.querySelector('#map-html-content')?.addEventListener('click', (ev) => {
-      const link = ev.target.closest('a[href]');
-      if (!link) return;
-      const href = link.getAttribute('href') || '';
-      const parsed = parseInternalMapHref(href);
-      if (parsed) {
-        ev.preventDefault();
-        loadSpecificEntry({
-          modulePath: currentEntry.modulePath || activeModulePath,
-          rowid: parsed.rowid || -1,
-          title: parsed.title || ''
-        });
-      }
-    });
-
-    syncBottomButtons();
+    syncOpacityBar();
+    updateAttributionBar();
   }
 
-  async function loadSpecificEntry({ modulePath, id = '', rowid = -1, title = '' }) {
+  async function loadOverlayEntry({ modulePath, id = '', rowid = -1, title = '' }) {
     if (!modulePath) return;
-    loadingText = 'Abrindo mapa...';
-    errorText = '';
-    renderMainArea();
-
     try {
       if (modulePath !== activeModulePath) {
         activeModulePath = modulePath;
@@ -789,47 +1300,83 @@ export function openMapViewerModal({
       const entry = await getMapEntry({ modulePath, id, rowid, title });
       if (isClosed) return;
 
-      loadingText = '';
-      if (!entry) {
-        errorText = 'Entrada de mapa não encontrada neste arquivo.';
-        currentEntry = null;
-      } else {
-        currentEntry = entry;
-        activeImageIdx = 0;
+      if (!entry || !Array.isArray(entry.images) || !entry.images.length) {
+        eventBus.emit(EVENTS.TOAST, 'Esta entrada não contém imagem de mapa para sobrepor.');
+        return;
       }
 
-      renderHeaderAndDrawers();
-      renderMainArea();
+      currentOverlayEntry = entry;
+      if (!uiPrefs.overlayVisible) {
+        uiPrefs = saveMapUiPrefs({ overlayVisible: true });
+      }
+
+      applyOverlayToLeaflet();
+      if (viewMode === 'image') {
+        renderRawImageStage();
+      } else {
+        focusMapOnPinsAndOverlay({ preferPin: false });
+      }
+
+      updateHeader();
+      renderVerseStrip();
+      syncOpacityBar();
+      updateAttributionBar();
+      if (infoCardMode === 'map') renderInfoCard();
     } catch (err) {
       if (isClosed) return;
-      appLogger.error('MAP_OPEN', 'Falha ao abrir entrada de mapa', err);
-      loadingText = '';
-      errorText = err && err.message ? err.message : 'Erro ao carregar o mapa.';
-      renderHeaderAndDrawers();
-      renderMainArea();
+      appLogger.error('MAP_OVERLAY', 'Falha ao carregar imagem de sobreposição', err);
+      eventBus.emit(EVENTS.TOAST, err && err.message ? err.message : 'Erro ao abrir mapa.');
     }
   }
 
-  async function stepMapInAtlas(delta) {
-    if (!activeIndex.length || !currentEntry) return;
-    const curPos = activeIndex.findIndex((it) => Number(it.rowid) === Number(currentEntry.rowid));
-    if (curPos < 0) return;
-    const nextPos = curPos + Number(delta || 0);
-    if (nextPos < 0 || nextPos >= activeIndex.length) return;
+  async function initLeafletEngine() {
+    const L = await ensureLeafletLoaded();
+    if (isClosed) return;
 
-    const target = activeIndex[nextPos];
-    await loadSpecificEntry({
-      modulePath: activeModulePath,
-      id: target.id,
-      rowid: target.rowid,
-      title: target.title
+    const host = document.getElementById('map-leaflet-host');
+    if (!L || !host) {
+      leafletUnavailable = true;
+      viewMode = 'image';
+      syncViewMode();
+      return;
+    }
+
+    leafletMap = L.map(host, {
+      center: [focusedPin.lat, focusedPin.lng],
+      zoom: 6,
+      minZoom: 2,
+      maxZoom: 18,
+      zoomControl: false,
+      attributionControl: false
     });
+
+    leafletMap.on('click', () => {
+      if (showLayersPopover) {
+        showLayersPopover = false;
+        renderLayersPopover();
+      }
+      if (infoCardMode) {
+        infoCardMode = '';
+        renderInfoCard();
+      }
+    });
+
+    applyBaseLayerToLeaflet();
+    renderActivePinsOnLeaflet();
+    renderAllPlacesLayer();
+    applyOverlayToLeaflet();
+    focusMapOnPinsAndOverlay({ preferPin: false });
+    updateAttributionBar();
   }
 
-  async function reloadModulesAndRefresh({ notifyParent = false } = {}) {
-    loadingText = 'Verificando arquivos de mapa...';
-    errorText = '';
-    renderMainArea();
+  async function reloadModules({ notifyParent = false } = {}) {
+    if (!isMapReaderAvailable()) {
+      modules = [];
+      updateHeader();
+      renderVerseStrip();
+      updateAttributionBar();
+      return;
+    }
 
     const dirInfo = await getMapDirectory();
     dirPath = dirInfo.path || '';
@@ -844,12 +1391,10 @@ export function openMapViewerModal({
     }
 
     if (!modules.length) {
-      loadingText = '';
-      currentEntry = null;
       activeIndex = [];
       recommendedMaps = [];
-      renderHeaderAndDrawers();
-      renderMainArea();
+      clearOverlay();
+      if (openDrawer === 'folder' || openDrawer === 'maps') renderDrawer();
       return;
     }
 
@@ -858,57 +1403,57 @@ export function openMapViewerModal({
       setSavedActiveMapModulePath(activeModulePath);
     }
 
-    if (markerInfo) {
-      recommendedMaps = await resolveMapsForMarker(markerInfo);
-      if (isClosed) return;
-    }
+    activeIndex = await getMapModuleIndex(activeModulePath);
+    if (isClosed) return;
 
+    const targetMarker = markerInfo || {
+      book: 0,
+      chapter: 0,
+      verse: 0,
+      nativeMaps: [],
+      locations: activePins
+    };
+    recommendedMaps = await resolveMapsForMarker(targetMarker);
+    if (isClosed) return;
+
+    updateHeader();
+    renderVerseStrip();
+    if (openDrawer === 'folder' || openDrawer === 'maps') renderDrawer();
+
+    // Carrega automaticamente a melhor sobreposição histórica disponível
     if (recommendedMaps.length) {
       const best = recommendedMaps[0];
-      openDrawer = '';
-      await loadSpecificEntry({
+      await loadOverlayEntry({
         modulePath: best.modulePath,
         id: best.id,
         rowid: best.rowid,
         title: best.title
       });
-      return;
-    }
-
-    activeIndex = await getMapModuleIndex(activeModulePath);
-    if (isClosed) return;
-
-    if (activeIndex.length) {
-      const firstMap = activeIndex.find((it) => {
-        const n = normalizeAscii(it.title);
-        return !n.includes('indice dos mapas') && n !== 'table of contents';
-      }) || activeIndex[0];
-      openDrawer = '';
-      await loadSpecificEntry({
-        modulePath: activeModulePath,
-        id: firstMap.id,
-        rowid: firstMap.rowid,
-        title: firstMap.title
-      });
-    } else {
-      loadingText = '';
-      renderHeaderAndDrawers();
-      renderMainArea();
+    } else if (activeIndex.length) {
+      const firstImgMap = activeIndex.find((it) => it.hasImage !== false && !isTocTitle(it.title));
+      if (firstImgMap) {
+        await loadOverlayEntry({
+          modulePath: activeModulePath,
+          id: firstImgMap.id,
+          rowid: firstImgMap.rowid,
+          title: firstImgMap.title
+        });
+      }
     }
   }
 
   renderShell();
-  renderHeaderAndDrawers();
-  renderMainArea();
+  updateHeader();
+  renderVerseStrip();
+  syncOpacityBar();
+  updateAttributionBar();
 
-  if (isMapReaderAvailable()) {
-    reloadModulesAndRefresh({ notifyParent: false }).catch((err) => {
-      if (isClosed) return;
-      appLogger.error('MAP_INIT', 'Erro ao inicializar leitor de mapas', err);
-      loadingText = '';
-      errorText = err && err.message ? err.message : 'Erro ao carregar os mapas.';
-      renderHeaderAndDrawers();
-      renderMainArea();
-    });
-  }
+  Promise.all([
+    initLeafletEngine(),
+    reloadModules({ notifyParent: false })
+  ]).catch((err) => {
+    if (isClosed) return;
+    appLogger.error('MAP_INIT', 'Erro ao inicializar aplicativo de mapas', err);
+    eventBus.emit(EVENTS.TOAST, err && err.message ? err.message : 'Erro ao inicializar mapas.');
+  });
 }
