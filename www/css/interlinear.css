@@ -67,12 +67,13 @@
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   border: 1px solid var(--border);
-  font-size: 1.15em;
-  line-height: 1.7;
+  font-size: 1.02em;
+  line-height: 1.55;
   color: var(--text-main);
 }
 
 .verse-text .il-header-orig[dir="rtl"] {
+  font-size: 1.12em;
   text-align: right;
 }
 
@@ -177,10 +178,14 @@
 
 .verse-text .il-orig {
   display: block;
-  font-size: 1.12em;
-  font-weight: 600;
-  line-height: 1.35;
+  font-size: 1.02em;
+  font-weight: 500;
+  line-height: 1.32;
   color: var(--text-main);
+}
+
+.verse-text .il-orig[dir="rtl"] {
+  font-size: 1.12em;
 }
 
 .verse-text .il-orig-empty {
@@ -264,5 +269,3 @@
   direction: ltr;
   unicode-bidi: isolate;
 }
-
-/* FIM interlinear.css */
