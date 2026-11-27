@@ -1,0 +1,150 @@
+/* Ergonomia, recuo lateral e área de toque da barra superior */
+
+.topbar {
+  min-height: 60px;
+  gap: 12px;
+  padding-left: max(30px, calc(env(safe-area-inset-left, 0px) + 30px));
+  padding-right: max(18px, calc(env(safe-area-inset-right, 0px) + 18px));
+  box-sizing: border-box;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.topbar-right {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.topbar .nav-group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  height: 44px;
+  min-width: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.topbar .nav-group-bible {
+  flex: 0 1 280px;
+}
+
+.topbar .nav-group-book {
+  flex: 0 1 240px;
+}
+
+.topbar .step-arrow-btn {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 46px;
+  width: 46px;
+  min-width: 46px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  border: 0;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.12s ease, transform 0.08s ease, opacity 0.12s ease;
+}
+
+.topbar .nav-group > .step-arrow-btn:first-child {
+  border-right: 1px solid var(--border);
+  padding-left: 2px;
+}
+
+.topbar .nav-group > .step-arrow-btn:last-child {
+  border-left: 1px solid var(--border);
+  padding-right: 2px;
+}
+
+.topbar .step-arrow-btn:active:not(:disabled) {
+  background-color: rgba(128, 128, 128, 0.18);
+  transform: scale(0.94);
+}
+
+.topbar .step-arrow-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.topbar .pill-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 72px;
+  max-width: none;
+  height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.12s ease;
+}
+
+.topbar .pill-btn > span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar .pill-btn:active {
+  background-color: rgba(128, 128, 128, 0.14);
+}
+
+.topbar .icon-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 560px) {
+  .topbar {
+    gap: 8px;
+    padding-left: max(22px, calc(env(safe-area-inset-left, 0px) + 22px));
+    padding-right: max(12px, calc(env(safe-area-inset-right, 0px) + 12px));
+  }
+
+  .topbar-left {
+    gap: 8px;
+  }
+
+  .topbar .step-arrow-btn {
+    flex: 0 0 40px;
+    width: 40px;
+    min-width: 40px;
+    font-size: 22px;
+  }
+
+  .topbar .pill-btn {
+    min-width: 56px;
+    padding: 0 8px;
+  }
+}
