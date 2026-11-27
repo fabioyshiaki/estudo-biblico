@@ -1,3 +1,4 @@
+import { store } from '../core/store.js';
 import {
   myswordDictionaryAdapter,
   normalizeLookupTerm,
@@ -83,7 +84,21 @@ function getActiveModule() {
 
 function getModuleLabel(mod) {
   if (!mod) return 'Dicionário';
-  return mod.title || mod.abbr || mod.fileName || 'Dicionário';
+  const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+  return sortBy === 'title'
+    ? (mod.title || mod.abbr || mod.fileName || 'Dicionário')
+    : (mod.abbr || mod.title || mod.fileName || 'Dicionário');
+}
+
+function getModuleSourceLine(mod) {
+  if (!mod) return 'Dicionário';
+  const primary = getModuleLabel(mod);
+  const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+  const secondary = sortBy === 'title' ? (mod.abbr || '') : (mod.title || '');
+  if (secondary && secondary !== primary) {
+    return `${primary} • ${secondary}`;
+  }
+  return primary;
 }
 
 function shouldShowHeaderPanel() {
@@ -296,7 +311,6 @@ export function toggleDictionarySearchBar(forceOpen = null) {
 
   viewState.searchPanelOpen = nextOpen;
 
-  // Se o usuário pediu para fechar estando na tela de resultados e há um verbete aberto, retorna ao verbete
   if (!nextOpen && (viewState.mode === 'results' || viewState.mode === 'error') && viewState.currentEntry) {
     viewState.mode = 'entry';
     viewState.statusText = '';
@@ -1002,7 +1016,7 @@ function buildEntryHtml() {
       '<div class="dct-entry-head">' +
         '<div>' +
           `<h1 class="dct-entry-title">${escapeHtml(entry.word)}</h1>` +
-          `<div class="dct-entry-source">${escapeHtml(getModuleLabel(mod))}</div>` +
+          `<div class="dct-entry-source">${escapeHtml(getModuleSourceLine(mod))}</div>` +
         '</div>' +
         compareBtn +
       '</div>' +
