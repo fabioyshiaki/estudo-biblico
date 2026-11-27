@@ -1,0 +1,201 @@
+/* Padronização global das barras superior e inferior para Lenovo Legion Y700 (8,8") */
+
+:root {
+  --app-bar-top-h: 64px;
+  --app-bar-bottom-h: 62px;
+  --app-bar-btn-h: 46px;
+  --app-bar-foot-btn-h: 44px;
+  --app-bar-badge-size: 32px;
+}
+
+/* ==========================================================================
+   1. BARRA SUPERIOR PRINCIPAL (Bíblia, Comentários e Dicionários)
+   ========================================================================== */
+#topbar.ms-topbar {
+  min-height: var(--app-bar-top-h);
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  padding-bottom: 6px;
+  padding-left: 8px;
+  padding-right: 8px;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+#topbar .ms-menu-trigger,
+#topbar .ms-overflow-btn {
+  min-height: var(--app-bar-btn-h);
+  min-width: var(--app-bar-btn-h);
+}
+
+#topbar .ms-green-arrow {
+  min-width: 42px;
+  min-height: var(--app-bar-btn-h);
+}
+
+#topbar .ms-green-arrow svg {
+  width: 24px;
+  height: 24px;
+}
+
+#topbar .ms-ref-btn,
+#topbar .ms-top-spinner {
+  min-height: var(--app-bar-btn-h);
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#topbar .ms-quick-tab {
+  min-height: 38px;
+  padding: 0 13px;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+#topbar .ms-res-badge {
+  width: var(--app-bar-badge-size);
+  height: var(--app-bar-badge-size);
+  font-size: 15.5px;
+}
+
+/* ==========================================================================
+   2. BARRA INFERIOR PRINCIPAL (Dock — Bíblia, Comentários e Dicionários)
+   ========================================================================== */
+#bottom-nav.ms-bottom-dock {
+  min-height: var(--app-bar-bottom-h);
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+#bottom-nav .ms-dock-group {
+  gap: 6px;
+}
+
+#bottom-nav .ms-dock-btn {
+  min-width: var(--app-bar-foot-btn-h);
+  min-height: var(--app-bar-foot-btn-h);
+}
+
+#bottom-nav .ms-dock-btn svg {
+  width: 23px;
+  height: 23px;
+}
+
+#bottom-nav .ms-dock-view-btn {
+  min-width: var(--app-bar-foot-btn-h);
+  min-height: var(--app-bar-foot-btn-h);
+  padding: 4px;
+}
+
+#bottom-nav .ms-res-badge {
+  width: var(--app-bar-badge-size);
+  height: var(--app-bar-badge-size);
+  font-size: 15.5px;
+  border-radius: 6px;
+}
+
+#bottom-nav .ms-dock-meta {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   3. PESQUISA UNIFICADA (Bíblia, Comentário e Dicionário)
+   ========================================================================== */
+.ms-search-header {
+  min-height: var(--app-bar-top-h);
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px 8px;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+.ms-header-btn {
+  width: var(--app-bar-btn-h);
+  height: var(--app-bar-btn-h);
+}
+
+.ms-header-title {
+  font-size: 17.5px;
+}
+
+.ms-kind-tab {
+  height: 46px;
+  font-size: 15px;
+  gap: 7px;
+}
+
+.ms-kind-tab .ms-res-badge {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+}
+
+.ms-bottom-bar {
+  min-height: var(--app-bar-bottom-h);
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.ms-foot-icon,
+.ms-foot-arrow {
+  min-width: var(--app-bar-foot-btn-h);
+  min-height: var(--app-bar-foot-btn-h);
+}
+
+.ms-foot-text-btn {
+  min-height: var(--app-bar-foot-btn-h);
+  padding: 0 14px;
+  font-size: 15px;
+}
+
+/* ==========================================================================
+   4. MAPAS E FOTOS / ILUSTRAÇÕES (Mesma altura exata do restante do app)
+   ========================================================================== */
+.map-viewer-header {
+  min-height: var(--app-bar-top-h);
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px 8px;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+.map-hdr-btn {
+  min-width: var(--app-bar-btn-h);
+  min-height: var(--app-bar-btn-h);
+  padding: 0 13px;
+  font-size: 15px;
+}
+
+.map-hdr-title {
+  font-size: 17.5px;
+}
+
+.map-hdr-sub {
+  font-size: 13.5px;
+}
+
+.map-bottom-bar {
+  min-height: var(--app-bar-bottom-h);
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+.map-bottom-back {
+  width: var(--app-bar-foot-btn-h);
+  height: var(--app-bar-foot-btn-h);
+}
+
+.map-ctrl-btn {
+  min-width: var(--app-bar-foot-btn-h);
+  min-height: var(--app-bar-foot-btn-h);
+  padding: 0 14px;
+  font-size: 15px;
+}
+
+.map-attrib-text,
+.map-attrib-link {
+  font-size: 13.5px;
+}
