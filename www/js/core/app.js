@@ -2,6 +2,7 @@ import { nativeBridge } from '../bridge/native-bridge.js';
 import { store } from './store.js';
 import { eventBus, EVENTS } from './events.js';
 import { getBookName, formatReference } from './canon.js';
+import { appLogger } from './logger.js';
 import {
   initGlobalBibleRefs,
   updateBibleBackButton
@@ -40,6 +41,8 @@ import {
   closeModal
 } from '../ui/nav-modal.js';
 import { openSettingsModal } from '../ui/sources-modal.js';
+
+appLogger.installGlobalHandlers();
 
 let toastTimer = null;
 let savedBibleScrollTop = 0;
@@ -706,6 +709,22 @@ function bindStateEvents() {
 async function bootstrap() {
   applyVisualPrefs(store.getPrefs());
 
+  appLogger.setContextProvider(() => {
+    const st = store.getState();
+    const bible = store.getActiveBible();
+    const dict = store.getActiveDictionary();
+    const dState = getDictionaryViewState();
+    return {
+      'Ambiente nativo': nativeBridge.isNative() ? 'Android (Capacitor)' : 'Navegador Web',
+      'Permissão arquivos': st.hasStoragePermission ? 'Concedida' : 'Negada',
+      'Modo ativo': store.getActiveMode(),
+      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getDictionaries().length} Dicionário(s)`,
+      'Bíblia ativa': bible ? `${bible.abbr || bible.title} (${bible.fileName || ''}) • ${formatReference(st.book, st.chapter)}` : 'Nenhuma',
+      'Dicionário ativo': dict ? `${dict.abbr || dict.title} (${dict.fileName || ''}) • verbete: ${dState.currentEntry ? dState.currentEntry.word : 'nenhum'}` : 'Nenhum',
+      'Opções busca dic.': JSON.stringify(dState.searchOptions || {})
+    };
+  });
+
   initGlobalBibleRefs({
     onNavigate: (parsed, meta) => {
       navigateToBibleReference(parsed, {
@@ -731,6 +750,7 @@ async function bootstrap() {
 
   initDictionaryView({
     onOpenSources: () => openSettingsModal({ initialTab: 'sources', initialKind: 'dictionary' }),
+    onOpenLogs: () => openSettingsModal({ initialTab: 'logs' }),
     onOpenFootnote: (ref, text) => openFootnoteModal(ref, text),
     onToast: showToast,
     onStateMetaChange: (meta) => {
@@ -757,6 +777,7 @@ async function bootstrap() {
 }
 
 bootstrap().catch((err) => {
+  appLogger.error('BOOTSTRAP', err && err.message ? err.message : 'Erro ao iniciar aplicativo.', err);
   showToast(err && err.message ? err.message : 'Erro ao iniciar aplicativo.');
   console.error('[app] Falha no bootstrap:', err);
 });
