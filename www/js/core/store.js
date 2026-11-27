@@ -24,6 +24,11 @@ function loadPersisted() {
   }
 }
 
+function normalizeMode(mode) {
+  if (mode === 'dictionary' || mode === 'commentary') return mode;
+  return 'bible';
+}
+
 function compareModules(a, b, sortBy) {
   const favDiff = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
   if (favDiff !== 0) return favDiff;
@@ -50,11 +55,13 @@ const state = {
   hasStoragePermission: false,
   sources: [],
   modules: [],
-  activeMode: persisted.activeMode === 'dictionary' ? 'dictionary' : 'bible',
+  activeMode: normalizeMode(persisted.activeMode),
   activeModulePath: typeof persisted.activeModulePath === 'string' ? persisted.activeModulePath : '',
   activeDictionaryPath: typeof persisted.activeDictionaryPath === 'string' ? persisted.activeDictionaryPath : '',
+  activeCommentaryPath: typeof persisted.activeCommentaryPath === 'string' ? persisted.activeCommentaryPath : '',
   book: Number(persisted.book) > 0 ? Number(persisted.book) : 1,
   chapter: Number(persisted.chapter) > 0 ? Number(persisted.chapter) : 1,
+  verse: Number(persisted.verse) > 0 ? Number(persisted.verse) : 1,
   prefs: {
     ...DEFAULT_PREFS,
     ...(persisted.prefs && typeof persisted.prefs === 'object' ? persisted.prefs : {})
@@ -69,8 +76,10 @@ function persistNow() {
       activeMode: state.activeMode,
       activeModulePath: state.activeModulePath,
       activeDictionaryPath: state.activeDictionaryPath,
+      activeCommentaryPath: state.activeCommentaryPath,
       book: state.book,
       chapter: state.chapter,
+      verse: state.verse,
       prefs: state.prefs
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -97,7 +106,7 @@ export const store = {
   },
 
   setActiveMode(mode) {
-    const next = mode === 'dictionary' ? 'dictionary' : 'bible';
+    const next = normalizeMode(mode);
     if (next === state.activeMode) return;
     state.activeMode = next;
     persistNow();
@@ -127,6 +136,13 @@ export const store = {
     const dictExists = dicts.some((m) => m.path === state.activeDictionaryPath);
     if (!dictExists) {
       state.activeDictionaryPath = dicts.length > 0 ? dicts[0].path : '';
+      changed = true;
+    }
+
+    const commentaries = this.getCommentaries();
+    const cmtExists = commentaries.some((m) => m.path === state.activeCommentaryPath);
+    if (!cmtExists) {
+      state.activeCommentaryPath = commentaries.length > 0 ? commentaries[0].path : '';
       changed = true;
     }
 
@@ -186,13 +202,55 @@ export const store = {
     }
   },
 
-  setLocation(book, chapter) {
+  getCommentaries() {
+    const sortBy = state.prefs.bibleSortBy === 'title' ? 'title' : 'abbr';
+    return state.modules
+      .filter((m) => m.resourceKind === 'commentary')
+      .sort((a, b) => compareModules(a, b, sortBy));
+  },
+
+  getActiveCommentary() {
+    const list = this.getCommentaries();
+    if (!list.length) return null;
+    return list.find((m) => m.path === state.activeCommentaryPath) || list[0];
+  },
+
+  setActiveCommentary(modulePath, { silent = false } = {}) {
+    if (!modulePath || modulePath === state.activeCommentaryPath) return;
+    state.activeCommentaryPath = modulePath;
+    persistNow();
+    if (!silent) {
+      eventBus.emit(EVENTS.COMMENTARY_CHANGED, this.getActiveCommentary());
+    }
+  },
+
+  setLocation(book, chapter, verse = 1) {
     const nextBook = Number(book) || 1;
     const nextChapter = Number(chapter) || 1;
+    const nextVerse = Number(verse) > 0 ? Math.trunc(Number(verse)) : 1;
     state.book = nextBook;
     state.chapter = nextChapter;
+    state.verse = nextVerse;
     persistNow();
-    eventBus.emit(EVENTS.LOCATION_CHANGED, { book: nextBook, chapter: nextChapter });
+    eventBus.emit(EVENTS.LOCATION_CHANGED, {
+      book: nextBook,
+      chapter: nextChapter,
+      verse: nextVerse
+    });
+  },
+
+  setActiveVerse(verse, { silent = false } = {}) {
+    const nextVerse = Number(verse) > 0 ? Math.trunc(Number(verse)) : 1;
+    if (nextVerse === state.verse) return;
+    state.verse = nextVerse;
+    persistNow();
+    if (!silent) {
+      eventBus.emit(EVENTS.VERSE_CHANGED, {
+        book: state.book,
+        chapter: state.chapter,
+        verse: nextVerse
+      });
+    }
   },
 
   getCachedBooks(modulePath) {
