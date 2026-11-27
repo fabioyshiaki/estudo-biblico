@@ -1,4 +1,4 @@
-/* Layout de tela cheia da Pesquisa Bíblica (inspirado no MySword e adaptado aos 4 temas) */
+/* Layout de tela cheia da Pesquisa Unificada (Bíblia, Comentário e Dicionário — 4 temas) */
 
 :root,
 :root[data-theme="paper"] {
@@ -17,6 +17,10 @@
   --bsearch-hit-fg: inherit;
   --bsearch-badge-bg: rgba(108, 70, 168, 0.11);
   --bsearch-badge-fg: #6c46a8;
+  --bsearch-cmt-bg: rgba(37, 99, 171, 0.13);
+  --bsearch-cmt-fg: #1d5394;
+  --bsearch-dict-bg: rgba(198, 40, 40, 0.11);
+  --bsearch-dict-fg: #a62121;
 }
 
 :root[data-theme="light"] {
@@ -35,6 +39,10 @@
   --bsearch-hit-fg: inherit;
   --bsearch-badge-bg: rgba(107, 66, 176, 0.11);
   --bsearch-badge-fg: #6b42b0;
+  --bsearch-cmt-bg: rgba(37, 99, 235, 0.12);
+  --bsearch-cmt-fg: #1d4ed8;
+  --bsearch-dict-bg: rgba(198, 40, 40, 0.11);
+  --bsearch-dict-fg: #b91c1c;
 }
 
 :root[data-theme="sepia"] {
@@ -53,6 +61,10 @@
   --bsearch-hit-fg: inherit;
   --bsearch-badge-bg: rgba(102, 61, 148, 0.12);
   --bsearch-badge-fg: #663d94;
+  --bsearch-cmt-bg: rgba(36, 92, 150, 0.14);
+  --bsearch-cmt-fg: #1d4d80;
+  --bsearch-dict-bg: rgba(184, 41, 41, 0.13);
+  --bsearch-dict-fg: #9c2222;
 }
 
 :root[data-theme="dark"] {
@@ -71,13 +83,17 @@
   --bsearch-hit-fg: #fff4cc;
   --bsearch-badge-bg: rgba(194, 157, 255, 0.16);
   --bsearch-badge-fg: #c8a6ff;
+  --bsearch-cmt-bg: rgba(78, 168, 222, 0.18);
+  --bsearch-cmt-fg: #7bc4f2;
+  --bsearch-dict-bg: rgba(239, 83, 80, 0.18);
+  --bsearch-dict-fg: #ff8a80;
 }
 
 .topbar .icon-btn.hidden {
   display: none !important;
 }
 
-/* Container tela cheia (sobrepõe o modal padrão com visual dedicado) */
+/* Container tela cheia */
 .ms-search-backdrop {
   position: fixed;
   inset: 0;
@@ -89,12 +105,12 @@
   font-family: var(--font-ui);
 }
 
-/* Barra superior com linha de acento azul */
+/* Barra superior com linha de acento */
 .ms-search-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 52px;
+  min-height: 50px;
   padding: env(safe-area-inset-top, 0px) 8px 0 6px;
   background: var(--ms-header-bg);
   border-bottom: 2px solid var(--ms-accent);
@@ -131,6 +147,72 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Barra de abas de recurso (Bíblia | Comentário | Dicionário) */
+.ms-kind-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--ms-header-bg);
+  border-bottom: 1px solid var(--ms-border);
+  flex: 0 0 auto;
+}
+
+.ms-kind-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 6px;
+  border: 0;
+  border-bottom: 2.5px solid transparent;
+  background: transparent;
+  color: var(--ms-muted);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
+}
+
+.ms-kind-tab:active {
+  background: var(--ms-accent-soft);
+}
+
+.ms-kind-tab.is-active {
+  color: var(--ms-text);
+  background: var(--ms-panel-bg);
+}
+
+.ms-kind-tab--bible.is-active {
+  border-bottom-color: #d9a441;
+}
+
+.ms-kind-tab--commentary.is-active {
+  border-bottom-color: var(--ms-badge-cmt-bg, #2563ab);
+}
+
+.ms-kind-tab--dictionary.is-active {
+  border-bottom-color: var(--ms-badge-dict-bg, #c62828);
+}
+
+.ms-kind-tab .ms-res-badge {
+  width: 20px;
+  height: 20px;
+  font-size: 11.5px;
+  border-radius: 4px;
+}
+
+.ms-kind-tab-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ms-muted);
 }
 
 /* Linha principal de entrada da busca (- | input sublinhado | seta histórico | lupa) */
@@ -230,6 +312,45 @@
   background: var(--ms-accent-soft);
 }
 
+/* Faixa compacta de filtros ativos quando o painel está recolhido */
+.ms-active-summary-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 5px 10px;
+  background: var(--ms-panel-bg);
+  border-bottom: 1px solid var(--ms-border);
+  flex: 0 0 auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ms-active-summary-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.ms-active-summary-bar.hidden {
+  display: none;
+}
+
+.ms-summary-pill {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ms-accent-soft);
+  color: var(--ms-accent);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 /* Painel de filtros em grade estilo MySword */
 .ms-filters-panel {
   display: flex;
@@ -268,7 +389,7 @@
   flex: 0 0 auto;
 }
 
-/* Spinner / Select sublinhado com triângulo no canto inferior direito igual ao print */
+/* Spinner / Select sublinhado com triângulo no canto inferior direito */
 .ms-spinner-wrap {
   position: relative;
   flex: 1 1 auto;
@@ -363,7 +484,13 @@
   margin: 0;
 }
 
-/* Gaveta auxiliar (histórico rápido / refinamentos extras / filtro nos resultados) */
+.ms-filter-tip {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ms-muted);
+}
+
+/* Gaveta auxiliar (histórico rápido / filtro nos resultados / menu) */
 .ms-aux-drawer {
   padding: 8px 10px;
   background: var(--ms-header-bg);
@@ -402,7 +529,7 @@
   color: var(--ms-accent);
 }
 
-/* Barra horizontal de livros encontrados */
+/* Barra horizontal de livros ou módulos encontrados */
 .ms-book-bar {
   display: flex;
   flex-wrap: nowrap;
@@ -522,6 +649,13 @@
   color: var(--ms-accent);
 }
 
+.ms-row-sub {
+  font-size: 12px;
+  color: var(--ms-muted);
+  margin: -1px 0 4px;
+  word-break: break-word;
+}
+
 .ms-row-badges {
   display: inline-flex;
   align-items: center;
@@ -543,6 +677,16 @@
   color: var(--bsearch-badge-fg);
 }
 
+.bsearch-badge--cmt {
+  background: var(--bsearch-cmt-bg);
+  color: var(--bsearch-cmt-fg);
+}
+
+.bsearch-badge--dict {
+  background: var(--bsearch-dict-bg);
+  color: var(--bsearch-dict-fg);
+}
+
 .ms-row-text {
   font-family: var(--reader-font-family);
   font-size: 15px;
@@ -555,7 +699,8 @@
   text-align: right;
 }
 
-.ms-results-list.is-compact .ms-row-text {
+.ms-results-list.is-compact .ms-row-text,
+.ms-results-list.is-compact .ms-row-sub {
   display: none;
 }
 
@@ -577,7 +722,7 @@
   padding: 12px 0 4px;
 }
 
-/* Barra inferior fixa estilo MySword (ícones + Cancelar | Abrir Seleção | ↑ | ↓ | Seleção) */
+/* Barra inferior fixa estilo MySword */
 .ms-bottom-bar {
   display: flex;
   align-items: center;
@@ -678,6 +823,15 @@
   .ms-select,
   .ms-limit-input {
     font-size: 13.5px;
+  }
+
+  .ms-kind-tab {
+    font-size: 12.5px;
+    gap: 4px;
+  }
+
+  .ms-kind-tab-count {
+    display: none;
   }
 
   .ms-foot-text-btn {
