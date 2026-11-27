@@ -1,4 +1,5 @@
 import { myswordBibleAdapter } from './mysword-bible.js';
+import { myswordDictionaryAdapter } from './mysword-dictionary.js';
 
 const adapters = new Map();
 
@@ -24,6 +25,5 @@ export function listRegisteredFormats(resourceKind = null) {
   return all.filter((a) => a.resourceKind === resourceKind);
 }
 
-// Registro inicial da Base v0.1 (apenas Bíblias MySword)
-// Futuros formatos (MyBible, theWord, e-Sword, comentários, EPUB, PDF) serão registrados aqui.
 registerFormatAdapter(myswordBibleAdapter);
+registerFormatAdapter(myswordDictionaryAdapter);
