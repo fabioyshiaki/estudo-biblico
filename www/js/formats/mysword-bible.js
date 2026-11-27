@@ -13,6 +13,10 @@ import {
   formatShebanqBhsHtml
 } from './linguistic-shebanq.js';
 import {
+  isOpenTextLinguisticHtml,
+  formatOpenTextHtml
+} from './linguistic-opentext.js';
+import {
   isBibliaReveladaOmega,
   processBibliaReveladaOmega
 } from './biblia-revelada-omega.js';
@@ -90,8 +94,13 @@ function decodeCommonEntities(str) {
 }
 
 function stripTagsPlain(str) {
+  const withLex = String(str || '')
+    .replace(/<W([GH])(\d[^<>]*)>/gi, (_, lang, num) => ` ${lang.toUpperCase()}${String(num).replace(/\uFF0B/g, '+').trim()} `)
+    .replace(/<WT([^<>]+)>/gi, (_, morph) => ` ${String(morph).replace(/\s+l="[^"]*"/gi, '').trim()} `)
+    .replace(/<WL([^<>]+)>/gi, (_, lemma) => ` ${String(lemma).trim()} `);
+
   return decodeCommonEntities(
-    decodeNumericEntities(String(str || ''))
+    decodeNumericEntities(withLex)
       .replace(/<\/?(?:p|div|br|li|h[1-6])(?:\s+[^>]*)?>/gi, '\n')
       .replace(/<[^>]*>/g, ' ')
   )
@@ -343,7 +352,7 @@ export function formatMySwordScripture(rawText, options = {}) {
     };
   }
 
-  // Módulos BHS Enhanced / SHEBANQ
+  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord
   if (isShebanqBhsText(text)) {
     const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum);
     return {
@@ -351,6 +360,18 @@ export function formatMySwordScripture(rawText, options = {}) {
       headings,
       footnotes
     };
+  }
+
+  // Módulos sintáticos OpenText.org (Open Greek New Testament Linguistic Annotations)
+  if (isOpenTextLinguisticHtml(text)) {
+    const otHtml = formatOpenTextHtml(decodeCommonEntities(text));
+    if (otHtml) {
+      return {
+        html: restoreFootnotes(otHtml, footnoteLabels),
+        headings,
+        footnotes
+      };
+    }
   }
 
   // Remove referências cruzadas, marcadores de versículo (<Gn#1#1>, <ot.1.1.1>) e tags customizadas com "="
