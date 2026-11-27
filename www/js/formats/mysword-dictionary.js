@@ -2,6 +2,18 @@ import { nativeBridge } from '../bridge/native-bridge.js';
 import { parseBibleReference } from '../core/bible-refs.js';
 
 const schemaCache = new Map();
+const initialsCache = new Map();
+
+const INITIAL_ACCENT_GROUPS = {
+  A: ['A', 'Á', 'À', 'Â', 'Ã', 'Ä', 'Å', 'a', 'á', 'à', 'â', 'ã', 'ä', 'å'],
+  C: ['C', 'Ç', 'c', 'ç'],
+  E: ['E', 'É', 'È', 'Ê', 'Ë', 'e', 'é', 'è', 'ê', 'ë'],
+  I: ['I', 'Í', 'Ì', 'Î', 'Ï', 'i', 'í', 'ì', 'î', 'ï'],
+  N: ['N', 'Ñ', 'n', 'ñ'],
+  O: ['O', 'Ó', 'Ò', 'Ô', 'Õ', 'Ö', 'o', 'ó', 'ò', 'ô', 'õ', 'ö'],
+  U: ['U', 'Ú', 'Ù', 'Û', 'Ü', 'u', 'ú', 'ù', 'û', 'ü'],
+  Y: ['Y', 'Ý', 'Ÿ', 'y', 'ý', 'ÿ']
+};
 
 const NAMED_ENTITIES = {
   nbsp: ' ', middot: '·', mdash: '—', ndash: '–', hellip: '…',
@@ -108,6 +120,21 @@ function extractAttrLabel(attrStr) {
   const m = /\bq\s*=\s*(?:'([^']*)'|"([^"]*)"|([^>]+))/i.exec(attrStr);
   const raw = m ? (m[1] ?? m[2] ?? m[3] ?? '') : '';
   return decodeCommonEntities(decodeNumericEntities(raw)).trim();
+}
+
+function normalizeInitialBucket(rawChar) {
+  const ch = String(rawChar || '').trim();
+  if (!ch) return '';
+  if (/^[0-9]$/.test(ch)) return '0-9';
+
+  const baseLatin = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  if (/^[A-Z]$/.test(baseLatin)) return baseLatin;
+
+  const baseScript = ch.normalize('NFD').replace(/[\u0300-\u036f\u0591-\u05C7\u0730-\u074A]/g, '');
+  if (baseScript && /[\p{L}]/u.test(baseScript)) {
+    return baseScript.charAt(0).toUpperCase();
+  }
+  return '#';
 }
 
 export function normalizeLookupTerm(rawTerm) {
@@ -531,6 +558,35 @@ async function resolveSchema(modulePath) {
   return schema;
 }
 
+function buildStartsWithFilter(schema, startsWithRaw) {
+  const bucket = String(startsWithRaw || '').trim();
+  if (!bucket) return null;
+
+  const firstExpr = `SUBSTR(LTRIM(${schema.qWord}), 1, 1)`;
+
+  if (bucket === '0-9') {
+    return {
+      sql: `${firstExpr} IN ('0','1','2','3','4','5','6','7','8','9')`,
+      params: []
+    };
+  }
+
+  const upper = bucket.toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(INITIAL_ACCENT_GROUPS, upper)) {
+    const chars = INITIAL_ACCENT_GROUPS[upper];
+    const placeholders = chars.map(() => '?').join(', ');
+    return {
+      sql: `${firstExpr} IN (${placeholders})`,
+      params: chars
+    };
+  }
+
+  return {
+    sql: `${firstExpr} = ? COLLATE NOCASE`,
+    params: [bucket]
+  };
+}
+
 export const myswordDictionaryAdapter = {
   formatId: 'mysword_dct',
   resourceKind: 'dictionary',
@@ -540,8 +596,10 @@ export const myswordDictionaryAdapter = {
   clearCache(modulePath) {
     if (modulePath) {
       schemaCache.delete(modulePath);
+      initialsCache.delete(modulePath);
     } else {
       schemaCache.clear();
+      initialsCache.clear();
     }
   },
 
@@ -555,33 +613,138 @@ export const myswordDictionaryAdapter = {
     return Number(getRowField(row, 'total')) || 0;
   },
 
-  async getEntryList(modulePath, options = {}) {
-    const s = await resolveSchema(modulePath);
-    const limit = Math.max(1, Math.min(Number(options.limit) || 120, 400));
-    const offset = Math.max(0, Number(options.offset) || 0);
-    const prefix = normalizeLookupTerm(options.prefix || '');
-
-    let sql;
-    let params;
-    if (prefix) {
-      sql =
-        `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-        `WHERE ${s.qWord} LIKE ? COLLATE NOCASE ` +
-        `ORDER BY CASE WHEN ${s.qWord} = ? COLLATE NOCASE THEN 0 ` +
-        `WHEN ${s.qWord} LIKE ? COLLATE NOCASE THEN 1 ELSE 2 END, ` +
-        `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC ` +
-        `LIMIT ? OFFSET ?`;
-      params = [`%${prefix}%`, prefix, `${prefix}%`, limit, offset];
-    } else {
-      sql =
-        `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-        `ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT ? OFFSET ?`;
-      params = [limit, offset];
+  async getEntryInitials(modulePath) {
+    if (initialsCache.has(modulePath)) {
+      return initialsCache.get(modulePath);
     }
 
-    const res = await nativeBridge.queryModule(modulePath, sql, params);
+    const s = await resolveSchema(modulePath);
+    const res = await nativeBridge.queryModule(
+      modulePath,
+      `SELECT DISTINCT SUBSTR(LTRIM(${s.qWord}), 1, 1) AS ch ` +
+        `FROM ${s.qTable} ` +
+        `WHERE ${s.qWord} IS NOT NULL AND TRIM(${s.qWord}) <> '' ` +
+        `LIMIT 160`
+    );
     const rows = Array.isArray(res && res.rows) ? res.rows : [];
-    return rows.map((r) => String(getRowField(r, 'word') || '')).filter(Boolean);
+    const seen = new Set();
+
+    for (const r of rows) {
+      const bucket = normalizeInitialBucket(getRowField(r, 'ch'));
+      if (bucket && bucket !== '#') seen.add(bucket);
+    }
+
+    const list = Array.from(seen).sort((a, b) => {
+      if (a === '0-9') return -1;
+      if (b === '0-9') return 1;
+      const aLat = /^[A-Z]$/.test(a);
+      const bLat = /^[A-Z]$/.test(b);
+      if (aLat && !bLat) return -1;
+      if (!aLat && bLat) return 1;
+      return a.localeCompare(b, 'pt-BR');
+    });
+
+    initialsCache.set(modulePath, list);
+    return list;
+  },
+
+  async getEntryListPage(modulePath, options = {}) {
+    const s = await resolveSchema(modulePath);
+    const limit = Math.max(20, Math.min(Math.trunc(Number(options.limit) || 150), 300));
+    const offset = Math.max(0, Math.trunc(Number(options.offset) || 0));
+    const search = normalizeLookupTerm(options.search || '');
+    const startsWith = String(options.startsWith || '').trim();
+    const includeTotal = options.includeTotal !== undefined ? Boolean(options.includeTotal) : offset === 0;
+
+    const whereParts = [`${s.qWord} IS NOT NULL`, `TRIM(${s.qWord}) <> ''`];
+    const whereParams = [];
+
+    if (startsWith) {
+      const sw = buildStartsWithFilter(s, startsWith);
+      if (sw) {
+        whereParts.push(sw.sql);
+        whereParams.push(...sw.params);
+      }
+    }
+
+    if (search) {
+      const searchClauses = [`${s.qWord} LIKE ? COLLATE NOCASE`];
+      const searchParams = [`%${search}%`];
+
+      const candidates = buildLookupCandidates(search);
+      for (let i = 1; i < candidates.length; i++) {
+        const cand = candidates[i];
+        if (!cand || cand.toLowerCase() === search.toLowerCase()) continue;
+        searchClauses.push(`${s.qWord} LIKE ? COLLATE NOCASE`);
+        searchParams.push(`%${cand}%`);
+      }
+
+      if (s.qAlt) {
+        searchClauses.push(`${s.qAlt} LIKE ? COLLATE NOCASE`);
+        searchParams.push(`%${search}%`);
+      }
+
+      whereParts.push(`(${searchClauses.join(' OR ')})`);
+      whereParams.push(...searchParams);
+    }
+
+    const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+    const selectCols = s.qAlt
+      ? `${s.qWord} AS word, ${s.qAlt} AS altWords`
+      : `${s.qWord} AS word`;
+
+    let orderSql;
+    const queryParams = [...whereParams];
+    if (search) {
+      orderSql =
+        `ORDER BY CASE WHEN ${s.qWord} = ? COLLATE NOCASE THEN 0 ` +
+        `WHEN ${s.qWord} LIKE ? COLLATE NOCASE THEN 1 ELSE 2 END, ` +
+        `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC`;
+      queryParams.push(search, `${search}%`);
+    } else {
+      orderSql = `ORDER BY ${s.qWord} COLLATE NOCASE ASC`;
+    }
+
+    const fetchLimit = limit + 1;
+    const listRes = await nativeBridge.queryModule(
+      modulePath,
+      `SELECT ${selectCols} FROM ${s.qTable} ${whereSql} ${orderSql} LIMIT ${fetchLimit} OFFSET ${offset}`,
+      queryParams
+    );
+
+    const rows = Array.isArray(listRes && listRes.rows) ? listRes.rows : [];
+    const hasMore = rows.length > limit;
+    const sliced = hasMore ? rows.slice(0, limit) : rows;
+    const items = sliced
+      .map((r) => ({
+        word: String(getRowField(r, 'word') || '').trim(),
+        altWords: s.qAlt ? String(getRowField(r, 'altwords') || '').trim() : ''
+      }))
+      .filter((it) => Boolean(it.word));
+
+    let total = null;
+    if (includeTotal) {
+      const cntRes = await nativeBridge.queryModule(
+        modulePath,
+        `SELECT COUNT(*) AS total FROM ${s.qTable} ${whereSql}`,
+        whereParams
+      );
+      const cntRow = cntRes && Array.isArray(cntRes.rows) ? cntRes.rows[0] : null;
+      total = Number(getRowField(cntRow, 'total')) || 0;
+    }
+
+    return { items, total, hasMore };
+  },
+
+  async getEntryList(modulePath, options = {}) {
+    const page = await this.getEntryListPage(modulePath, {
+      limit: options.limit,
+      offset: options.offset,
+      search: options.prefix || options.search || '',
+      startsWith: options.startsWith || '',
+      includeTotal: false
+    });
+    return page.items.map((it) => it.word);
   },
 
   // Consulta rápida (LIMIT 1 sem ler coluna data) para filtrar quais dicionários possuem o termo
@@ -595,7 +758,6 @@ export const myswordDictionaryAdapter = {
     const isStrongCode = /^[GH]\s*0*\d+[a-z]?$/i.test(clean);
     const isLouwNida = /^\d{1,2}\.\d{1,3}$/.test(clean);
 
-    // 1. Correspondência exata em word (cobre variações de Strong e sem acentos)
     const placeholders = candidates.map(() => '?').join(', ');
     const exactRes = await nativeBridge.queryModule(
       modulePath,
@@ -609,7 +771,6 @@ export const myswordDictionaryAdapter = {
       if (w) return { word: w, matchType: 'exact' };
     }
 
-    // 2. Correspondência exata em sinônimos (alt_words, quando o dicionário possuir)
     if (s.qAlt) {
       const altRes = await nativeBridge.queryModule(
         modulePath,
@@ -627,13 +788,11 @@ export const myswordDictionaryAdapter = {
       }
     }
 
-    // 3. Para Strong ou Louw-Nida, evita falso positivo em títulos parciais (ex.: H430 casando H4300)
     if (!isStrongCode && !isLouwNida) {
       const noAccents = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const hasAltSpell = Boolean(noAccents && noAccents.toLowerCase() !== clean.toLowerCase());
 
       if (clean.length <= 2) {
-        // Termos curtos (ex.: Jó, fé): apenas início de verbete delimitado
         const shortRes = await nativeBridge.queryModule(
           modulePath,
           `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
@@ -649,7 +808,6 @@ export const myswordDictionaryAdapter = {
           if (w) return { word: w, matchType: 'prefix' };
         }
       } else {
-        // Prefixo em word
         const prefSql = hasAltSpell
           ? `SELECT ${s.qWord} AS word FROM ${s.qTable} WHERE ${s.qWord} LIKE ? COLLATE NOCASE OR ${s.qWord} LIKE ? COLLATE NOCASE ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`
           : `SELECT ${s.qWord} AS word FROM ${s.qTable} WHERE ${s.qWord} LIKE ? COLLATE NOCASE ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`;
@@ -661,7 +819,6 @@ export const myswordDictionaryAdapter = {
           if (w) return { word: w, matchType: 'prefix' };
         }
 
-        // Contém no título (ou em alt_words)
         const titleClauses = [`${s.qWord} LIKE ? COLLATE NOCASE`];
         const titleParams = [`%${clean}%`];
         if (hasAltSpell) {
@@ -687,7 +844,6 @@ export const myswordDictionaryAdapter = {
       }
     }
 
-    // 4. Opcional: busca no corpo da definição somente quando "No texto" estiver ativo
     if (searchBody && clean.length >= 2) {
       const bodyTerm = isStrongCode ? candidates[0] : clean;
       const bodyRes = await nativeBridge.queryModule(
@@ -809,7 +965,7 @@ export const myswordDictionaryAdapter = {
     const clean = normalizeLookupTerm(rawQuery);
     if (!clean) return [];
 
-    const limit = Math.max(1, Math.min(Number(options.limit) || 40, 120));
+    const limit = Math.max(1, Math.min(Math.trunc(Number(options.limit) || 40), 120));
     const searchBody = Boolean(options.searchBody);
     const candidates = buildLookupCandidates(clean);
     const results = [];
@@ -839,15 +995,15 @@ export const myswordDictionaryAdapter = {
         ? `(${s.qWord} LIKE ? COLLATE NOCASE OR ${s.qAlt} LIKE ? COLLATE NOCASE)`
         : `${s.qWord} LIKE ? COLLATE NOCASE`;
       const params = s.qAlt
-        ? [`%${clean}%`, `%${clean}%`, `${clean}%`, limit]
-        : [`%${clean}%`, `${clean}%`, limit];
+        ? [`%${clean}%`, `%${clean}%`, `${clean}%`]
+        : [`%${clean}%`, `${clean}%`];
 
       const titleRes = await nativeBridge.queryModule(
         modulePath,
         `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
           `WHERE ${whereClause} ` +
           `ORDER BY CASE WHEN ${s.qWord} LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END, ` +
-          `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ?`,
+          `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ${limit}`,
         params
       );
       for (const row of (titleRes && titleRes.rows) || []) {
@@ -866,12 +1022,13 @@ export const myswordDictionaryAdapter = {
 
     if (searchBody && results.length < limit && clean.length >= 2) {
       const remaining = limit - results.length;
+      const bodyLimit = remaining + 10;
       const bodyRes = await nativeBridge.queryModule(
         modulePath,
         `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
           `WHERE ${s.qData} LIKE ? COLLATE NOCASE ` +
-          `ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT ?`,
-        [`%${clean}%`, remaining + 10]
+          `ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT ${bodyLimit}`,
+        [`%${clean}%`]
       );
       for (const row of (bodyRes && bodyRes.rows) || []) {
         if (results.length >= limit) break;
