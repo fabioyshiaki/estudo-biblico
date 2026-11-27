@@ -8,6 +8,7 @@ import {
 } from './bible-refs.js';
 import { clearCompanionCache } from '../formats/companion-dicts.js';
 import { clearMediaIndexCache } from '../formats/media-cache.js';
+import { clearDictionaryLookupCache } from '../formats/dictionary-lookup.js';
 import {
   initReaderView,
   renderReader,
@@ -277,7 +278,6 @@ async function findBibleContainingBook(bookId) {
   const allBibles = store.getBibles().filter((m) => !active || m.path !== active.path);
   const isOT = bookId <= 39;
 
-  // Prioriza Bíblias que não parecem restritas ao testamento oposto
   const prioritized = allBibles.slice().sort((a, b) => {
     const aSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(a.abbr || '');
     const bSkip = isOT ? /^nt\b/i.test(b.abbr || '') : /^at\b/i.test(b.abbr || '');
@@ -325,7 +325,6 @@ async function navigateToBibleReference({ book, chapter, verse }, options = {}) 
   const targetChapter = chapters.includes(chapter) ? chapter : chapters[0];
   const targetVerse = Number(verse) || 1;
 
-  // Registra ponto de retorno no histórico de saltos
   if (options.recordHistory !== false) {
     if (store.getActiveMode() === 'dictionary') {
       const dState = getDictionaryViewState();
@@ -368,7 +367,6 @@ async function navigateToBibleReference({ book, chapter, verse }, options = {}) 
     );
   }
 
-  // Mesmo módulo e mesmo capítulo já na tela: rola imediatamente sem recarregar SQLite
   if (isAlreadyBible && sameModule && sameChapter) {
     if (!highlightAndScrollToVerse(targetVerse, true)) {
       await renderReader({ resetScroll: false, scrollToVerse: targetVerse });
@@ -569,7 +567,27 @@ function bindShellEvents() {
   });
 
   document.getElementById('btn-dict-picker')?.addEventListener('click', () => {
+    const dState = getDictionaryViewState();
     openDictionaryPickerModal({
+      filterTerm: dState.filterTerm || '',
+      searchBody: Boolean(dState.searchBody),
+      onSelectDictionary: (modulePath, { matchedWord = '', keepFilterTerm = false } = {}) => {
+        store.setActiveDictionary(modulePath, { silent: true });
+        if (matchedWord) {
+          setActiveDictionaryModule(modulePath, {
+            matchedWord,
+            keepFilterTerm,
+            pushHistory: true,
+            render: store.getActiveMode() === 'dictionary'
+          });
+        } else {
+          setActiveDictionaryModule(modulePath, {
+            keepTerm: false,
+            clearFilter: !keepFilterTerm,
+            render: store.getActiveMode() === 'dictionary'
+          });
+        }
+      },
       onOpenSources: () => openSettingsModal({ initialTab: 'sources', initialKind: 'dictionary' })
     });
   });
@@ -623,6 +641,7 @@ function bindStateEvents() {
   eventBus.on(EVENTS.SOURCES_UPDATED, () => {
     clearCompanionCache();
     clearMediaIndexCache();
+    clearDictionaryLookupCache();
     syncDictionariesFromStore();
     if (store.getActiveMode() === 'dictionary') {
       loadFirstOrCurrentEntry();
