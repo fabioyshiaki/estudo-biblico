@@ -362,7 +362,7 @@ export function formatMySwordScripture(rawText, options = {}) {
     };
   }
 
-  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS
+  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS / Bizantino Espanhol
   if (isShebanqBhsText(text)) {
     const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum);
     return {
@@ -374,7 +374,10 @@ export function formatMySwordScripture(rawText, options = {}) {
 
   // Módulos sintáticos OpenText.org (Open Greek New Testament Linguistic Annotations)
   if (isOpenTextLinguisticHtml(text)) {
-    const otHtml = formatOpenTextHtml(decodeCommonEntities(text));
+    const otHtml = formatOpenTextHtml(decodeCommonEntities(text), {
+      footnotes,
+      footnoteLabels
+    });
     if (otHtml) {
       return {
         html: restoreFootnotes(otHtml, footnoteLabels),
