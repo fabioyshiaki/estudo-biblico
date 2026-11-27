@@ -49,6 +49,7 @@ import {
   attachBibleSearchToLookupFab
 } from '../ui/bible-search-modal.js';
 import { openMapViewerModal } from '../ui/map-viewer-modal.js';
+import { openPhotoViewerModal } from '../ui/photo-viewer-modal.js';
 import {
   openLocationPickerModal,
   openFootnoteModal,
@@ -393,6 +394,20 @@ function openMapsDialog(markerInfo = null) {
   });
 }
 
+function openPhotosDialog({ markerInfo = null, initialPlace = null, initialQuery = '' } = {}) {
+  closeShellPopover();
+  openPhotoViewerModal({
+    markerInfo,
+    initialPlace,
+    initialQuery,
+    onDirectoryChanged: () => {
+      if (store.getActiveMode() === 'bible') {
+        renderReader({ resetScroll: false });
+      }
+    }
+  });
+}
+
 function openCommentaryPickerFrom(anchorEl = null) {
   const st = store.getState();
   const targetAnchor = anchorEl || document.getElementById('btn-cmt-picker');
@@ -616,7 +631,7 @@ async function findBibleContainingBook(bookId, preferredModulePath = '') {
 
   const prioritized = allBibles.slice().sort((a, b) => {
     const aSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(a.abbr || '');
-    const bSkip = isOT ? /^nt\b/i.test(b.abbr || '') : /^at\b/i.test(b.abbr || '');
+    const bSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(b.abbr || '');
     return Number(aSkip) - Number(bSkip);
   });
 
@@ -931,6 +946,7 @@ function bindShellEvents() {
         store.setActiveMode(mode);
       },
       onOpenMaps: () => openMapsDialog(),
+      onOpenPhotos: () => openPhotosDialog(),
       onOpenUnifiedSearch: (kind) => openUnifiedSearchDialog({ kind }),
       onOpenBibleSearch: () => openUnifiedSearchDialog({ kind: 'bible' }),
       onOpenDictTerms: () => {
@@ -1127,6 +1143,10 @@ function bindShellEvents() {
 
   document.getElementById('btn-open-maps')?.addEventListener('click', () => {
     openMapsDialog();
+  });
+
+  document.getElementById('btn-open-photos')?.addEventListener('click', () => {
+    openPhotosDialog();
   });
 }
 
