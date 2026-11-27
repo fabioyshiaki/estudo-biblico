@@ -1,7 +1,8 @@
 import {
   myswordDictionaryAdapter,
   normalizeLookupTerm,
-  buildLookupCandidates
+  buildLookupCandidates,
+  normalizeDictSearchOptions
 } from './mysword-dictionary.js';
 
 const TERM_PRESENCE_CACHE_LIMIT = 40;
@@ -87,12 +88,31 @@ export function clearDictionaryLookupCache() {
   termPresenceCache.clear();
 }
 
-function buildPresenceCacheKey(dictionaries, cleanTerm, searchBody) {
-  const sig = (Array.isArray(dictionaries) ? dictionaries : [])
+function selectTargetDictionaries(dictionaries, opts) {
+  const list = Array.isArray(dictionaries) ? dictionaries : [];
+  if (!opts.favoritesOnly) return list;
+  return list.filter((m) => Boolean(m && m.isFavorite));
+}
+
+function buildOptionsSignature(opts) {
+  return [
+    opts.matchMode,
+    opts.accentSensitive ? '1' : '0',
+    opts.caseSensitive ? '1' : '0',
+    opts.searchBody ? '1' : '0',
+    opts.searchAltWords ? '1' : '0',
+    opts.exactPhrase ? '1' : '0',
+    opts.favoritesOnly ? '1' : '0'
+  ].join('');
+}
+
+function buildPresenceCacheKey(targetDicts, cleanTerm, opts) {
+  const termKey = opts.caseSensitive ? cleanTerm : cleanTerm.toLowerCase();
+  const sig = targetDicts
     .map((m) => m.path)
     .sort()
     .join('|');
-  return `${cleanTerm.toLowerCase()}::${searchBody ? '1' : '0'}::${sig}`;
+  return `${termKey}::${buildOptionsSignature(opts)}::${sig}`;
 }
 
 function sortPresenceMatches(list, origOrderMap) {
@@ -114,13 +134,17 @@ function sortPresenceMatches(list, origOrderMap) {
 export function getCachedDictionariesWithTerm(dictionaries, rawTerm, options = {}) {
   const clean = normalizeLookupTerm(rawTerm);
   if (!clean) return null;
-  const searchBody = Boolean(options.searchBody);
-  const key = buildPresenceCacheKey(dictionaries, clean, searchBody);
+
+  const opts = normalizeDictSearchOptions(options);
+  const targets = selectTargetDictionaries(dictionaries, opts);
+  if (!targets.length) return [];
+
+  const key = buildPresenceCacheKey(targets, clean, opts);
   if (!termPresenceCache.has(key)) return null;
 
   const cached = termPresenceCache.get(key);
-  const byPath = new Map((Array.isArray(dictionaries) ? dictionaries : []).map((m) => [m.path, m]));
-  const origOrder = new Map((Array.isArray(dictionaries) ? dictionaries : []).map((m, idx) => [m.path, idx]));
+  const byPath = new Map(targets.map((m) => [m.path, m]));
+  const origOrder = new Map(targets.map((m, idx) => [m.path, idx]));
 
   const hydrated = cached
     .map((item) => {
@@ -257,24 +281,24 @@ async function runWithConcurrency(items, concurrency, workerFn, signal) {
 }
 
 export async function findDictionariesWithTerm(dictionaries, rawTerm, options = {}) {
-  const list = Array.isArray(dictionaries) ? dictionaries : [];
   const clean = normalizeLookupTerm(rawTerm);
-  if (!clean || !list.length) return [];
+  const opts = normalizeDictSearchOptions(options);
+  const targets = selectTargetDictionaries(dictionaries, opts);
+  if (!clean || !targets.length) return [];
 
-  const searchBody = Boolean(options.searchBody);
   const signal = options.signal || null;
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
 
-  const cached = getCachedDictionariesWithTerm(list, clean, { searchBody });
+  const cached = getCachedDictionariesWithTerm(dictionaries, clean, opts);
   if (cached) {
     if (onProgress && (!signal || !signal.aborted)) {
-      onProgress(list.length, list.length, cached);
+      onProgress(targets.length, targets.length, cached);
     }
     return cached;
   }
 
-  const origOrder = new Map(list.map((m, idx) => [m.path, idx]));
-  const ranked = rankDictionariesForQuery(list, clean, {
+  const origOrder = new Map(targets.map((m, idx) => [m.path, idx]));
+  const ranked = rankDictionariesForQuery(targets, clean, {
     activePath: options.activePath || '',
     moduleHint: options.moduleHint || ''
   });
@@ -291,7 +315,7 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
       let added = false;
 
       try {
-        const hit = await myswordDictionaryAdapter.findQuickMatch(mod.path, clean, { searchBody });
+        const hit = await myswordDictionaryAdapter.findQuickMatch(mod.path, clean, opts);
         if (hit && (!signal || !signal.aborted)) {
           matches.push({
             module: mod,
@@ -317,7 +341,7 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
   if (signal && signal.aborted) return [];
 
   const finalSorted = sortPresenceMatches(matches, origOrder);
-  const cacheKey = buildPresenceCacheKey(list, clean, searchBody);
+  const cacheKey = buildPresenceCacheKey(targets, clean, opts);
 
   if (termPresenceCache.size >= TERM_PRESENCE_CACHE_LIMIT) {
     const oldestKey = termPresenceCache.keys().next().value;
@@ -336,16 +360,19 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
 }
 
 export async function lookupExactAcrossDictionaries(dictionaries, rawTerm, options = {}) {
-  const candidates = buildLookupCandidates(rawTerm);
+  const opts = normalizeDictSearchOptions(options);
+  const candidates = buildLookupCandidates(rawTerm, { accentSensitive: opts.accentSensitive });
   if (!candidates.length) return null;
 
-  const ranked = rankDictionariesForQuery(dictionaries, rawTerm, options);
+  const targets = selectTargetDictionaries(dictionaries, opts);
+  const pool = targets.length ? targets : (Array.isArray(dictionaries) ? dictionaries : []);
+  const ranked = rankDictionariesForQuery(pool, rawTerm, options);
   const signal = options.signal || null;
 
   for (const mod of ranked) {
     if (signal && signal.aborted) return null;
     try {
-      const entry = await myswordDictionaryAdapter.getEntry(mod.path, rawTerm);
+      const entry = await myswordDictionaryAdapter.getEntry(mod.path, rawTerm, opts);
       if (entry) {
         return { module: mod, entry };
       }
@@ -360,10 +387,13 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
   const clean = normalizeLookupTerm(rawQuery);
   if (!clean) return [];
 
-  const ranked = rankDictionariesForQuery(dictionaries, clean, options);
+  const opts = normalizeDictSearchOptions(options);
+  const targets = selectTargetDictionaries(dictionaries, opts);
+  if (!targets.length) return [];
+
+  const ranked = rankDictionariesForQuery(targets, clean, options);
   const perDictLimit = Math.max(1, Math.min(Number(options.perDictLimit) || 3, 12));
   const maxTotal = Math.max(10, Math.min(Number(options.maxTotal) || 60, 150));
-  const searchBody = Boolean(options.searchBody);
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 4, 6));
   const signal = options.signal || null;
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
@@ -380,8 +410,8 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
 
       try {
         const hits = await myswordDictionaryAdapter.searchEntries(mod.path, clean, {
-          limit: perDictLimit,
-          searchBody
+          ...opts,
+          limit: perDictLimit
         });
         for (const hit of hits) {
           collected.push({
@@ -389,7 +419,8 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
             rankIdx,
             word: hit.word,
             matchType: hit.matchType,
-            snippet: hit.snippet
+            snippet: hit.snippet,
+            snippetHtml: hit.snippetHtml || ''
           });
         }
       } catch (err) {
