@@ -42,37 +42,14 @@ const INITIAL_ACCENT_GROUPS = {
   Y: ['Y', 'Ý', 'Ÿ', 'y', 'ý', 'ÿ']
 };
 
-const SQL_ACCENT_FOLD_MAP = [
-  ['á', 'a'], ['à', 'a'], ['â', 'a'], ['ã', 'a'], ['ä', 'a'], ['å', 'a'],
-  ['Á', 'a'], ['À', 'a'], ['Â', 'a'], ['Ã', 'a'], ['Ä', 'a'], ['Å', 'a'],
-  ['é', 'e'], ['è', 'e'], ['ê', 'e'], ['ë', 'e'],
-  ['É', 'e'], ['È', 'e'], ['Ê', 'e'], ['Ë', 'e'],
-  ['í', 'i'], ['ì', 'i'], ['î', 'i'], ['ï', 'i'],
-  ['Í', 'i'], ['Ì', 'i'], ['Î', 'i'], ['Ï', 'i'],
-  ['ó', 'o'], ['ò', 'o'], ['ô', 'o'], ['õ', 'o'], ['ö', 'o'],
-  ['Ó', 'o'], ['Ò', 'o'], ['Ô', 'o'], ['Õ', 'o'], ['Ö', 'o'],
-  ['ú', 'u'], ['ù', 'u'], ['û', 'u'], ['ü', 'u'],
-  ['Ú', 'u'], ['Ù', 'u'], ['Û', 'u'], ['Ü', 'u'],
-  ['ç', 'c'], ['Ç', 'c'], ['ñ', 'n'], ['Ñ', 'n'], ['ý', 'y'], ['Ý', 'y']
-];
+const VOWEL_SET = new Set(['a', 'e', 'i', 'o', 'u', 'y']);
 
-const SQL_ACCENT_CASE_MAP = [
-  ['Á', 'á'], ['À', 'à'], ['Â', 'â'], ['Ã', 'ã'], ['Ä', 'ä'],
-  ['É', 'é'], ['È', 'è'], ['Ê', 'ê'], ['Ë', 'ë'],
-  ['Í', 'í'], ['Ì', 'ì'], ['Î', 'î'], ['Ï', 'ï'],
-  ['Ó', 'ó'], ['Ò', 'ò'], ['Ô', 'ô'], ['Õ', 'õ'], ['Ö', 'ö'],
-  ['Ú', 'ú'], ['Ù', 'ù'], ['Û', 'û'], ['Ü', 'ü'],
-  ['Ç', 'ç'], ['Ñ', 'ñ'], ['Ý', 'ý']
-];
-
-const PT_SHORT_VARIANTS = {
-  a: ['a', 'á', 'à', 'â', 'ã'],
-  e: ['e', 'é', 'ê'],
-  i: ['i', 'í'],
-  o: ['o', 'ó', 'ô', 'õ'],
-  u: ['u', 'ú'],
-  c: ['c', 'ç'],
-  n: ['n', 'ñ']
+const VOWEL_VARIANTS = {
+  a: ['a', 'á', 'à', 'â', 'ã', 'Á', 'À', 'Â', 'Ã'],
+  e: ['e', 'é', 'ê', 'É', 'Ê'],
+  i: ['i', 'í', 'Í'],
+  o: ['o', 'ó', 'ô', 'õ', 'Ó', 'Ô', 'Õ'],
+  u: ['u', 'ú', 'ü', 'Ú']
 };
 
 const NAMED_ENTITIES = {
@@ -114,8 +91,19 @@ function escapeRegExp(str) {
   return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function escapeLike(str) {
+function escapeLikeChar(ch) {
+  if (ch === '%' || ch === '_' || ch === '\\') return `\\${ch}`;
+  return ch;
+}
+
+function escapeLikeStr(str) {
   return String(str || '').replace(/[\\%_]/g, '\\$&');
+}
+
+function buildLikeClause(colSql, needsEscape, useNoCase = true) {
+  const esc = needsEscape ? " ESCAPE '\\'" : '';
+  const col = useNoCase ? ' COLLATE NOCASE' : '';
+  return `${colSql} LIKE ?${esc}${col}`;
 }
 
 function decodeNumericEntities(str) {
@@ -263,23 +251,6 @@ function foldForMatch(str, opts) {
   return out;
 }
 
-function buildSqlFoldExpr(colExpr, accentSensitive) {
-  const map = accentSensitive ? SQL_ACCENT_CASE_MAP : SQL_ACCENT_FOLD_MAP;
-  let expr = `lower(${colExpr})`;
-  for (const [from, to] of map) {
-    expr = `replace(${expr}, '${from}', '${to}')`;
-  }
-  return expr;
-}
-
-function foldSqlParam(str, accentSensitive) {
-  let out = String(str || '').normalize('NFC');
-  if (!accentSensitive) {
-    out = out.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC');
-  }
-  return out.toLowerCase();
-}
-
 function splitSearchTokens(cleanQuery, opts) {
   if (opts.exactPhrase) return [cleanQuery];
   const parts = cleanQuery.split(/\s+/).filter(Boolean);
@@ -314,7 +285,6 @@ function matchEntryTitle(word, altWords, rawQuery, opts) {
   const foldedTokens = tokens.map((t) => foldForMatch(t, opts)).filter(Boolean);
   if (!foldedTokens.length) return null;
 
-  // 1. Correspondência exata de código Strong (ex.: H430 <-> H0430)
   if (isStrong) {
     const strongCands = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive })
       .map((c) => foldForMatch(c, opts));
@@ -328,13 +298,11 @@ function matchEntryTitle(word, altWords, rawQuery, opts) {
 
   const singleOrPhrase = foldedTokens.length === 1;
 
-  // 2. Testa no título principal (`word`)
   if (singleOrPhrase) {
     const needle = foldedTokens[0];
     if (foldedWord === needle) return 'exact';
 
     if (opts.matchMode === 'exact') {
-      // No modo exato, também aceita palavra inteira se o título tiver subtítulo separado por vírgula/parêntese
       const subParts = String(word || '').split(/[,;(/]+/).map((p) => foldForMatch(p, opts)).filter(Boolean);
       if (subParts.includes(needle)) return 'exact';
     } else if (opts.matchMode === 'startsWith') {
@@ -344,14 +312,12 @@ function matchEntryTitle(word, altWords, rawQuery, opts) {
       if (foldedWord.includes(needle)) return 'title';
     }
   } else {
-    // Múltiplas palavras (todas devem aparecer no título)
     const allMatch = foldedTokens.every((tok) => testTokenInText(foldedWord, tok, opts.matchMode, false));
     if (allMatch) {
       return foldedWord.startsWith(foldedTokens[0]) ? 'prefix' : 'title';
     }
   }
 
-  // 3. Testa nos sinônimos (`alt_words`), se habilitado
   if (opts.searchAltWords && altWords) {
     const altParts = String(altWords).split(/[,;]+/).map((p) => p.trim()).filter(Boolean);
     for (const part of altParts) {
@@ -392,164 +358,224 @@ function matchEntryBody(rawData, rawQuery, opts) {
   return foldedTokens.every((tok) => testTokenInText(foldedPlain, tok, opts.matchMode, false));
 }
 
-function expandShortAccentVariants(token, maxOut = 8) {
-  const base = token.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  let results = [''];
-  for (const ch of base) {
-    const opts = PT_SHORT_VARIANTS[ch] || [ch];
-    const next = [];
-    for (const prefix of results) {
-      for (const c of opts) {
-        next.push(prefix + c);
-        if (next.length >= maxOut) break;
-      }
-      if (next.length >= maxOut) break;
-    }
-    results = next;
+function buildTokenLikePatterns(rawToken, opts) {
+  const token = String(rawToken || '').normalize('NFC').trim();
+  if (!token) return { patterns: [], needsEscape: false };
+
+  const needsEscape = /[\\%_]/.test(token);
+
+  // 1. Código Strong -> testa variações com e sem zeros à esquerda
+  if (/^[GH]\s*0*\d+[a-z]?$/i.test(token)) {
+    const cands = buildLookupCandidates(token, { accentSensitive: opts.accentSensitive });
+    return {
+      patterns: cands.map((c) => (needsEscape ? escapeLikeStr(c) : c)),
+      needsEscape
+    };
   }
-  return results;
-}
 
-function buildBodyPreFilterSql(colSql, token, opts) {
-  const cleanTok = String(token || '').trim();
-  if (!cleanTok) return null;
-
-  // Se tiver acento ou for busca sensível a acento
+  // 2. Diferenciar acentos ATIVO
   if (opts.accentSensitive) {
     if (opts.caseSensitive) {
       return {
-        sql: `instr(${colSql}, ?) > 0`,
-        params: [cleanTok]
+        patterns: [needsEscape ? escapeLikeStr(token) : token],
+        needsEscape
       };
     }
+
+    // SQLite LIKE não ignora maiúscula/minúscula em letras não-ASCII (Á vs á): usa '_' nessas letras e filtra exato no JS
+    let pat = '';
+    let hasSolidAscii = false;
+    for (const ch of token) {
+      if (ch.charCodeAt(0) <= 127) {
+        if (/[A-Za-z0-9]/.test(ch)) hasSolidAscii = true;
+        pat += needsEscape ? escapeLikeChar(ch) : ch;
+      } else {
+        pat += '_';
+      }
+    }
+
+    if (hasSolidAscii) {
+      return { patterns: [pat], needsEscape };
+    }
+
     const variants = [];
     const addV = (v) => {
-      if (v && !variants.includes(v)) variants.push(v);
+      if (v && !variants.includes(v)) variants.push(needsEscape ? escapeLikeStr(v) : v);
     };
-    addV(cleanTok);
-    addV(cleanTok.toLowerCase());
-    addV(cleanTok.toUpperCase());
-    if (cleanTok.length > 1) {
-      addV(cleanTok.charAt(0).toUpperCase() + cleanTok.slice(1).toLowerCase());
+    addV(token);
+    addV(token.toLowerCase());
+    addV(token.toUpperCase());
+    if (token.length > 1) {
+      addV(token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
     }
+    return { patterns: variants, needsEscape };
+  }
+
+  // 3. Ignorar acentos em alfabetos não-latinos (grego, hebraico, siríaco)
+  const hasNonLatin = /[\u0370-\u03FF\u1F00-\u1FFF\u0590-\u05FF\u0700-\u074F]/.test(token);
+  if (hasNonLatin) {
+    const cands = buildLookupCandidates(token, { accentSensitive: false });
     return {
-      sql: `(${variants.map(() => `${colSql} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
-      params: variants.map((v) => `%${escapeLike(v)}%`)
+      patterns: cands.map((c) => (needsEscape ? escapeLikeStr(c) : c)),
+      needsEscape
     };
   }
 
-  // Sem diferenciar acentos: substitui letras acentuáveis por '_' quando há base suficiente
-  const stripped = cleanTok.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  let solidCount = 0;
-  let wildcardPat = '';
-  for (const ch of stripped) {
-    const lower = ch.toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(PT_SHORT_VARIANTS, lower)) {
-      wildcardPat += '_';
-    } else {
-      if (/[a-z0-9]/i.test(ch)) solidCount++;
-      wildcardPat += escapeLike(ch);
+  // 4. Ignorar acentos em alfabeto latino SEM usar replace() no SQL
+  const stripped = token.normalize('NFD').replace(RE_COMBINING_MARKS, '');
+  let solidOthers = 0;
+  let nonInitC = 0;
+  let nCount = 0;
+
+  for (let i = 0; i < stripped.length; i++) {
+    const lower = stripped[i].toLowerCase();
+    if (VOWEL_SET.has(lower)) continue;
+    if (lower === 'c' && i > 0) {
+      nonInitC++;
+      continue;
+    }
+    if (lower === 'n') {
+      nCount++;
+      continue;
+    }
+    if (/[a-z0-9]/i.test(lower)) {
+      solidOthers++;
     }
   }
 
-  if (solidCount >= 2 || (solidCount >= 1 && stripped.length >= 4)) {
-    return {
-      sql: `${colSql} LIKE ? ESCAPE '\\'`,
-      params: [`%${wildcardPat}%`]
-    };
+  // Caso comum: há consoantes/dígitos estáveis (ex.: "amor" -> "_m_r", "abraao" -> "_br___", "fe" -> "f_", "coracao" -> "c_r____")
+  if (solidOthers >= 1) {
+    let pat = '';
+    for (let i = 0; i < stripped.length; i++) {
+      const ch = stripped[i];
+      const lower = ch.toLowerCase();
+      if (VOWEL_SET.has(lower)) {
+        pat += '_';
+      } else if (lower === 'c' && i > 0) {
+        pat += '_';
+      } else if (lower === 'n' && solidOthers >= 2) {
+        pat += '_';
+      } else {
+        pat += needsEscape ? escapeLikeChar(ch) : ch;
+      }
+    }
+    return { patterns: [pat], needsEscape };
   }
 
-  // Palavras muito curtas ou só vogais (ex.: "fe", "jo", "pao"): usa variantes acentuadas comuns
-  const variants = expandShortAccentVariants(stripped, 8);
-  const allForms = [];
-  for (const v of variants) {
-    if (!allForms.includes(v)) allForms.push(v);
-    const cap = v.charAt(0).toUpperCase() + v.slice(1);
-    if (cap !== v && !allForms.includes(cap)) allForms.push(cap);
+  // Sem consoantes estáveis além de 'c' não-inicial (ex.: "acao" -> "_c__", "_ç__", "_Ç__")
+  if (nonInitC === 1 && nCount === 0) {
+    const parts = [];
+    for (const cVar of ['c', 'ç', 'Ç']) {
+      let pat = '';
+      for (let i = 0; i < stripped.length; i++) {
+        const ch = stripped[i];
+        const lower = ch.toLowerCase();
+        if (VOWEL_SET.has(lower)) pat += '_';
+        else if (lower === 'c' && i > 0) pat += cVar;
+        else pat += needsEscape ? escapeLikeChar(ch) : ch;
+      }
+      parts.push(pat);
+    }
+    return { patterns: parts, needsEscape };
   }
-  const capped = allForms.slice(0, 10);
+
+  // Sem consoantes estáveis além de 'n' (ex.: "ano" / "año")
+  if (nCount === 1 && nonInitC === 0) {
+    const parts = [];
+    for (const nVar of ['n', 'ñ', 'Ñ']) {
+      let pat = '';
+      for (let i = 0; i < stripped.length; i++) {
+        const ch = stripped[i];
+        const lower = ch.toLowerCase();
+        if (VOWEL_SET.has(lower)) pat += '_';
+        else if (lower === 'n') pat += nVar;
+        else pat += needsEscape ? escapeLikeChar(ch) : ch;
+      }
+      parts.push(pat);
+    }
+    return { patterns: parts, needsEscape };
+  }
+
+  // Palavras só com vogais (ex.: "eu", "ai", "oi", "aí"): gera base + variantes com 1 acento
+  const vowelForms = [];
+  const pushForm = (v) => {
+    const safe = needsEscape ? escapeLikeStr(v) : v;
+    if (safe && !vowelForms.includes(safe)) vowelForms.push(safe);
+  };
+  pushForm(stripped);
+  for (let i = 0; i < stripped.length && vowelForms.length < 12; i++) {
+    const lower = stripped[i].toLowerCase();
+    const vars = VOWEL_VARIANTS[lower];
+    if (!vars) continue;
+    for (const v of vars) {
+      if (vowelForms.length >= 12) break;
+      pushForm(stripped.slice(0, i) + v + stripped.slice(i + 1));
+    }
+  }
+  return { patterns: vowelForms, needsEscape };
+}
+
+function buildColumnFilterForTokens(colSql, tokens, opts, mode) {
+  const tokenClauses = [];
+  const params = [];
+  const isStrongSingle = tokens.length === 1 && /^[GH]\s*0*\d+[a-z]?$/i.test(tokens[0]);
+
+  for (const tok of tokens) {
+    const { patterns, needsEscape } = buildTokenLikePatterns(tok, opts);
+    if (!patterns.length) continue;
+
+    const subParts = [];
+    for (const pat of patterns) {
+      if (isStrongSingle && mode === 'exact') {
+        subParts.push(`${colSql} = ? COLLATE NOCASE`);
+        params.push(tok.indexOf('\\') >= 0 ? pat.replace(/\\([%_\\])/g, '$1') : pat);
+      } else if (tokens.length === 1 && mode === 'startsWith') {
+        subParts.push(buildLikeClause(colSql, needsEscape, true));
+        params.push(`${pat}%`);
+      } else {
+        subParts.push(buildLikeClause(colSql, needsEscape, true));
+        params.push(`%${pat}%`);
+      }
+    }
+
+    if (subParts.length === 1) {
+      tokenClauses.push(subParts[0]);
+    } else if (subParts.length > 1) {
+      tokenClauses.push(`(${subParts.join(' OR ')})`);
+    }
+  }
+
+  if (!tokenClauses.length) return null;
   return {
-    sql: `(${capped.map(() => `${colSql} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
-    params: capped.map((v) => `%${escapeLike(v)}%`)
+    sql: tokenClauses.length === 1 ? tokenClauses[0] : `(${tokenClauses.join(' AND ')})`,
+    params
   };
 }
 
 function buildTitlePreFilterSql(schema, rawQuery, opts) {
   const clean = normalizeLookupTerm(rawQuery);
   const tokens = splitSearchTokens(clean, opts);
-  const hasNonLatin = /[\u0370-\u03FF\u1F00-\u1FFF\u0590-\u05FF\u0700-\u074F]/.test(clean);
+  const wordFilter = buildColumnFilterForTokens(schema.qWord, tokens, opts, opts.matchMode);
 
-  // Para grego/hebraico/siríaco sem acentos, faz busca direta com candidatos sem marcas
-  if (hasNonLatin) {
-    const cands = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive });
-    const cols = [schema.qWord];
-    if (opts.searchAltWords && schema.qAlt) cols.push(schema.qAlt);
-    const clauses = [];
-    const params = [];
-
-    for (const col of cols) {
-      for (const c of cands) {
-        const esc = escapeLike(c);
-        const pat = opts.matchMode === 'startsWith' ? `${esc}%` : `%${esc}%`;
-        clauses.push(`${col} LIKE ? ESCAPE '\\' COLLATE NOCASE`);
-        params.push(pat);
-      }
-    }
-    return { sql: `(${clauses.join(' OR ')})`, params };
+  if (!opts.searchAltWords || !schema.qAlt) {
+    return wordFilter || { sql: '1=0', params: [] };
   }
 
-  const wordExpr = buildSqlFoldExpr(schema.qWord, opts.accentSensitive);
-  const altExpr = opts.searchAltWords && schema.qAlt
-    ? buildSqlFoldExpr(schema.qAlt, opts.accentSensitive)
-    : '';
+  // Em alt_words os sinônimos vêm separados por vírgula, então usa pré-filtro 'contains' e valida exato no JS
+  const altFilter = buildColumnFilterForTokens(schema.qAlt, tokens, opts, 'contains');
+  if (!wordFilter) return altFilter || { sql: '1=0', params: [] };
+  if (!altFilter) return wordFilter;
 
-  const buildTokenGroup = (colExpr) => {
-    const subClauses = [];
-    const subParams = [];
-
-    if (tokens.length === 1 && /^[GH]\s*0*\d+[a-z]?$/i.test(tokens[0])) {
-      const strongCands = buildLookupCandidates(tokens[0], { accentSensitive: opts.accentSensitive })
-        .map((c) => foldSqlParam(c, opts.accentSensitive));
-      const parts = [];
-      for (const sc of strongCands) {
-        const esc = escapeLike(sc);
-        if (opts.matchMode === 'exact') {
-          parts.push(`${colExpr} = ?`);
-          subParams.push(sc);
-        } else if (opts.matchMode === 'startsWith') {
-          parts.push(`${colExpr} LIKE ? ESCAPE '\\'`);
-          subParams.push(`${esc}%`);
-        } else {
-          parts.push(`${colExpr} LIKE ? ESCAPE '\\'`);
-          subParams.push(`%${esc}%`);
-        }
-      }
-      return { sql: `(${parts.join(' OR ')})`, params: subParams };
-    }
-
-    for (const tok of tokens) {
-      const foldedTok = foldSqlParam(tok, opts.accentSensitive);
-      const esc = escapeLike(foldedTok);
-      if (tokens.length === 1 && opts.matchMode === 'startsWith') {
-        subClauses.push(`${colExpr} LIKE ? ESCAPE '\\'`);
-        subParams.push(`${esc}%`);
-      } else {
-        subClauses.push(`${colExpr} LIKE ? ESCAPE '\\'`);
-        subParams.push(`%${esc}%`);
-      }
-    }
-
-    return { sql: `(${subClauses.join(' AND ')})`, params: subParams };
-  };
-
-  const wordGrp = buildTokenGroup(wordExpr);
-  if (!altExpr) return wordGrp;
-
-  const altGrp = buildTokenGroup(altExpr);
   return {
-    sql: `(${wordGrp.sql} OR ${altGrp.sql})`,
-    params: [...wordGrp.params, ...altGrp.params]
+    sql: `(${wordFilter.sql} OR ${altFilter.sql})`,
+    params: [...wordFilter.params, ...altFilter.params]
   };
+}
+
+function buildBodyPreFilterSql(schema, rawQuery, opts) {
+  const clean = normalizeLookupTerm(rawQuery);
+  const tokens = splitSearchTokens(clean, opts);
+  return buildColumnFilterForTokens(schema.qData, tokens, opts, 'contains');
 }
 
 function findMatchRangeInPlain(plain, rawQuery, opts) {
@@ -561,7 +587,6 @@ function findMatchRangeInPlain(plain, rawQuery, opts) {
   const targetFold = foldForMatch(firstTok, opts);
   if (!targetFold) return null;
 
-  // Mapeia posição no texto normalizado de volta para o índice real em `plain`
   const normChars = [];
   const origIdxMap = [];
   for (let i = 0; i < plain.length; i++) {
@@ -580,7 +605,7 @@ function findMatchRangeInPlain(plain, rawQuery, opts) {
 
   const foldedJoined = normChars.join('');
   let matchPos = -1;
-  let matchLen = targetFold.length;
+  const matchLen = targetFold.length;
 
   if (opts.matchMode === 'exact') {
     const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(targetFold)}(?![\\p{L}\\p{N}])`, 'u');
@@ -1092,14 +1117,16 @@ export const myswordDictionaryAdapter = {
       }
     }
 
+    const searchOpts = {
+      matchMode: 'contains',
+      accentSensitive,
+      caseSensitive: false,
+      searchAltWords: true,
+      exactPhrase: false
+    };
+
     if (search) {
-      const filter = buildTitlePreFilterSql(s, search, {
-        matchMode: 'contains',
-        accentSensitive,
-        caseSensitive: false,
-        searchAltWords: true,
-        exactPhrase: false
-      });
+      const filter = buildTitlePreFilterSql(s, search, searchOpts);
       whereParts.push(filter.sql);
       whereParams.push(...filter.params);
     }
@@ -1109,25 +1136,50 @@ export const myswordDictionaryAdapter = {
       ? `${s.qWord} AS word, ${s.qAlt} AS altWords`
       : `${s.qWord} AS word`;
 
-    let orderSql;
-    const queryParams = [...whereParams];
+    const orderSql = search
+      ? `ORDER BY LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC`
+      : `ORDER BY ${s.qWord} COLLATE NOCASE ASC`;
+
     if (search) {
-      const foldedExpr = buildSqlFoldExpr(s.qWord, accentSensitive);
-      const foldedSearch = foldSqlParam(search, accentSensitive);
-      orderSql =
-        `ORDER BY CASE WHEN ${foldedExpr} = ? THEN 0 ` +
-        `WHEN ${foldedExpr} LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, ` +
-        `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC`;
-      queryParams.push(foldedSearch, `${escapeLike(foldedSearch)}%`);
-    } else {
-      orderSql = `ORDER BY ${s.qWord} COLLATE NOCASE ASC`;
+      // Filtra exato no JS para eliminar falsos positivos dos curingas de acento
+      const listRes = await nativeBridge.queryModule(
+        modulePath,
+        `SELECT ${selectCols} FROM ${s.qTable} ${whereSql} ${orderSql} LIMIT 400`,
+        whereParams
+      );
+      const rows = Array.isArray(listRes && listRes.rows) ? listRes.rows : [];
+      const matched = [];
+
+      for (const r of rows) {
+        const w = String(getRowField(r, 'word') || '').trim();
+        const alt = s.qAlt ? String(getRowField(r, 'altwords') || '').trim() : '';
+        if (!w) continue;
+        const kind = matchEntryTitle(w, alt, search, searchOpts);
+        if (!kind) continue;
+        matched.push({ word: w, altWords: alt, kind });
+      }
+
+      const pri = { exact: 0, prefix: 1, title: 2 };
+      matched.sort((a, b) => {
+        const d = (pri[a.kind] ?? 9) - (pri[b.kind] ?? 9);
+        if (d !== 0) return d;
+        if (a.word.length !== b.word.length) return a.word.length - b.word.length;
+        return a.word.localeCompare(b.word, 'pt-BR');
+      });
+
+      const sliced = matched.slice(offset, offset + limit).map(({ word, altWords }) => ({ word, altWords }));
+      return {
+        items: sliced,
+        total: matched.length,
+        hasMore: offset + limit < matched.length
+      };
     }
 
     const fetchLimit = limit + 1;
     const listRes = await nativeBridge.queryModule(
       modulePath,
       `SELECT ${selectCols} FROM ${s.qTable} ${whereSql} ${orderSql} LIMIT ${fetchLimit} OFFSET ${offset}`,
-      queryParams
+      whereParams
     );
 
     const rows = Array.isArray(listRes && listRes.rows) ? listRes.rows : [];
@@ -1165,7 +1217,6 @@ export const myswordDictionaryAdapter = {
     return page.items.map((it) => it.word);
   },
 
-  // Consulta rápida respeitando todas as opções de busca (usada no filtro de dicionários)
   async findQuickMatch(modulePath, rawQuery, rawOptions = {}) {
     const s = await resolveSchema(modulePath);
     const clean = normalizeLookupTerm(rawQuery);
@@ -1175,12 +1226,10 @@ export const myswordDictionaryAdapter = {
     const isStrongCode = /^[GH]\s*0*\d+[a-z]?$/i.test(clean);
     const isLouwNida = /^\d{1,2}\.\d{1,3}$/.test(clean);
 
-    // Para Strong ou Louw-Nida no filtro de dicionários, força correspondência exata no título
     const titleOpts = (isStrongCode || isLouwNida)
       ? { ...opts, matchMode: 'exact' }
       : opts;
 
-    // 1. Verifica títulos (e sinônimos, se ativo) sem ler a coluna `data`
     const selectTitle = s.qAlt
       ? `${s.qWord} AS word, ${s.qAlt} AS altWords`
       : `${s.qWord} AS word`;
@@ -1188,7 +1237,7 @@ export const myswordDictionaryAdapter = {
     const pre = buildTitlePreFilterSql(s, clean, titleOpts);
     const titleRes = await nativeBridge.queryModule(
       modulePath,
-      `SELECT ${selectTitle} FROM ${s.qTable} WHERE ${pre.sql} ORDER BY LENGTH(${s.qWord}) ASC LIMIT 24`,
+      `SELECT ${selectTitle} FROM ${s.qTable} WHERE ${pre.sql} ORDER BY LENGTH(${s.qWord}) ASC LIMIT 40`,
       pre.params
     );
 
@@ -1211,26 +1260,14 @@ export const myswordDictionaryAdapter = {
 
     if (bestTitleHit) return bestTitleHit;
 
-    // 2. Opcional: verifica no corpo da definição somente quando "No texto" estiver ativo
     if (opts.searchBody && clean.length >= 2) {
-      const tokens = splitSearchTokens(clean, opts);
-      const tokenClauses = [];
-      const tokenParams = [];
-
-      for (const tok of tokens) {
-        const bf = buildBodyPreFilterSql(s.qData, tok, opts);
-        if (bf) {
-          tokenClauses.push(bf.sql);
-          tokenParams.push(...bf.params);
-        }
-      }
-
-      if (tokenClauses.length) {
+      const bf = buildBodyPreFilterSql(s, clean, opts);
+      if (bf) {
         const bodyRes = await nativeBridge.queryModule(
           modulePath,
           `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-            `WHERE ${tokenClauses.join(' AND ')} ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT 12`,
-          tokenParams
+            `WHERE ${bf.sql} ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT 16`,
+          bf.params
         );
         for (const row of (bodyRes && bodyRes.rows) || []) {
           const w = String(getRowField(row, 'word') || '').trim();
@@ -1260,7 +1297,6 @@ export const myswordDictionaryAdapter = {
       ? `${s.qWord} AS word, ${s.qData} AS data, ${s.qAlt} AS altWords`
       : `${s.qWord} AS word, ${s.qData} AS data`;
 
-    // 1. Tenta correspondência direta rápida por candidatos
     const candidates = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive });
     const placeholders = candidates.map(() => '?').join(', ');
     const directRes = await nativeBridge.queryModule(
@@ -1279,12 +1315,11 @@ export const myswordDictionaryAdapter = {
       }
     }
 
-    // 2. Se não achou na busca direta (ex.: "abraao" -> "Abraão" ou sinônimo), usa busca dobrada por acento
     if (!chosenRow) {
       const pre = buildTitlePreFilterSql(s, clean, opts);
       const foldRes = await nativeBridge.queryModule(
         modulePath,
-        `SELECT ${selectCols} FROM ${s.qTable} WHERE ${pre.sql} ORDER BY LENGTH(${s.qWord}) ASC LIMIT 20`,
+        `SELECT ${selectCols} FROM ${s.qTable} WHERE ${pre.sql} ORDER BY LENGTH(${s.qWord}) ASC LIMIT 40`,
         pre.params
       );
       for (const row of (foldRes && foldRes.rows) || []) {
@@ -1384,19 +1419,14 @@ export const myswordDictionaryAdapter = {
       ? `${s.qWord} AS word, ${s.qData} AS data, ${s.qAlt} AS altWords`
       : `${s.qWord} AS word, ${s.qData} AS data`;
 
-    // 1. Busca em títulos e sinônimos com validação Unicode exata
     const pre = buildTitlePreFilterSql(s, clean, opts);
-    const fetchCap = Math.min(240, Math.max(limit * 3, 60));
-    const foldedExpr = buildSqlFoldExpr(s.qWord, opts.accentSensitive);
-    const firstTokenFolded = foldSqlParam(splitSearchTokens(clean, opts)[0] || clean, opts.accentSensitive);
+    const fetchCap = Math.min(320, Math.max(limit * 4, 80));
 
     const titleRes = await nativeBridge.queryModule(
       modulePath,
       `SELECT ${selectCols} FROM ${s.qTable} WHERE ${pre.sql} ` +
-        `ORDER BY CASE WHEN ${foldedExpr} = ? THEN 0 ` +
-        `WHEN ${foldedExpr} LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, ` +
-        `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ${fetchCap}`,
-      [...pre.params, firstTokenFolded, `${escapeLike(firstTokenFolded)}%`]
+        `ORDER BY LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ${fetchCap}`,
+      pre.params
     );
 
     const titleMatches = [];
@@ -1433,29 +1463,18 @@ export const myswordDictionaryAdapter = {
       results.push(item);
     }
 
-    // 2. Busca no corpo das definições (ignorando tags HTML), se "No texto" estiver ativo
     if (opts.searchBody && results.length < limit && clean.length >= 2) {
       const remaining = limit - results.length;
       const bodyFetchCap = Math.min(200, Math.max(remaining * 4, 48));
-      const tokens = splitSearchTokens(clean, opts);
-      const tokenClauses = [];
-      const tokenParams = [];
+      const bf = buildBodyPreFilterSql(s, clean, opts);
 
-      for (const tok of tokens) {
-        const bf = buildBodyPreFilterSql(s.qData, tok, opts);
-        if (bf) {
-          tokenClauses.push(bf.sql);
-          tokenParams.push(...bf.params);
-        }
-      }
-
-      if (tokenClauses.length) {
+      if (bf) {
         const bodyRes = await nativeBridge.queryModule(
           modulePath,
           `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-            `WHERE ${tokenClauses.join(' AND ')} ` +
+            `WHERE ${bf.sql} ` +
             `ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT ${bodyFetchCap}`,
-          tokenParams
+          bf.params
         );
 
         for (const row of (bodyRes && bodyRes.rows) || []) {
