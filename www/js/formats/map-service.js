@@ -1,10 +1,51 @@
 import { appLogger } from '../core/logger.js';
 import {
   detectLocationsInVerse,
-  getPeriodQueriesForBook
+  getPeriodQueriesForBook,
+  estimateBoundsForMapTitle
 } from './map-gazetteer.js';
 
 const PREF_ACTIVE_ATLAS_KEY = 'estudo_biblico_active_map_module_v1';
+const PREF_MAP_UI_KEY = 'estudo_biblico_map_ui_prefs_v2';
+
+export const BASE_MAP_LAYERS = [
+  {
+    id: 'osm',
+    name: 'OpenStreetMap',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 18
+  },
+  {
+    id: 'voyager',
+    name: 'Carto Claro',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    subdomains: 'abcd',
+    maxZoom: 19
+  },
+  {
+    id: 'satellite',
+    name: 'Satélite (Esri)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 18
+  },
+  {
+    id: 'topo',
+    name: 'Relevo (Esri)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+    maxZoom: 12
+  },
+  {
+    id: 'offline',
+    name: 'Sem mapa base (Offline)',
+    url: '',
+    attribution: 'Modo Offline',
+    maxZoom: 18
+  }
+];
 
 let cachedModules = null;
 let cachedDirPath = '';
@@ -55,6 +96,42 @@ export function setSavedActiveMapModulePath(modulePath) {
   } catch (err) {
     // Ignora caso localStorage esteja indisponível
   }
+}
+
+export function getSavedMapUiPrefs() {
+  const defaults = {
+    baseLayerId: 'osm',
+    overlayOpacity: 0.78,
+    overlayVisible: true,
+    showAllPins: false
+  };
+  try {
+    const raw = window.localStorage.getItem(PREF_MAP_UI_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    const op = Number(parsed && parsed.overlayOpacity);
+    const baseLayerId = BASE_MAP_LAYERS.some((l) => l.id === (parsed && parsed.baseLayerId))
+      ? parsed.baseLayerId
+      : defaults.baseLayerId;
+    return {
+      baseLayerId,
+      overlayOpacity: Number.isFinite(op) ? Math.max(0, Math.min(1, op)) : defaults.overlayOpacity,
+      overlayVisible: parsed && typeof parsed.overlayVisible === 'boolean' ? parsed.overlayVisible : defaults.overlayVisible,
+      showAllPins: Boolean(parsed && parsed.showAllPins)
+    };
+  } catch (err) {
+    return defaults;
+  }
+}
+
+export function saveMapUiPrefs(partial = {}) {
+  const next = { ...getSavedMapUiPrefs(), ...partial };
+  try {
+    window.localStorage.setItem(PREF_MAP_UI_KEY, JSON.stringify(next));
+  } catch (err) {
+    // Ignora erro de persistência
+  }
+  return next;
 }
 
 export async function getMapDirectory() {
@@ -129,6 +206,47 @@ export async function getMapModuleIndex(modulePath) {
   }
 }
 
+export function isValidGeoBounds(bounds) {
+  if (!bounds || typeof bounds !== 'object') return false;
+  const s = Number(bounds.south);
+  const w = Number(bounds.west);
+  const n = Number(bounds.north);
+  const e = Number(bounds.east);
+  if (![s, w, n, e].every(Number.isFinite)) return false;
+  if (s < -90 || n > 90 || w < -180 || e > 180) return false;
+  return (n - s) > 0.0005 && (e - w) > 0.0005;
+}
+
+export function isPointInBounds(lat, lng, bounds) {
+  if (!isValidGeoBounds(bounds)) return false;
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
+  return la >= bounds.south && la <= bounds.north && ln >= bounds.west && ln <= bounds.east;
+}
+
+export function resolveEntryBounds(entryOrItem) {
+  if (entryOrItem && isValidGeoBounds(entryOrItem.bounds)) {
+    return {
+      south: Number(entryOrItem.bounds.south),
+      west: Number(entryOrItem.bounds.west),
+      north: Number(entryOrItem.bounds.north),
+      east: Number(entryOrItem.bounds.east),
+      exact: true,
+      estimated: false
+    };
+  }
+  const est = estimateBoundsForMapTitle(entryOrItem && (entryOrItem.title || entryOrItem.id || ''));
+  return {
+    south: est.south,
+    west: est.west,
+    north: est.north,
+    east: est.east,
+    exact: false,
+    estimated: true
+  };
+}
+
 export async function getMapEntry({ modulePath, id = '', rowid = -1, title = '' }) {
   const plugin = getMapPlugin();
   if (!plugin || !modulePath) return null;
@@ -147,13 +265,16 @@ export async function getMapEntry({ modulePath, id = '', rowid = -1, title = '' 
     url: convertLocalFileToSrc(img.filePath)
   }));
 
+  const resolvedBounds = resolveEntryBounds(entry);
+
   return {
     ...entry,
-    images
+    images,
+    resolvedBounds
   };
 }
 
-export async function searchMaps(query, { modulePath = '', limit = 15 } = {}) {
+export async function searchMaps(query, { modulePath = '', limit = 20 } = {}) {
   const plugin = getMapPlugin();
   const clean = String(query || '').trim();
   if (!plugin || !clean) return [];
@@ -178,36 +299,34 @@ function normalizeAscii(str) {
     .toLowerCase();
 }
 
-function isTocTitle(title) {
+export function isTocTitle(title) {
   const norm = normalizeAscii(title);
   return norm.includes('indice dos mapas') || norm === 'table of contents' || norm === 'contents';
 }
 
 /**
  * Carrega todos os marcadores de localização/mapa de um capítulo bíblico.
- * Combina os vínculos nativos (tabela mapverse) com as localizações detectadas no texto dos versículos.
- * Retorna Map<verseNum, { verse, nativeMaps, locations }>
+ * Mantém os pinos de localizações bíblicas ativos mesmo sem módulos externos instalados,
+ * e mescla vínculos exatos da tabela `mapverse` quando houver atlas com essa tabela.
  */
 export async function loadMapMarkersForChapter(book, chapter, verses = []) {
   const resultMap = new Map();
   const plugin = getMapPlugin();
-  if (!plugin) return resultMap;
-
-  const { modules } = await listMapModules();
-  if (!modules.length) return resultMap;
-
   const cacheKey = `${book}:${chapter}`;
   let nativeByVerse = chapterNativeCache.get(cacheKey);
 
   if (!nativeByVerse) {
     nativeByVerse = {};
-    const hasAnyMapVerse = modules.some((m) => Boolean(m && m.hasMapVerse));
-    if (hasAnyMapVerse) {
-      try {
-        const res = await plugin.getChapterMapMarkers({ book: Number(book), chapter: Number(chapter) });
-        nativeByVerse = (res && res.verses && typeof res.verses === 'object') ? res.verses : {};
-      } catch (err) {
-        appLogger.warn('MAP_CHAPTER', `Erro ao consultar mapverse para ${book}:${chapter}`, err);
+    if (plugin) {
+      const { modules } = await listMapModules();
+      const hasAnyMapVerse = modules.some((m) => Boolean(m && m.hasMapVerse));
+      if (hasAnyMapVerse) {
+        try {
+          const res = await plugin.getChapterMapMarkers({ book: Number(book), chapter: Number(chapter) });
+          nativeByVerse = (res && res.verses && typeof res.verses === 'object') ? res.verses : {};
+        } catch (err) {
+          appLogger.warn('MAP_CHAPTER', `Erro ao consultar mapverse para ${book}:${chapter}`, err);
+        }
       }
     }
     chapterNativeCache.set(cacheKey, nativeByVerse);
@@ -271,8 +390,9 @@ export function buildVerseMapPinHtml(verseNum, markerInfo) {
 }
 
 /**
- * Resolve a lista ordenada de mapas recomendados para um versículo/localização,
- * combinando resultados exatos de mapverse com o melhor encaixe nos índices de todos os atlas instalados.
+ * Retorna os mapas de imagem sobreponíveis recomendados para um versículo ou local.
+ * Prioriza: (1) vínculo exato `mapverse`, (2) cobertura geográfica real via tabela `map`,
+ * (3) correspondência de nome/período nos títulos dos atlas.
  */
 export async function resolveMapsForMarker(markerInfo) {
   const { modules } = await listMapModules();
@@ -283,18 +403,18 @@ export async function resolveMapsForMarker(markerInfo) {
 
   const pushCandidate = (item, score) => {
     const key = `${item.modulePath}::${item.rowid || item.id || item.title}`;
-    if (seenKey.has(key)) return;
+    const existing = seenKey.has(key);
+    if (existing) return;
     seenKey.add(key);
     scored.push({ ...item, score });
   };
 
-  // 1. Prioridade máxima: vínculos exatos de mapverse
   for (const nm of (markerInfo && markerInfo.nativeMaps) || []) {
-    pushCandidate(nm, 100);
+    pushCandidate(nm, 120);
   }
 
-  // 2. Correspondência inteligente nos títulos dos índices de todos os atlas instalados
   const locations = (markerInfo && markerInfo.locations) || [];
+  const primaryLoc = locations[0] || null;
   const locQueries = [];
   for (const loc of locations) {
     locQueries.push(loc.name);
@@ -302,7 +422,7 @@ export async function resolveMapsForMarker(markerInfo) {
       if (!locQueries.includes(q)) locQueries.push(q);
     }
   }
-  const periodQueries = markerInfo
+  const periodQueries = markerInfo && markerInfo.book
     ? getPeriodQueriesForBook(markerInfo.book, markerInfo.chapter)
     : [];
 
@@ -314,15 +434,27 @@ export async function resolveMapsForMarker(markerInfo) {
 
     for (const item of indexItems) {
       if (!item.title || isTocTitle(item.title)) continue;
-      const hay = normalizeAscii(`${item.title} ${item.tags || ''}`);
+      if (item.hasImage === false) continue;
 
+      const hay = normalizeAscii(`${item.title} ${item.tags || ''}`);
       let score = 0;
       let matchedReason = '';
+
+      // Pontuação geográfica real quando o módulo possui tabela `map` com bounds
+      if (primaryLoc && isValidGeoBounds(item.bounds)) {
+        if (isPointInBounds(primaryLoc.lat, primaryLoc.lng, item.bounds)) {
+          const span = Math.abs(item.bounds.north - item.bounds.south) * Math.abs(item.bounds.east - item.bounds.west);
+          // Prefere mapas com cobertura mais focada na região, mas mantém mapas amplos na lista
+          const focusBonus = span < 20 ? 30 : (span < 180 ? 20 : 12);
+          score += 65 + focusBonus;
+          matchedReason = `Cobre ${primaryLoc.name}`;
+        }
+      }
 
       for (let i = 0; i < locQueries.length; i++) {
         const needle = normalizeAscii(locQueries[i]);
         if (needle.length >= 3 && hay.includes(needle)) {
-          score += Math.max(12, 42 - i * 2);
+          score += Math.max(12, 40 - i * 2);
           if (!matchedReason) matchedReason = locQueries[i];
         }
       }
@@ -330,7 +462,7 @@ export async function resolveMapsForMarker(markerInfo) {
       for (let i = 0; i < periodQueries.length; i++) {
         const needle = normalizeAscii(periodQueries[i]);
         if (needle.length >= 3 && hay.includes(needle)) {
-          score += Math.max(6, 22 - i * 2);
+          score += Math.max(6, 20 - i * 2);
           if (!matchedReason) matchedReason = periodQueries[i];
         }
       }
@@ -342,6 +474,8 @@ export async function resolveMapsForMarker(markerInfo) {
           title: item.title,
           modulePath: mod.path,
           moduleTitle: mod.title || mod.name || mod.fileName,
+          hasExactBounds: isValidGeoBounds(item.bounds),
+          bounds: item.bounds || null,
           sourceType: matchedReason ? 'location' : 'period',
           matchedReason
         }, score + modBonus);
@@ -350,13 +484,27 @@ export async function resolveMapsForMarker(markerInfo) {
   }));
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 18);
+  return scored.slice(0, 22);
+}
+
+/**
+ * Busca sobreposições de mapa recomendadas para uma única localização geográfica.
+ */
+export async function resolveOverlaysForPlace(place) {
+  if (!place) return [];
+  return resolveMapsForMarker({
+    book: 0,
+    chapter: 0,
+    verse: 0,
+    nativeMaps: [],
+    locations: [place]
+  });
 }
 
 /**
  * Interpreta links internos do HTML de mapas MySword:
- * - #d2&popup=2 -> rowid = 2 (usado no atlas.bok.mybible)
- * - #j Título do Mapa -> title = "Título do Mapa" (usado no atlas.bok.mybible e Rumsey)
+ * - #d2&popup=2 -> rowid = 2
+ * - #j Título do Mapa -> title = "Título do Mapa"
  */
 export function parseInternalMapHref(rawHref) {
   const href = String(rawHref || '').trim();
