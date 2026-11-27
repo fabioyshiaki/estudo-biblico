@@ -6,6 +6,8 @@ import {
   initGlobalBibleRefs,
   updateBibleBackButton
 } from './bible-refs.js';
+import { clearCompanionCache } from '../formats/companion-dicts.js';
+import { clearMediaIndexCache } from '../formats/media-cache.js';
 import {
   initReaderView,
   renderReader,
@@ -33,6 +35,7 @@ import {
   openDictionaryPickerModal,
   openLocationPickerModal,
   openFootnoteModal,
+  openModalShell,
   closeModal
 } from '../ui/nav-modal.js';
 import { openSettingsModal } from '../ui/sources-modal.js';
@@ -44,6 +47,14 @@ let suppressModeAutoLoad = false;
 let suppressModuleAutoLoad = false;
 let suppressLocationAutoLoad = false;
 const jumpHistory = [];
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 function applyVisualPrefs(prefs) {
   const root = document.documentElement;
@@ -80,6 +91,29 @@ function syncJumpBackButton() {
       jumpHistory.length = 0;
     }
   });
+}
+
+function pushCurrentBibleJumpOrigin(originVerse = 0) {
+  const curState = store.getState();
+  const curBible = store.getActiveBible();
+  const scrollBox = document.getElementById('reader-scroll');
+  const verseNum = Number(originVerse) || 0;
+
+  jumpHistory.push({
+    mode: 'bible',
+    modulePath: curBible ? curBible.path : '',
+    book: curState.book,
+    chapter: curState.chapter,
+    verse: verseNum,
+    scrollTop: scrollBox ? scrollBox.scrollTop : 0,
+    label: verseNum
+      ? formatReference(curState.book, curState.chapter, verseNum)
+      : formatReference(curState.book, curState.chapter)
+  });
+
+  if (jumpHistory.length > 25) {
+    jumpHistory.shift();
+  }
 }
 
 function highlightAndScrollToVerse(verseNum, smooth = true) {
@@ -174,6 +208,63 @@ function syncDictionariesFromStore() {
   updateDictionaryChrome({ activeModule: activeDict });
 }
 
+async function openCompanionEntryInDictionary(modulePath, entryWord, originVerse = 0) {
+  rememberBibleScrollIfActive();
+  if (store.getActiveMode() === 'bible') {
+    pushCurrentBibleJumpOrigin(originVerse);
+  }
+
+  if (store.getActiveMode() !== 'dictionary') {
+    suppressModeAutoLoad = true;
+    store.setActiveMode('dictionary');
+    suppressModeAutoLoad = false;
+  }
+
+  syncModeChrome();
+  await openDictionaryEntry(entryWord, {
+    modulePath,
+    pushHistory: true,
+    fallbackAll: false
+  });
+  syncJumpBackButton();
+}
+
+function handleOpenCompanionGroup({ verseObj, group, refLabel }) {
+  if (!group || !group.module || !Array.isArray(group.entries) || !group.entries.length) {
+    return;
+  }
+
+  const originVerse = verseObj ? Number(verseObj.verse) || 0 : 0;
+
+  if (group.entries.length === 1) {
+    openCompanionEntryInDictionary(group.module.path, group.entries[0], originVerse);
+    return;
+  }
+
+  const modal = openModalShell({ title: `${group.label} — ${refLabel}` });
+  if (!modal || !modal.body) return;
+
+  modal.body.innerHTML =
+    '<div class="cmp-modal-list">' +
+      group.entries.map((entry, idx) => (
+        `<button type="button" class="cmp-modal-item" data-cmp-entry-idx="${idx}">` +
+          `<span>${escapeHtml(entry)}</span>` +
+          '<span class="cmp-modal-arrow">&rsaquo;</span>' +
+        '</button>'
+      )).join('') +
+    '</div>';
+
+  modal.body.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-cmp-entry-idx]');
+    if (!btn) return;
+    const idx = Number(btn.getAttribute('data-cmp-entry-idx'));
+    const chosen = group.entries[idx];
+    if (!chosen) return;
+    closeModal();
+    openCompanionEntryInDictionary(group.module.path, chosen, originVerse);
+  });
+}
+
 async function findBibleContainingBook(bookId) {
   const active = store.getActiveBible();
   if (active) {
@@ -245,10 +336,11 @@ async function navigateToBibleReference({ book, chapter, verse }, options = {}) 
         word,
         label: word ? `Dic: ${word}` : 'Dicionário'
       });
+      if (jumpHistory.length > 25) {
+        jumpHistory.shift();
+      }
     } else {
       const curState = store.getState();
-      const curBible = store.getActiveBible();
-      const scrollBox = document.getElementById('reader-scroll');
       const verseEl = options.sourceEl && options.sourceEl.closest
         ? options.sourceEl.closest('.verse-item')
         : null;
@@ -260,22 +352,8 @@ async function navigateToBibleReference({ book, chapter, verse }, options = {}) 
         originVerse === targetVerse;
 
       if (!sameTarget) {
-        jumpHistory.push({
-          mode: 'bible',
-          modulePath: curBible ? curBible.path : '',
-          book: curState.book,
-          chapter: curState.chapter,
-          verse: originVerse,
-          scrollTop: scrollBox ? scrollBox.scrollTop : 0,
-          label: originVerse
-            ? formatReference(curState.book, curState.chapter, originVerse)
-            : formatReference(curState.book, curState.chapter)
-        });
+        pushCurrentBibleJumpOrigin(originVerse);
       }
-    }
-
-    if (jumpHistory.length > 25) {
-      jumpHistory.shift();
     }
   }
 
@@ -543,6 +621,8 @@ function bindStateEvents() {
   });
 
   eventBus.on(EVENTS.SOURCES_UPDATED, () => {
+    clearCompanionCache();
+    clearMediaIndexCache();
     syncDictionariesFromStore();
     if (store.getActiveMode() === 'dictionary') {
       loadFirstOrCurrentEntry();
@@ -617,7 +697,8 @@ async function bootstrap() {
       await nativeBridge.requestStoragePermission();
       showToast('Conceda o acesso nas configurações do Android e retorne ao app.');
     },
-    onLookupDictionary: (term, opts) => openTermInDictionary(term, opts)
+    onLookupDictionary: (term, opts) => openTermInDictionary(term, opts),
+    onOpenCompanionGroup: (payload) => handleOpenCompanionGroup(payload)
   });
 
   initDictionaryView({
