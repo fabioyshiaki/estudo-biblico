@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="./css/modals.css" />
   <link rel="stylesheet" href="./css/modals-content.css" />
   <link rel="stylesheet" href="./css/mysword-layout.css" />
+  <link rel="stylesheet" href="./css/commentary.css" />
 </head>
 <body>
   <div class="app-shell" id="app-shell">
@@ -39,7 +40,7 @@
         </button>
 
         <button type="button" class="ms-ref-btn" id="btn-nav-picker" aria-label="Selecionar livro e capítulo" title="Ir para passagem">
-          <span id="label-active-ref">Gn 1</span>
+          <span id="label-active-ref">Gn 1:1</span>
         </button>
 
         <button type="button" class="ms-green-arrow" id="btn-top-next-chapter" aria-label="Próximo capítulo" title="Próximo capítulo">
@@ -53,6 +54,31 @@
         </button>
 
         <div class="ms-quick-tabs" id="quick-bibles-bar" aria-label="Bíblias rápidas"></div>
+      </div>
+
+      <!-- Barra superior no modo Comentários -->
+      <div class="ms-top-strip hidden" id="strip-commentary">
+        <button type="button" class="ms-green-arrow" id="btn-top-prev-cmt-sec" aria-label="Seção anterior do comentário" title="Seção anterior">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor" aria-hidden="true">
+            <path d="M5.5 12l6.5-6.5v4.2h6.5v4.6H12v4.2z"></path>
+          </svg>
+        </button>
+
+        <button type="button" class="ms-ref-btn" id="btn-cmt-nav-picker" aria-label="Selecionar livro e capítulo" title="Ir para passagem">
+          <span id="label-active-cmt-ref">Gn 1:1</span>
+        </button>
+
+        <button type="button" class="ms-green-arrow" id="btn-top-next-cmt-sec" aria-label="Próxima seção do comentário" title="Próxima seção">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor" aria-hidden="true">
+            <path d="M18.5 12L12 18.5v-4.2H5.5V9.7H12V5.5z"></path>
+          </svg>
+        </button>
+
+        <button type="button" class="ms-top-spinner" id="btn-cmt-picker" aria-label="Selecionar Comentário" title="Selecionar Comentário">
+          <span id="label-active-cmt">Comentário</span>
+        </button>
+
+        <div class="ms-quick-tabs" id="quick-cmts-bar" aria-label="Comentários rápidos"></div>
       </div>
 
       <!-- Barra superior no modo Dicionário -->
@@ -153,6 +179,10 @@
       <div class="ms-dock-group">
         <button type="button" class="ms-dock-view-btn is-active" id="btn-mode-bible" data-app-mode="bible" aria-label="Modo Bíblia" title="Bíblias">
           <span class="ms-res-badge ms-res-badge--bible">&#10013;</span>
+        </button>
+
+        <button type="button" class="ms-dock-view-btn" id="btn-mode-commentary" data-app-mode="commentary" aria-label="Modo Comentários" title="Comentários">
+          <span class="ms-res-badge ms-res-badge--commentary">C</span>
         </button>
 
         <button type="button" class="ms-dock-view-btn" id="btn-mode-dictionary" data-app-mode="dictionary" aria-label="Modo Dicionário" title="Dicionários">
