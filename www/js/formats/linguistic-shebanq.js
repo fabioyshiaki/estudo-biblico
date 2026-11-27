@@ -3,7 +3,9 @@ const RE_SHEBANQ = /\u300C(?:\s*\u300E[^\u300E\u300F]*\u300F)?\s*<w>[\s\S]*?<w>[
 const RE_INTERLINEAR_MN = /\u300C\s*<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_UW = /\u300C[\s\S]*?<(G|H)(?:\s+[^>]*)?>[\s\S]*?<\/\1>[\s\S]*?(?:<X(?:\s+[^>]*)?>|<Wn(?:\s+[^>]*)?>|<W[GH]\d|<WT)[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_VIMS = /\u300C[\s\S]*?<wt>[\s\S]*?(?:<X>|<E1>|<E2>)[\s\S]*?\u300D/i;
+const RE_INTERLINEAR_TORTOISE = /\u3014[\s\S]*?<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>[\s\S]*?\u3015/i;
 const RE_RECORD = /\u300C([\s\S]*?)\u300D/g;
+const RE_TORTOISE_RECORD = /\u3014([\s\S]*?)\u3015/g;
 const RE_TOKEN_OR_VARIANT = /<V(\d+)>([\s\S]*?)(?:<\/V\1>|<\/v\1>|<v\1>)(?:\s*<NB\d*>([\s\S]*?)(?:<\/NB\d*>|<\/Nb\d*>|<Nb\d*>|<nb\d*>))?|\u300C([\s\S]*?)\u300D/g;
 const RE_BRACKET_MARKER = /^<([^<>]+)>$/;
 const RE_BHSE_LEX = /<(S1H|S2H|BDB|TWOT|GES)\.?([^<>]+)>/gi;
@@ -19,7 +21,11 @@ function escapeHtml(str) {
 }
 
 function cleanText(str) {
-  return String(str || '').replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(str || '')
+    .replace(/¶/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function extractTagContent(str, tagName) {
@@ -46,7 +52,8 @@ export function isShebanqBhsText(str) {
     RE_SHEBANQ.test(s) ||
     RE_INTERLINEAR_MN.test(s) ||
     RE_INTERLINEAR_UW.test(s) ||
-    RE_INTERLINEAR_VIMS.test(s)
+    RE_INTERLINEAR_VIMS.test(s) ||
+    RE_INTERLINEAR_TORTOISE.test(s)
   );
 }
 
@@ -142,7 +149,66 @@ function parseInterlinearMnRecord(inner) {
     morphs,
     translit,
     phonetic,
+    lemmaTranslit: '',
     hgkList,
+    gloss,
+    lemma,
+    extra: '',
+    freq: '',
+    sheCode: '',
+    bdbs: [],
+    twots: [],
+    ges: [],
+    endsWord: true
+  };
+}
+
+function parseInterlinearTortoiseRecord(inner) {
+  const surface = extractTagContent(inner, 'Mn') || extractTagContent(inner, 'G') || extractTagContent(inner, 'H');
+  const translit = extractTagContent(inner, 'Tr');
+  const wordNum = extractTagContent(inner, 'WN');
+  const phonetic = extractTagContent(inner, 'TF');
+  const lemma = extractTagContent(inner, 'Le');
+  const lemmaTranslit = extractTagContent(inner, 'Lt');
+  const gloss =
+    extractTagContent(inner, 'Esp') ||
+    extractTagContent(inner, 'Pt') ||
+    extractTagContent(inner, 'En');
+
+  const strongs = [];
+  RE_STRONG_TAG.lastIndex = 0;
+  let sm;
+  while ((sm = RE_STRONG_TAG.exec(inner)) !== null) {
+    const code = `${sm[1].toUpperCase()}${sm[2]}`;
+    if (code !== 'H0' && code !== 'G0') pushUnique(strongs, code);
+  }
+
+  const morphs = [];
+  RE_MORPH_TAG.lastIndex = 0;
+  let mm;
+  while ((mm = RE_MORPH_TAG.exec(inner)) !== null) {
+    const cleanMorph = cleanText(String(mm[1] || '').replace(/\s+l="[^"]*"/gi, ''));
+    if (cleanMorph) pushUnique(morphs, cleanMorph);
+  }
+
+  if (!surface && !lemma && !translit && !gloss) return null;
+
+  return {
+    mode: 'interlinear_tortoise',
+    wordId: wordNum,
+    wordNum,
+    twCat: '',
+    variantLevel: 0,
+    variantStart: false,
+    variantEnd: false,
+    variantSigla: '',
+    surfaceDisplay: surface || lemma,
+    strongs,
+    morphs,
+    translit,
+    phonetic,
+    lemmaTranslit,
+    hgkList: [],
     gloss,
     lemma,
     extra: '',
@@ -157,8 +223,8 @@ function parseInterlinearMnRecord(inner) {
 
 function parseInterlinearUwRecord(inner) {
   const surface = extractTagContent(inner, 'G') || extractTagContent(inner, 'H');
-  const punctBefore = extractTagContent(inner, 'PB').replace(/¶/g, '').trim();
-  const punctAfter = extractTagContent(inner, 'PF').replace(/¶/g, '').trim();
+  const punctBefore = extractTagContent(inner, 'PB');
+  const punctAfter = extractTagContent(inner, 'PF');
   const translit = extractTagContent(inner, 'T');
   const wordNum = extractTagContent(inner, 'Wn');
   const lemma = extractTagContent(inner, 'X');
@@ -201,6 +267,7 @@ function parseInterlinearUwRecord(inner) {
     morphs,
     translit,
     phonetic: '',
+    lemmaTranslit: '',
     hgkList: [],
     gloss,
     lemma,
@@ -263,6 +330,7 @@ function parseInterlinearVimsRecord(inner, variantMeta = null) {
     morphs,
     translit,
     phonetic: '',
+    lemmaTranslit: '',
     hgkList: [],
     gloss,
     lemma,
@@ -331,6 +399,7 @@ function parseShebanqRecord(inner, variantMeta = null) {
       variantSigla: '',
       translit,
       phonetic: '',
+      lemmaTranslit: '',
       gloss,
       extra: '',
       lemma: lemma || '',
@@ -379,6 +448,7 @@ function parseShebanqRecord(inner, variantMeta = null) {
     variantSigla: '',
     translit,
     phonetic: '',
+    lemmaTranslit: '',
     gloss,
     extra,
     lemma,
@@ -424,7 +494,7 @@ function renderLexRow(items, cls, dataAttr) {
   return `<div class="shb-lex-row" dir="ltr">${chips}</div>`;
 }
 
-function renderMorpheme(item, mnCols, uwCols) {
+function renderMorpheme(item, mnCols, uwCols, torCols) {
   const origDir = RE_HEBREW.test(item.surfaceDisplay) ? 'rtl' : 'ltr';
   const wnHtml = item.wordNum
     ? `<sub class="shb-wn">${escapeHtml(item.wordNum)}</sub>`
@@ -450,6 +520,61 @@ function renderMorpheme(item, mnCols, uwCols) {
     item.twCat ? `data-tw-cat="${escapeHtml(item.twCat)}"` : '',
     item.variantLevel ? `data-variant="${item.variantLevel}"` : ''
   ].filter(Boolean).join(' ');
+
+  // Layout alinhado para Interlinear Bizantino Grego-Espanhol (〔<Tr><Mn><WN><TF><WG><Le><Lt><WT><Esp>〕)
+  if (item.mode === 'interlinear_tortoise') {
+    const parts = [origHtml];
+
+    if (torCols.hasTranslit) {
+      parts.push(
+        item.translit
+          ? `<span class="shb-translit" dir="ltr">${escapeHtml(item.translit)}</span>`
+          : '<span class="shb-translit is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+
+    if (torCols.hasPhonetic) {
+      parts.push(
+        item.phonetic
+          ? `<span class="shb-tf" dir="ltr">${escapeHtml(item.phonetic)}</span>`
+          : '<span class="shb-tf is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+
+    if (torCols.hasLemma) {
+      const lemmaDir = RE_HEBREW.test(item.lemma) ? 'rtl' : 'ltr';
+      parts.push(
+        item.lemma
+          ? `<span class="shb-lemma" dir="${lemmaDir}">${escapeHtml(item.lemma)}</span>`
+          : '<span class="shb-lemma is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+
+    if (torCols.hasLemmaTranslit) {
+      parts.push(
+        item.lemmaTranslit
+          ? `<span class="shb-lt" dir="ltr">${escapeHtml(item.lemmaTranslit)}</span>`
+          : '<span class="shb-lt is-empty" dir="ltr">&nbsp;</span>'
+      );
+    }
+
+    if (torCols.hasStrong || torCols.hasMorph) {
+      const lexRows = [];
+      if (torCols.hasStrong) {
+        lexRows.push(renderLexRow(item.strongs, 'v-strong shb-tag--strong', 'strong'));
+      }
+      if (torCols.hasMorph) {
+        lexRows.push(renderLexRow(item.morphs, 'v-morph shb-tag--morph', 'morph'));
+      }
+      parts.push(`<div class="shb-lex-block">${lexRows.join('')}</div>`);
+    }
+
+    if (torCols.hasGloss) {
+      parts.push(renderGloss(item.gloss, 'shb-uw-tw'));
+    }
+
+    return `<div class="shb-morph is-tor"${attrs ? ` ${attrs}` : ''}>${parts.join('')}</div>`;
+  }
 
   // Layout alinhado para UnfoldingWord Greek NT e Greek NT with Variants (VIMS)
   if (item.mode === 'interlinear_uw' || item.mode === 'interlinear_vims') {
@@ -600,7 +725,13 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
     }
   };
 
-  if (/<V\d+>/i.test(source)) {
+  if (RE_INTERLINEAR_TORTOISE.test(source) && !source.includes('\u300C')) {
+    RE_TORTOISE_RECORD.lastIndex = 0;
+    let m;
+    while ((m = RE_TORTOISE_RECORD.exec(source)) !== null) {
+      pushParsed(parseInterlinearTortoiseRecord(m[1] || ''));
+    }
+  } else if (/<V\d+>/i.test(source)) {
     RE_TOKEN_OR_VARIANT.lastIndex = 0;
     let m;
     while ((m = RE_TOKEN_OR_VARIANT.exec(source)) !== null) {
@@ -660,6 +791,16 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
     hasTw: false
   };
 
+  const torCols = {
+    hasTranslit: false,
+    hasPhonetic: false,
+    hasLemma: false,
+    hasLemmaTranslit: false,
+    hasStrong: false,
+    hasMorph: false,
+    hasGloss: false
+  };
+
   for (const grp of groups) {
     for (const it of grp) {
       if (it.mode === 'interlinear_mn') {
@@ -675,6 +816,14 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
         if (it.strongs && it.strongs.length) uwCols.hasStrong = true;
         if (it.morphs && it.morphs.length) uwCols.hasMorph = true;
         if (it.gloss) uwCols.hasTw = true;
+      } else if (it.mode === 'interlinear_tortoise') {
+        if (it.translit) torCols.hasTranslit = true;
+        if (it.phonetic) torCols.hasPhonetic = true;
+        if (it.lemma) torCols.hasLemma = true;
+        if (it.lemmaTranslit) torCols.hasLemmaTranslit = true;
+        if (it.strongs && it.strongs.length) torCols.hasStrong = true;
+        if (it.morphs && it.morphs.length) torCols.hasMorph = true;
+        if (it.gloss) torCols.hasGloss = true;
       }
     }
   }
@@ -690,7 +839,7 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
     const variantClass = isAltVariant ? ' is-variant' : '';
     cards.push(
       `<div class="shb-word${multiClass}${variantClass}" dir="${isRtlVerse ? 'rtl' : 'ltr'}">` +
-        grp.map((it) => renderMorpheme(it, mnCols, uwCols)).join('') +
+        grp.map((it) => renderMorpheme(it, mnCols, uwCols, torCols)).join('') +
       '</div>'
     );
   }
