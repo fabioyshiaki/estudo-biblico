@@ -144,7 +144,7 @@ const BREF_CSS = `
 }
 `;
 
-// Máximo de capítulos por livro (1..66), com margem para numerações LXX/hebraica (Jl 4, Sl 151, Et 16, Dn 14)
+// Máximo de capítulos por livro (1..66), com margem para numerações LXX/hebraica
 const MAX_CHAPTERS = [
   0,
   50, 40, 27, 36, 34, 24, 21, 4, 31, 24,
@@ -159,14 +159,14 @@ const MAX_CHAPTERS = [
 const SINGLE_CHAPTER_BOOKS = new Set([31, 57, 63, 64, 65]);
 
 const BOOK_ALIAS_MAP = {
-  gn: 1, gen: 1, genesis: 1,
+  gn: 1, ge: 1, gen: 1, genesis: 1,
   ex: 2, exo: 2, exod: 2, exodo: 2, exodus: 2,
   lv: 3, lev: 3, levitico: 3, leviticus: 3,
   nm: 4, num: 4, numeros: 4, numbers: 4,
   dt: 5, deu: 5, deut: 5, deuteronomio: 5, deuteronomy: 5,
   js: 6, jos: 6, josh: 6, josue: 6, joshua: 6,
   jz: 7, jdg: 7, judg: 7, jue: 7, juizes: 7, jueces: 7, judges: 7,
-  rt: 8, rth: 8, rut: 8, ruth: 8, rute: 8,
+  rt: 8, ru: 8, rth: 8, rut: 8, ruth: 8, rute: 8,
   '1sm': 9, '1sa': 9, '1sam': 9, '1samuel': 9,
   '2sm': 10, '2sa': 10, '2sam': 10, '2samuel': 10,
   '1rs': 11, '1re': 11, '1ki': 11, '1kgs': 11, '1reis': 11, '1reyes': 11, '1kings': 11,
@@ -181,17 +181,19 @@ const BOOK_ALIAS_MAP = {
   pv: 20, pr: 20, pro: 20, prov: 20, proverbios: 20, proverbs: 20,
   ec: 21, ecl: 21, ecc: 21, eccl: 21, eclesiastes: 21, ecclesiastes: 21,
   ct: 22, cnt: 22, cant: 22, sng: 22, son: 22, song: 22, cantico: 22, canticos: 22, cantares: 22,
+  canticodoscantares: 22, canticosdoscantares: 22, canticodoscantaresdesalomao: 22,
+  canticosdoscantaresdesalomao: 22, cantaresdesalomao: 22, songofsolomon: 22, songofsongs: 22,
   is: 23, isa: 23, isaias: 23, isaiah: 23,
   jr: 24, jer: 24, jeremias: 24, jeremiah: 24,
   lm: 25, lam: 25, lamentacoes: 25, lamentaciones: 25, lamentations: 25,
   ez: 26, eze: 26, ezek: 26, ezequiel: 26, ezekiel: 26,
   dn: 27, dan: 27, daniel: 27,
-  os: 28, ose: 28, hos: 28, oseias: 28, oseas: 28, hosea: 28,
+  os: 28, ose: 28, ho: 28, hos: 28, oseias: 28, oseas: 28, hosea: 28,
   jl: 29, joe: 29, joel: 29,
   am: 30, amo: 30, amos: 30,
   ob: 31, oba: 31, obad: 31, abd: 31, obadias: 31, abdias: 31, obadiah: 31,
   jn: 32, jon: 32, jonas: 32, jonah: 32,
-  mq: 33, miq: 33, mic: 33, miqueias: 33, miqueas: 33, micah: 33,
+  mq: 33, miq: 33, mi: 33, mic: 33, miqueias: 33, miqueas: 33, micah: 33,
   na: 34, nah: 34, naum: 34, nahum: 34,
   hc: 35, hab: 35, habacuque: 35, habacuc: 35, habakkuk: 35,
   sf: 36, sof: 36, zep: 36, zeph: 36, sofonias: 36, zephaniah: 36,
@@ -202,13 +204,13 @@ const BOOK_ALIAS_MAP = {
   mc: 41, mr: 41, mar: 41, mrk: 41, marcos: 41, mark: 41,
   lc: 42, lu: 42, luc: 42, luk: 42, lucas: 42, luke: 42,
   jo: 43, joh: 43, jhn: 43, joao: 43, juan: 43, john: 43,
-  at: 44, act: 44, acts: 44, hch: 44, atos: 44, hechos: 44,
+  at: 44, ac: 44, act: 44, acts: 44, hch: 44, atos: 44, atosdosapostolos: 44, hechos: 44,
   rm: 45, ro: 45, rom: 45, romanos: 45, romans: 45,
   '1co': 46, '1cor': 46, '1corintios': 46, '1corinthians': 46,
   '2co': 47, '2cor': 47, '2corintios': 47, '2corinthians': 47,
   gl: 48, ga: 48, gal: 48, galatas: 48, galatians: 48,
-  ef: 49, eph: 49, efesios: 49, ephesians: 49,
-  fp: 50, fil: 50, php: 50, phil: 50, filipenses: 50, philippians: 50,
+  ef: 49, ep: 49, eph: 49, efesios: 49, ephesians: 49,
+  fp: 50, fl: 50, fil: 50, ph: 50, php: 50, phil: 50, filipenses: 50, philippians: 50,
   cl: 51, col: 51, colossenses: 51, colosenses: 51, colossians: 51,
   '1ts': 52, '1tes': 52, '1th': 52, '1thess': 52, '1tessalonicenses': 52, '1tesalonicenses': 52, '1thessalonians': 52,
   '2ts': 53, '2tes': 53, '2th': 53, '2thess': 53, '2tessalonicenses': 53, '2tesalonicenses': 53, '2thessalonians': 53,
@@ -217,14 +219,14 @@ const BOOK_ALIAS_MAP = {
   tt: 56, tit: 56, tito: 56, titus: 56,
   fm: 57, flm: 57, phm: 57, phlm: 57, filemom: 57, filemon: 57, philemon: 57,
   hb: 58, heb: 58, hebreus: 58, hebreos: 58, hebrews: 58,
-  tg: 59, tgo: 59, jas: 59, jam: 59, stg: 59, tiago: 59, santiago: 59, james: 59,
+  tg: 59, tgo: 59, ja: 59, jas: 59, jam: 59, stg: 59, tiago: 59, santiago: 59, james: 59,
   '1pe': 60, '1pt': 60, '1pet': 60, '1pedro': 60, '1peter': 60,
   '2pe': 61, '2pt': 61, '2pet': 61, '2pedro': 61, '2peter': 61,
   '1jo': 62, '1jn': 62, '1joh': 62, '1joao': 62, '1juan': 62, '1john': 62,
   '2jo': 63, '2jn': 63, '2joh': 63, '2joao': 63, '2juan': 63, '2john': 63,
   '3jo': 64, '3jn': 64, '3joh': 64, '3joao': 64, '3juan': 64, '3john': 64,
   jd: 65, jud: 65, judas: 65, jude: 65,
-  ap: 66, apoc: 66, rev: 66, apocalipse: 66, apocalipsis: 66, revelation: 66
+  ap: 66, apoc: 66, re: 66, rev: 66, apocalipse: 66, apocalipsis: 66, revelation: 66
 };
 
 // Padrão para detecção segura de referências em texto corrido (exige inicial maiúscula para evitar falsos positivos)
@@ -235,7 +237,8 @@ const PLAIN_NUMBERED_BOOKS =
   'Thess|Tes|Cor|Chr|Sam|Kgs|Tim|Pet|Joh|Sm|Sa|Rs|Re|Ki|Cr|Ch|Co|Ts|Th|Tm|Ti|Pe|Pt|Jo|Jn))';
 
 const PLAIN_SINGLE_BOOKS =
-  '(?:Deuteron[oô]mio|Deuteronomy|Lamenta[cç][oõ]es|Lamentaciones|Lamentations|Eclesiast[eé]s|Ecclesiastes|' +
+  '(?:C[aâ]nticos?\\s+dos\\s+Cantares(?:\\s+de\\s+Salom[aã]o)?|Cantares\\s+de\\s+Salom[aã]o|Song\\s+of\\s+(?:Solomon|Songs)|Atos\\s+dos\\s+Ap[oó]stolos|' +
+  'Deuteron[oô]mio|Deuteronomy|Lamenta[cç][oõ]es|Lamentaciones|Lamentations|Eclesiast[eé]s|Ecclesiastes|' +
   'Apocalipse|Apocalipsis|Revelation|Colossenses|Colosenses|Colossians|Filipenses|Philippians|' +
   'Prov[eé]rbios|Proverbios|Proverbs|Lev[ií]tico|Leviticus|Ezequiel|Ezekiel|Jeremias|Jerem[ií]as|Jeremiah|' +
   'Habacuque|Habakkuk|Habacuc|Sofonias|Sofon[ií]as|Zephaniah|Zacarias|Zacar[ií]as|Zechariah|' +
@@ -247,14 +250,14 @@ const PLAIN_SINGLE_BOOKS =
   'Tiago|Santiago|James|Judas|Hechos|Atos|Acts|Jo[aã]o|Juan|John|Rute|Ruth|Joel|Am[oó]s|Naum|Nah[uú]m|Ageu|Hageo|Haggai|Tito|Titus|Mark|Luke|Jude|Ezra|Job|' +
   'Deut|Exod|Josh|Judg|Esth|Prov|Eccl|Cant|Ezek|Obad|Zeph|Zech|Matt|Phil|Phlm|Apoc|' +
   'G[eê]n|Gen|Exo|Lev|N[uú]m|Num|Deu|Jos|Jdg|Jue|Rth|Rut|Esd|Ezr|Neh|Est|Sal|Psa|Pro|Ecl|Ecc|Cnt|Sng|Son|Isa|Jer|Lam|Eze|Dan|Ose|Hos|Joe|Amo|Oba|Abd|Jon|Miq|Mic|Nah|Hab|Sof|Zep|Hag|Zac|Zec|Mal|Mat|Mar|Mrk|Luc|Luk|Joh|Jhn|Act|Hch|Rom|G[aá]l|Gal|Eph|Fil|Php|Col|Tit|Flm|Phm|Heb|Tgo|Jas|Jam|Stg|Jud|Rev|' +
-  'Gn|[EÊ]x|Lv|Nm|Dt|Js|Jz|Rt|Ed|Ne|Et|J[oó]|Sl|Ps|Pv|Pr|Ec|Ct|Is|Jr|Lm|Ez|Dn|Os|Jl|Am|Ob|Jn|Mq|Na|Hc|Sf|Ag|Zc|Ml|Mt|Mc|Mr|Lc|Lu|Jo|At|Rm|Ro|Gl|Ga|Ef|Fp|Cl|Tt|Fm|Hb|Tg|Jd|Ap)';
+  'Gn|Ge|[EÊ]x|Lv|Nm|Dt|Js|Jz|Rt|Ru|Ed|Ne|Et|J[oó]|Sl|Ps|Pv|Pr|Ec|Ct|Is|Jr|Lm|Ez|Dn|Os|Ho|Jl|Am|Ob|Jn|Mq|Mi|Na|Hc|Sf|Ag|Zc|Ml|Mt|Mc|Mr|Lc|Lu|Jo|At|Ac|Rm|Ro|Gl|Ga|Ef|Ep|Fp|Fl|Ph|Cl|Tt|Fm|Hb|Tg|Ja|Jd|Ap|Re)';
 
 const RE_PLAIN_BIBLE_REF = new RegExp(
-  `(${PLAIN_NUMBERED_BOOKS}|${PLAIN_SINGLE_BOOKS})\\.?\\s+(\\d{1,3}\\s*[:.]\\s*\\d{1,3}(?:\\s*[-–—]\\s*\\d{1,3}(?:\\s*[:.]\\s*\\d{1,3})?)?(?:\\s*,\\s*\\d{1,3}(?:\\s*[-–—]\\s*\\d{1,3})?)*)`,
+  `(${PLAIN_NUMBERED_BOOKS}|${PLAIN_SINGLE_BOOKS})(?:\\.\\s*|\\s+)(\\d{1,3}(?:\\s*[:.]\\s*|,)\\d{1,3}(?:\\s*[-–—]\\s*\\d{1,3}(?:(?:\\s*[:.]\\s*|,)\\d{1,3})?)?(?:\\s*,\\s*\\d{1,3}(?:\\s*[-–—]\\s*\\d{1,3})?)*)`,
   'g'
 );
 
-const RE_CONT_CH_VS = /^\s*;\s*(\d{1,3}\s*[:.]\s*\d{1,3}(?:\s*[-–—]\s*\d{1,3}(?:\s*[:.]\s*\d{1,3})?)?(?:\s*,\s*\d{1,3}(?:\s*[-–—]\s*\d{1,3})?)*)/;
+const RE_CONT_CH_VS = /^\s*;\s*(\d{1,3}(?:\s*[:.]\s*|,)\d{1,3}(?:\s*[-–—]\s*\d{1,3}(?:(?:\s*[:.]\s*|,)\d{1,3})?)?(?:\s*,\s*\d{1,3}(?:\s*[-–—]\s*\d{1,3})?)*)/;
 
 const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'SUMMARY', 'SVG'
@@ -351,31 +354,34 @@ function resolveBookId(rawBook, chapter = 1, verse = 1) {
   return id;
 }
 
-export function parseBibleReference(rawRef, options = {}) {
-  const allowChapterOnly = Boolean(options.allowChapterOnly);
-  const txt = String(rawRef || '')
-    .trim()
-    .replace(/^b\s*(?=\d)/i, '')
-    .replace(/^(?:cf\.?|ver|veja(?:\s+em)?|comp\.?|v\.?)\s+/i, '')
-    .replace(/^[+*%=#$><a-z.]*?(?=(?:[123]\s*[ºª°]?\s*|III\s+|II\s+|I\s+)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]|\d+\s*[.:]\s*\d+)/, '')
-    .trim();
-
-  if (!txt) return null;
-
-  // 1. Formato numérico MySword: 40.1.1 ou 40.1.1-5 ou 40:1:1
-  const numMatch = /^(\d{1,2})\s*[.:]\s*(\d{1,3})(?:\s*[.:]\s*(\d{1,3}))?/.exec(txt);
-  if (numMatch) {
-    const book = Number(numMatch[1]);
-    const chapter = Number(numMatch[2]);
-    const verse = Number(numMatch[3]) || 1;
-    if (book >= 1 && book <= 66 && chapter >= 1 && chapter <= (MAX_CHAPTERS[book] || 151)) {
+function parseNumericRef(txt) {
+  // Aceita 40.1.1, 40:1:1, 40_1_1, 40-1-1, 40.1, 40.1.0 ou "40 1 1"
+  const sepMatch = /^(\d{1,2})\s*[.:_,-]\s*(\d{1,3})(?:\s*[.:_,-]\s*(\d{1,3}))?/.exec(txt);
+  if (sepMatch) {
+    const book = Number(sepMatch[1]);
+    const chapter = Number(sepMatch[2]);
+    const verse = Number(sepMatch[3]) || 1;
+    if (book >= 1 && book <= 66 && chapter >= 1 && chapter <= (MAX_CHAPTERS[book] || 151) && verse <= 200) {
       return { book, chapter, verse };
     }
   }
 
-  // 2. Formato textual: Livro Cap:Vers (ou Livro Cap quando allowChapterOnly = true)
+  const spaceMatch = /^(\d{1,2})\s+(\d{1,3})\s+(\d{1,3})\b/.exec(txt);
+  if (spaceMatch) {
+    const book = Number(spaceMatch[1]);
+    const chapter = Number(spaceMatch[2]);
+    const verse = Number(spaceMatch[3]) || 1;
+    if (book >= 1 && book <= 66 && chapter >= 1 && chapter <= (MAX_CHAPTERS[book] || 151) && verse <= 200) {
+      return { book, chapter, verse };
+    }
+  }
+
+  return null;
+}
+
+function parseTextualRef(txt, allowChapterOnly) {
   const textMatch =
-    /^((?:[123]\s*[ºª°]?\s*|III\s+|II\s+|I\s+)?[A-Za-zÀ-ÿ]{2,22})\.?\s+(\d{1,3})(?:\s*[:.]\s*(\d{1,3}))?/.exec(txt);
+    /^((?:[123]\s*[ºª°]?\s*|III\s+|II\s+|I\s+)?[A-Za-zÀ-ÿ]{2,22}(?:\s+(?:dos|de|of)\s+[A-Za-zÀ-ÿ]{2,15})*)(?:\.\s*|\s+)(\d{1,3})(?:(?:\s*[:.]\s*|,)(\d{1,3}))?/.exec(txt);
   if (!textMatch) return null;
 
   const rawBook = textMatch[1];
@@ -384,7 +390,6 @@ export function parseBibleReference(rawRef, options = {}) {
   let verse = hasVerse ? Number(textMatch[3]) : 1;
 
   if (!hasVerse && !allowChapterOnly) {
-    // Livros de 1 capítulo permitem "Jd 14" ou "Fm 10" apenas se explicitamente permitido
     return null;
   }
 
@@ -405,6 +410,44 @@ export function parseBibleReference(rawRef, options = {}) {
   return { book, chapter, verse };
 }
 
+export function parseBibleReference(rawRef, options = {}) {
+  const allowChapterOnly = Boolean(options.allowChapterOnly);
+  const allowNumeric = options.allowNumeric !== false;
+
+  const base = String(rawRef || '')
+    .trim()
+    .replace(/^tw:\/\/bible[^?#]*[?#](?:[^#]*\bid=)?/i, '')
+    .replace(/^bible:(?:\/\/)?/i, '')
+    .replace(/^#/, '')
+    .replace(/^(?:cf\.?|ver|veja(?:\s+em)?|comp\.?|v\.?)\s+/i, '')
+    .replace(/^[+*%=#$><a-z.]*?(?=(?:[123]\s*[ºª°]?\s*|III\s+|II\s+|I\s+)?[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]|\d+\s*[.:_,-]\s*\d+)/, '')
+    .trim();
+
+  if (!base) return null;
+
+  // 1. Tenta diretamente (numérico ou textual)
+  if (allowNumeric) {
+    const numHit = parseNumericRef(base);
+    if (numHit) return numHit;
+  }
+
+  const textHit = parseTextualRef(base, allowChapterOnly);
+  if (textHit) return textHit;
+
+  // 2. Se começar com prefixo de protocolo MySword (b, v, rx), tenta o conteúdo seguinte
+  const stripped = base.replace(/^(?:rx|b|v)[\s.:_-]*/i, '').trim();
+  if (stripped && stripped !== base) {
+    if (allowNumeric) {
+      const numHit2 = parseNumericRef(stripped);
+      if (numHit2) return numHit2;
+    }
+    const textHit2 = parseTextualRef(stripped, allowChapterOnly);
+    if (textHit2) return textHit2;
+  }
+
+  return null;
+}
+
 function createRefButton(label, parsed, extraClass = '') {
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -416,7 +459,7 @@ function createRefButton(label, parsed, extraClass = '') {
 }
 
 function buildLinkedFragmentFromText(text, extraClass = '') {
-  if (!text || text.length < 4 || !/\d\s*[:.]\s*\d/.test(text)) {
+  if (!text || text.length < 4 || !/\d(?:\s*[:.]\s*|,)\d/.test(text)) {
     return null;
   }
 
@@ -434,7 +477,7 @@ function buildLinkedFragmentFromText(text, extraClass = '') {
     }
 
     const fullLabel = match[0];
-    const parsed = parseBibleReference(fullLabel, { allowChapterOnly: false });
+    const parsed = parseBibleReference(fullLabel, { allowChapterOnly: false, allowNumeric: false });
     if (!parsed) {
       continue;
     }
@@ -454,7 +497,7 @@ function buildLinkedFragmentFromText(text, extraClass = '') {
       if (!cont) break;
 
       const contLabel = cont[1];
-      const chVs = /^(\d{1,3})\s*[:.]\s*(\d{1,3})/.exec(contLabel);
+      const chVs = /^(\d{1,3})(?:\s*[:.]\s*|,)(\d{1,3})/.exec(contLabel);
       if (!chVs) break;
 
       const cCh = Number(chVs[1]);
@@ -509,7 +552,6 @@ function enhanceTaggedRefs(rootEl) {
     const rawText = (el.textContent || '').trim();
     const rawAttr = el.getAttribute('data-ref') || rawText;
 
-    // Se houver múltiplas referências separadas por ";" (ex.: Gn 21:3; 25:26; 29:35), transforma cada uma em botão próprio
     if (rawText.includes(';')) {
       const frag = buildLinkedFragmentFromText(rawText, 'bref-link--tag');
       if (frag) {
@@ -536,7 +578,7 @@ function enhancePlainTextRefs(rootEl) {
     {
       acceptNode(node) {
         const val = node.nodeValue;
-        if (!val || val.length < 4 || !/\d\s*[:.]\s*\d/.test(val)) {
+        if (!val || val.length < 4 || !/\d(?:\s*[:.]\s*|,)\d/.test(val)) {
           return NodeFilter.FILTER_REJECT;
         }
         let parent = node.parentElement;
@@ -619,7 +661,7 @@ export function initGlobalBibleRefs({ onNavigate, onInvalidRef } = {}) {
   initialized = true;
   ensureStyles();
 
-  // 1. Delegação global de cliques (fase de captura garante prioridade limpa em qualquer módulo presente ou futuro)
+  // 1. Delegação global de cliques (fase de captura garante prioridade em qualquer módulo)
   document.addEventListener(
     'click',
     (ev) => {
@@ -627,7 +669,6 @@ export function initGlobalBibleRefs({ onNavigate, onInvalidRef } = {}) {
         return;
       }
 
-      // Não dispara navegação se o usuário estiver selecionando texto para copiar/buscar
       const sel = window.getSelection ? window.getSelection() : null;
       if (sel && !sel.isCollapsed && sel.toString().trim()) {
         return;
@@ -638,14 +679,17 @@ export function initGlobalBibleRefs({ onNavigate, onInvalidRef } = {}) {
         : null;
       if (!refEl) return;
 
-      const raw = refEl.getAttribute('data-bible-ref')
+      const attrRaw = refEl.getAttribute('data-bible-ref')
         || refEl.getAttribute('data-ref')
-        || refEl.textContent
         || '';
+      const textRaw = (refEl.textContent || '').trim();
 
-      const parsed = parseBibleReference(raw, { allowChapterOnly: true });
+      const parsed =
+        parseBibleReference(attrRaw, { allowChapterOnly: true }) ||
+        parseBibleReference(textRaw, { allowChapterOnly: false, allowNumeric: false });
+
       if (!parsed) {
-        if (typeof onInvalidRef === 'function') onInvalidRef(raw);
+        if (typeof onInvalidRef === 'function') onInvalidRef(attrRaw || textRaw);
         return;
       }
 
@@ -654,7 +698,7 @@ export function initGlobalBibleRefs({ onNavigate, onInvalidRef } = {}) {
 
       if (typeof onNavigate === 'function') {
         onNavigate(parsed, {
-          rawLabel: (refEl.textContent || raw).trim(),
+          rawLabel: textRaw || attrRaw,
           sourceEl: refEl
         });
       }
@@ -662,7 +706,7 @@ export function initGlobalBibleRefs({ onNavigate, onInvalidRef } = {}) {
     true
   );
 
-  // 2. Observa automaticamente o leitor principal e os modais (cobre Bíblias, Dicionários, Notas e futuros módulos)
+  // 2. Observa automaticamente o leitor principal e os modais (Bíblias, Dicionários, Notas e futuros módulos)
   const pendingRoots = new Set();
   let rafScheduled = false;
 
