@@ -48,6 +48,14 @@ function formatCompactRef(bookId, chapter, verse = 0) {
   return vNum > 0 ? `${abbr} ${chapter}:${vNum}` : `${abbr} ${chapter}`;
 }
 
+function getPreferredBibleLabel(bible) {
+  if (!bible) return 'Sem Bíblia';
+  const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+  return sortBy === 'title'
+    ? (bible.title || bible.abbr || bible.fileName || 'Sem Bíblia')
+    : (bible.abbr || bible.title || bible.fileName || 'Sem Bíblia');
+}
+
 export async function loadBooksForBible(bible) {
   if (!bible) return [];
   const cached = store.getCachedBooks(bible.path);
@@ -217,15 +225,17 @@ function updateChrome(bible, bookId, chapter, navLimits = {}, verseFocus = 1) {
   const prevBtn = document.getElementById('btn-prev-chapter');
   const nextBtn = document.getElementById('btn-next-chapter');
 
+  const activeLabel = getPreferredBibleLabel(bible);
+
   if (bibleLabel) {
-    bibleLabel.textContent = bible ? (bible.title || bible.abbr) : 'Sem Bíblia';
+    bibleLabel.textContent = activeLabel;
   }
   if (refLabel) {
     refLabel.textContent = bible ? formatCompactRef(bookId, chapter, verseFocus) : 'Selecionar';
   }
   if (metaLabel && store.getActiveMode() === 'bible') {
     metaLabel.textContent = bible
-      ? `${bible.abbr || bible.title} • ${formatReference(bookId, chapter)}`
+      ? `${activeLabel} • ${formatReference(bookId, chapter)}`
       : 'Nenhuma fonte configurada';
   }
 
