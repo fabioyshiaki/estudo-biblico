@@ -257,6 +257,7 @@ function createAnchoredPopover({ anchorEl, align = 'left', width = 320, maxHeigh
 export function openViewsDropdown({
   anchorEl,
   onSelectMode,
+  onOpenMaps,
   onOpenUnifiedSearch,
   onOpenBibleSearch,
   onOpenDictTerms,
@@ -331,6 +332,12 @@ export function openViewsDropdown({
         </button>
       </div>
       <div class="ms-dropdown-row">
+        <button type="button" class="ms-dropdown-btn" data-drawer-act="maps">
+          <span class="ms-res-badge ms-res-badge--map">M</span>
+          <span class="ms-dropdown-title">Mapas e Atlas</span>
+        </button>
+      </div>
+      <div class="ms-dropdown-row">
         <button type="button" class="ms-dropdown-btn" data-drawer-act="unified-search">
           <span class="ms-res-badge" style="background:var(--bg-subtle);color:var(--ms-arrow-blue);">&#128269;</span>
           <span class="ms-dropdown-title">Pesquisa Unificada</span>
@@ -367,6 +374,7 @@ export function openViewsDropdown({
       if (act === 'bible' && onSelectMode) onSelectMode('bible');
       if (act === 'commentary' && onSelectMode) onSelectMode('commentary');
       if (act === 'dictionary' && onSelectMode) onSelectMode('dictionary');
+      if (act === 'maps' && typeof onOpenMaps === 'function') onOpenMaps();
       if (act === 'unified-search') {
         if (typeof onOpenUnifiedSearch === 'function') onOpenUnifiedSearch(mode);
         else if (typeof onOpenBibleSearch === 'function') onOpenBibleSearch();
