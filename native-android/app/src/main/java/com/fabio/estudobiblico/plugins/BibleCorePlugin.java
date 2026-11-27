@@ -165,31 +165,65 @@ public class BibleCorePlugin extends Plugin {
                     return;
                 }
 
-                List<String> extensions = StorageBrowser.getExtensionsForFormat(formatId);
-                List<File> foundFiles = StorageBrowser.collectTargetFiles(target, mode, recursive, extensions);
+                // Se a mesma pasta já estava autorizada para outro tipo (ex.: Bíblias), promove para modo misto sem apagar os módulos anteriores
+                String effectiveFormatId = formatId;
+                String effectiveResourceKind = resourceKind;
+                boolean effectiveRecursive = recursive;
+                if ("folder".equals(mode)) {
+                    for (JSObject existing : registryDb.getAllSourceRecords()) {
+                        String existingPath = existing.getString("path");
+                        if (path.equals(existingPath)) {
+                            String prevFormat = existing.getString("formatId");
+                            if (prevFormat != null && !prevFormat.equals(formatId)) {
+                                effectiveFormatId = "mysword_all";
+                                effectiveResourceKind = "mixed";
+                                effectiveRecursive = recursive || Boolean.TRUE.equals(existing.getBool("recursive"));
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                List<String> extensions = StorageBrowser.getExtensionsForFormat(effectiveFormatId);
+                List<File> foundFiles = StorageBrowser.collectTargetFiles(target, mode, effectiveRecursive, extensions);
                 List<ContentValues> validModules = new ArrayList<>();
+                int matchedRequestedCount = 0;
 
                 for (File f : foundFiles) {
-                    ContentValues meta = StorageBrowser.inspectMySwordBible(f, resourceKind, formatId, sqlPool);
+                    ContentValues meta = StorageBrowser.inspectMySwordModule(f, effectiveResourceKind, effectiveFormatId, sqlPool);
                     if (meta != null) {
                         validModules.add(meta);
+                        String detectedKind = meta.getAsString("resource_kind");
+                        if (resourceKind.equals(detectedKind)) {
+                            matchedRequestedCount++;
+                        }
                     }
                 }
 
                 if ("file".equals(mode) && validModules.isEmpty()) {
-                    call.reject("O arquivo selecionado não é uma Bíblia MySword (.bbl.mybible) válida.");
+                    String msg = "mysword_dct".equals(formatId)
+                            ? "O arquivo selecionado não é um Dicionário MySword (.dct.mybible) válido."
+                            : "O arquivo selecionado não é uma Bíblia MySword (.bbl.mybible) válida.";
+                    call.reject(msg);
                     return;
                 }
 
                 String label = target.getName().isEmpty() ? path : target.getName();
-                long sourceId = registryDb.upsertSource(path, mode, recursive, resourceKind, formatId, label);
+                long sourceId = registryDb.upsertSource(
+                        path,
+                        mode,
+                        effectiveRecursive,
+                        effectiveResourceKind,
+                        effectiveFormatId,
+                        label
+                );
                 registryDb.replaceModulesForSource(sourceId, validModules);
 
                 JSObject ret = new JSObject();
                 ret.put("sourceId", sourceId);
-                ret.put("addedCount", validModules.size());
+                ret.put("addedCount", "mixed".equals(effectiveResourceKind) ? matchedRequestedCount : validModules.size());
                 ret.put("sources", registryDb.listSources());
-                ret.put("modules", registryDb.listModules(resourceKind));
+                ret.put("modules", registryDb.listModules(null));
                 call.resolve(ret);
             } catch (Exception e) {
                 call.reject("Falha ao registrar fonte: " + e.getMessage());
@@ -258,7 +292,7 @@ public class BibleCorePlugin extends Plugin {
                     long sourceId = src.getLong("id");
                     String path = src.getString("path");
                     String mode = src.getString("sourceMode");
-                    boolean recursive = src.getBool("recursive");
+                    boolean recursive = Boolean.TRUE.equals(src.getBool("recursive"));
                     String resourceKind = src.getString("resourceKind");
                     String formatId = src.getString("formatId");
 
@@ -268,7 +302,7 @@ public class BibleCorePlugin extends Plugin {
                     List<ContentValues> validModules = new ArrayList<>();
 
                     for (File f : files) {
-                        ContentValues meta = StorageBrowser.inspectMySwordBible(f, resourceKind, formatId, sqlPool);
+                        ContentValues meta = StorageBrowser.inspectMySwordModule(f, resourceKind, formatId, sqlPool);
                         if (meta != null) {
                             validModules.add(meta);
                         }
