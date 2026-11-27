@@ -362,9 +362,12 @@ export function formatMySwordScripture(rawText, options = {}) {
     };
   }
 
-  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS / Bizantino Espanhol
+  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS / Bizantino Espanhol / OGNT (TrsAIMS)
   if (isShebanqBhsText(text)) {
-    const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum);
+    const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum, {
+      footnotes,
+      footnoteLabels
+    });
     return {
       html: restoreFootnotes(shebanqHtml, footnoteLabels),
       headings,
