@@ -1,4 +1,5 @@
 import { nativeBridge } from '../bridge/native-bridge.js';
+import { parseBibleReference } from '../core/bible-refs.js';
 
 const schemaCache = new Map();
 
@@ -174,25 +175,54 @@ function cleanLabel(str) {
   return stripTagsPlain(str).replace(/\s+/g, ' ').trim();
 }
 
-function classifyHrefLink(hrefRaw, labelText) {
-  const href = decodeCommonEntities(decodeNumericEntities(String(hrefRaw || ''))).trim();
-  const label = cleanLabel(labelText) || href;
+function makeBibleLink(parsed, label) {
+  return {
+    kind: 'bible',
+    target: `${parsed.book}.${parsed.chapter}.${parsed.verse}`,
+    moduleHint: '',
+    label
+  };
+}
 
-  if (/^(?:https?:|mailto:|wiki\/)/i.test(href)) {
+function classifyHrefLink(hrefRaw, labelText) {
+  const decoded = safeDecodeUri(
+    decodeCommonEntities(decodeNumericEntities(String(hrefRaw || '')))
+  ).trim();
+  const label = cleanLabel(labelText) || decoded;
+
+  // Links externos da web (Wikipedia/Wikimedia/etc.) ficam como texto simples
+  if (/^(?:https?:|mailto:|wiki\/)/i.test(decoded)) {
     return null;
   }
 
-  const bibleMatch = /^b\s*(\d+[\s.:]\d+[\s\S]*)$/i.exec(href);
-  if (bibleMatch) {
-    return {
-      kind: 'bible',
-      target: bibleMatch[1].trim(),
-      moduleHint: '',
-      label
-    };
+  // 1. Links de Bíblia em formato URI (tw://bible.*?id=40.1.1, bible://40.1.1, bible:Gn 1:1)
+  if (/^(?:tw:\/\/bible|bible:)/i.test(decoded)) {
+    const parsedUri = parseBibleReference(decoded, { allowChapterOnly: true });
+    if (parsedUri) return makeBibleLink(parsedUri, label);
   }
 
-  const strongMatch = /^s\s*([GH]\d+[a-z]?)$/i.exec(href);
+  // Remove '#' inicial padrão do MySword (#b40.1.1, #sH430, #mN-NSF, #dPalavra, #Mt 1:1)
+  const hadHash = decoded.startsWith('#');
+  const core = hadHash ? decoded.slice(1).trim() : decoded;
+  if (!core) return null;
+
+  // 2. Referência bíblica explícita com prefixo b / v / rx (b40.1.1, #b40.1.1, b 1.1.1-5, #bMt 1:1, v40.1.1)
+  const explicitPrefix = /^(?:rx|b|v)[\s.:_-]*(.+)$/i.exec(core);
+  if (explicitPrefix && explicitPrefix[1]) {
+    const parsedExplicit = parseBibleReference(explicitPrefix[1].trim(), { allowChapterOnly: true });
+    if (parsedExplicit) {
+      return makeBibleLink(parsedExplicit, label);
+    }
+  }
+
+  // 3. Referência numérica de 3 partes após '#' (ex.: #40.1.1 ou #1.49.17)
+  if (hadHash && /^\d{1,2}[.:_-]\d{1,3}[.:_-]\d{1,3}/.test(core)) {
+    const parsedNum = parseBibleReference(core, { allowChapterOnly: true });
+    if (parsedNum) return makeBibleLink(parsedNum, label);
+  }
+
+  // 4. Código Strong: sH430, #sH430, sG976
+  const strongMatch = /^s\s*([GH]\d+[a-z]?)$/i.exec(core);
   if (strongMatch) {
     return {
       kind: 'strong',
@@ -202,7 +232,8 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  const morphMatch = /^m\s*(.+)$/i.exec(href);
+  // 5. Morfologia: mN-NSF, #mN-NSF
+  const morphMatch = /^m\s*(.+)$/i.exec(core);
   if (morphMatch) {
     return {
       kind: 'morph',
@@ -212,24 +243,56 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  const modDictMatch = /^d-([^\s]+)\s+(.+)$/i.exec(href);
+  // 6. Link para outro dicionário específico: d-ISBE Badger, #d-LouwNida 33.38
+  const modDictMatch = /^d-([^\s]+)\s+(.+)$/i.exec(core);
   if (modDictMatch) {
+    const target = modDictMatch[2].trim();
+    const modHint = modDictMatch[1].trim();
+    const parsedTextual = parseBibleReference(target, { allowChapterOnly: false, allowNumeric: false });
+    if (parsedTextual) return makeBibleLink(parsedTextual, label);
     return {
       kind: 'term',
-      target: modDictMatch[2].trim(),
-      moduleHint: modDictMatch[1].trim(),
+      target,
+      moduleHint: modHint,
       label
     };
   }
 
-  const dictMatch = /^(?:d|#)([\s\S]+)$/i.exec(href);
-  if (dictMatch) {
+  // 7. Passagem bíblica textual direta em #Mt 1:1 ou #Deuteronômio 14:5 (antes de remover eventual 'd')
+  const directTextBible = parseBibleReference(core, { allowChapterOnly: false, allowNumeric: false });
+  if (directTextBible) {
+    return makeBibleLink(directTextBible, label);
+  }
+
+  // 8. Link para verbete de dicionário: dPalavra, #dPalavra ou #Palavra
+  let dictTarget = '';
+  if (!hadHash && /^d(?:\s+|(?=[^\s-]))/i.test(core)) {
+    dictTarget = core.replace(/^d\s*/i, '').trim();
+  } else if (hadHash && /^d(?:\s+|(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ0-9]))/.test(core)) {
+    dictTarget = core.replace(/^d\s*/, '').trim();
+  } else if (hadHash) {
+    dictTarget = core;
+  }
+
+  if (dictTarget) {
+    const parsedTargetBible = parseBibleReference(dictTarget, { allowChapterOnly: false, allowNumeric: false });
+    if (parsedTargetBible) return makeBibleLink(parsedTargetBible, label);
+
+    const parsedLabelBible = parseBibleReference(label, { allowChapterOnly: false, allowNumeric: false });
+    if (parsedLabelBible) return makeBibleLink(parsedLabelBible, label);
+
     return {
       kind: 'term',
-      target: dictMatch[1].trim(),
+      target: dictTarget,
       moduleHint: '',
       label
     };
+  }
+
+  // 9. Fallback: qualquer outro link cujo texto visível seja claramente uma passagem bíblica (Livro Cap:Vers)
+  const fallbackLabelBible = parseBibleReference(label, { allowChapterOnly: false, allowNumeric: false });
+  if (fallbackLabelBible) {
+    return makeBibleLink(fallbackLabelBible, label);
   }
 
   return null;
@@ -297,7 +360,6 @@ export function formatMySwordDictionaryData(rawData) {
   text = text.replace(
     /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi,
     (_, dbl, sgl, bare, inner) => {
-      // Preserva imagens que eventualmente venham dentro de uma tag <a>
       if (/\u0006\d+\u0006/.test(inner)) {
         return inner;
       }
@@ -321,9 +383,11 @@ export function formatMySwordDictionaryData(rawData) {
     return ` ${pushLinkToken({ kind: 'morph', target: code, moduleHint: '', label: code })}`;
   });
 
-  text = text.replace(/<RX\s+([^<>]+)>/gi, (_, refRaw) => {
+  text = text.replace(/<RX\s*([^<>]+)>/gi, (_, refRaw) => {
     const ref = String(refRaw || '').trim();
     if (!ref) return '';
+    const parsed = parseBibleReference(ref, { allowChapterOnly: true });
+    if (parsed) return pushLinkToken(makeBibleLink(parsed, ref));
     return pushLinkToken({ kind: 'bible', target: ref, moduleHint: '', label: ref });
   });
 
@@ -367,7 +431,7 @@ export function formatMySwordDictionaryData(rawData) {
     .replace(/(<br>\s*)+$/, '')
     .trim();
 
-  // 5. Restaura figuras de imagem (sem loading="lazy" para garantir disparo imediato no Android WebView)
+  // 5. Restaura figuras de imagem
   safe = safe.replace(/(?:<p>\s*)?\u0006(\d+)\u0006(?:\s*<\/p>)?/g, (_, idxStr) => {
     const img = imageTokens[Number(idxStr)];
     if (!img) return '';
