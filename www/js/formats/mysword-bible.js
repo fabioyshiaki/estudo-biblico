@@ -2,7 +2,9 @@ import { nativeBridge } from '../bridge/native-bridge.js';
 import {
   hasHebrewScript,
   isBilingualAncientText,
-  formatInterlinearHtml
+  formatInterlinearHtml,
+  isReverseInterlinearQ,
+  formatReverseInterlinearQHtml
 } from './interlinear.js';
 import {
   isTothtTaggedText,
@@ -352,7 +354,7 @@ export function formatMySwordScripture(rawText, options = {}) {
     };
   }
 
-  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord
+  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS
   if (isShebanqBhsText(text)) {
     const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum);
     return {
@@ -368,6 +370,18 @@ export function formatMySwordScripture(rawText, options = {}) {
     if (otHtml) {
       return {
         html: restoreFootnotes(otHtml, footnoteLabels),
+        headings,
+        footnotes
+      };
+    }
+  }
+
+  // Módulos interlineares reversos (<Q>INGLÊS<WG...><WT...><E><G>grego<g><e><q>, ex.: IrMS)
+  if (isReverseInterlinearQ(text)) {
+    const revHtml = formatReverseInterlinearQHtml(decodeCommonEntities(text), options.verseNum);
+    if (revHtml) {
+      return {
+        html: restoreFootnotes(revHtml, footnoteLabels),
         headings,
         footnotes
       };
