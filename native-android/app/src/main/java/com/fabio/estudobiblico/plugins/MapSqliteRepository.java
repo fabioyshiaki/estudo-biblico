@@ -31,6 +31,8 @@ public final class MapSqliteRepository {
         Pattern.compile("(?i)(?:^|[^a-z])(map|maps|mapa|mapas|atlas|rumsey|mcnally|geograf|cartograf|terra\\s*santa|holy\\s*land|palestin)");
     private static final Pattern PHOTO_KEYWORD_PATTERN =
         Pattern.compile("(?i)(?:^|[^a-z])(photo|photos|foto|fotos|picture|pictures|image|images|imagem|imagens|illustrat|ilustra|gallery|galeria|drawing|drawings|desenho|desenhos|painting|pintura|archaeolog|arqueolog|artifact|artefat|panorama|scenery|dore|doré|chart|charts|diagram|diagrama|infograf)");
+    private static final Pattern EXCLUDED_NON_VISUAL_PATTERN =
+        Pattern.compile("(?i)(harpa|hin[aá]rio|cantor\\s*crist|hymn|hymnal|devocion|catecism|profecia|cadeia\\s*tem[aá]tica|serm[oõ]es|esbo[çc]o|liturgi|confiss[aã]o|credo)");
     private static final Pattern DOUBLE_PATTERN =
         Pattern.compile("-?\\d+(?:\\.\\d+)?");
 
@@ -83,7 +85,7 @@ public final class MapSqliteRepository {
      * Classifica módulos visuais SQLite em:
      * - "map": atlas/mapas cartográficos (com tabela `map`, `mapattribution` ou metadados de atlas sem serem fotos).
      * - "photo": acervos de fotos, ilustrações, gravuras, diagramas ou gráficos bíblicos.
-     * Rejeita livros comuns (.bok.mybible) sem imagens reais em `data`.
+     * Rejeita livros comuns (.bok.mybible), hinários (Harpa Cristã) e módulos sem imagens reais em `data`.
      */
     public static JSObject inspectMapModule(File file) {
         SQLiteDatabase db = null;
@@ -125,14 +127,21 @@ public final class MapSqliteRepository {
                 c = null;
             }
 
+            String primaryBag = file.getName() + " " + name + " " + title + " " + abbreviation;
+            String fullBag = primaryBag + " " + description;
+
+            // Bloqueia hinários (Harpa Cristã), devocionais e livros textuais mesmo se tiverem ícones embutidos
+            if (mapTableRows == 0 && mapVerseRows == 0 && attribution.isEmpty()) {
+                if (EXCLUDED_NON_VISUAL_PATTERN.matcher(primaryBag).find()) {
+                    return null;
+                }
+            }
+
             int journalCount = countRows(db, "SELECT COUNT(*) FROM journal WHERE COALESCE(hidden, 0) = 0");
             int imgJournalCount = countRows(
                 db,
                 "SELECT COUNT(*) FROM journal WHERE COALESCE(hidden, 0) = 0 AND content LIKE '%<img%'"
             );
-
-            String primaryBag = file.getName() + " " + name + " " + title + " " + abbreviation;
-            String fullBag = primaryBag + " " + description;
 
             boolean matchesPhotoPrimary = PHOTO_KEYWORD_PATTERN.matcher(primaryBag).find();
             boolean matchesPhotoFull = matchesPhotoPrimary || PHOTO_KEYWORD_PATTERN.matcher(fullBag).find();
@@ -152,8 +161,8 @@ public final class MapSqliteRepository {
                 moduleKind = "map";
             } else if (matchesMapKeyword && mostlyImages) {
                 moduleKind = "map";
-            } else if (imgJournalCount >= 3 && journalCount > 0 && imgJournalCount * 2 >= journalCount) {
-                // Acervos majoritariamente visuais sem palavra-chave explícita entram em Fotos e Ilustrações
+            } else if (dataImageCount >= 3 && imgJournalCount >= 3 && journalCount > 0 && imgJournalCount * 2 >= journalCount) {
+                // Exige ao menos 3 imagens distintas em `data` para evitar livros que repetem 1 ícone decorativo
                 moduleKind = "photo";
             }
 
@@ -235,7 +244,6 @@ public final class MapSqliteRepository {
                     list.put(item);
                 }
             } else {
-                // Caminho leve para módulos sem tabela `map` (ex.: 2.030 fotos) sem carregar HTML completo
                 c = db.rawQuery(
                     "SELECT rowid, id, title, tags, CASE WHEN content LIKE '%<img%' THEN 1 ELSE 0 END " +
                     "FROM journal WHERE COALESCE(hidden, 0) = 0 ORDER BY relativeorder ASC, rowid ASC",
