@@ -257,6 +257,7 @@ function createAnchoredPopover({ anchorEl, align = 'left', width = 320, maxHeigh
 export function openViewsDropdown({
   anchorEl,
   onSelectMode,
+  onOpenUnifiedSearch,
   onOpenBibleSearch,
   onOpenDictTerms,
   onOpenSettings,
@@ -330,9 +331,9 @@ export function openViewsDropdown({
         </button>
       </div>
       <div class="ms-dropdown-row">
-        <button type="button" class="ms-dropdown-btn" data-drawer-act="bible-search">
+        <button type="button" class="ms-dropdown-btn" data-drawer-act="unified-search">
           <span class="ms-res-badge" style="background:var(--bg-subtle);color:var(--ms-arrow-blue);">&#128269;</span>
-          <span class="ms-dropdown-title">Pesquisar na Bíblia</span>
+          <span class="ms-dropdown-title">Pesquisa Unificada</span>
         </button>
       </div>
       <div class="ms-dropdown-row">
@@ -366,7 +367,10 @@ export function openViewsDropdown({
       if (act === 'bible' && onSelectMode) onSelectMode('bible');
       if (act === 'commentary' && onSelectMode) onSelectMode('commentary');
       if (act === 'dictionary' && onSelectMode) onSelectMode('dictionary');
-      if (act === 'bible-search' && onOpenBibleSearch) onOpenBibleSearch();
+      if (act === 'unified-search') {
+        if (typeof onOpenUnifiedSearch === 'function') onOpenUnifiedSearch(mode);
+        else if (typeof onOpenBibleSearch === 'function') onOpenBibleSearch();
+      }
       if (act === 'dict-terms' && onOpenDictTerms) onOpenDictTerms();
       if (act === 'settings' && onOpenSettings) onOpenSettings();
       if (act === 'logs' && onOpenLogs) onOpenLogs();
