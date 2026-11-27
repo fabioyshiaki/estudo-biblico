@@ -1,4 +1,5 @@
 import { closeModal } from './nav-modal.js';
+import { openPhotoViewerModal } from './photo-viewer-modal.js';
 import { eventBus, EVENTS } from '../core/events.js';
 import { formatReference } from '../core/canon.js';
 import { appLogger } from '../core/logger.js';
@@ -10,11 +11,13 @@ import {
   pickMapDirectory,
   setMapDirectory,
   listMapModules,
+  listPhotoModules,
   getMapModuleIndex,
   getMapEntry,
   searchMaps,
   resolveMapsForMarker,
   resolveOverlaysForPlace,
+  resolvePhotosForPlace,
   isTocTitle,
   isValidGeoBounds,
   isPointInBounds,
@@ -26,6 +29,7 @@ import {
 
 const LEAFLET_FALLBACK_CSS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
 const LEAFLET_FALLBACK_JS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+const MAP_LIST_PAGE_SIZE = 120;
 
 let leafletLoadPromise = null;
 
@@ -78,7 +82,6 @@ function ensureLeafletLoaded(timeoutMs = 4500) {
       finish(window.L || null);
     }, timeoutMs);
 
-    // Aguarda breve janela caso o <script async> de index.html esteja finalizando
     let polls = 0;
     const pollId = window.setInterval(() => {
       polls += 1;
@@ -89,7 +92,6 @@ function ensureLeafletLoaded(timeoutMs = 4500) {
         return;
       }
       if (polls === 6) {
-        // Injeta fallback jsDelivr caso unpkg não tenha respondido
         if (!document.querySelector('link[data-leaflet-fallback]')) {
           const link = document.createElement('link');
           link.rel = 'stylesheet';
@@ -131,6 +133,7 @@ function ensureLeafletLoaded(timeoutMs = 4500) {
 
 export function openMapViewerModal({
   markerInfo = null,
+  initialPlace = null,
   initialModulePath = '',
   onMapsDirectoryChanged = null
 } = {}) {
@@ -151,6 +154,8 @@ export function openMapViewerModal({
   let uiPrefs = { ...savedPrefs };
   let dirPath = '';
   let modules = [];
+  let photoModules = [];
+  let focusedPlacePhotoCount = 0;
   let activeModulePath = initialModulePath || getSavedActiveMapModulePath();
   let activeIndex = [];
   let currentOverlayEntry = null;
@@ -158,8 +163,11 @@ export function openMapViewerModal({
 
   let activePins = (markerInfo && Array.isArray(markerInfo.locations) && markerInfo.locations.length)
     ? markerInfo.locations.slice()
-    : [defaultJerusalem];
-  let focusedPin = activePins[0] || defaultJerusalem;
+    : (initialPlace ? [initialPlace] : [defaultJerusalem]);
+  let focusedPin = initialPlace || activePins[0] || defaultJerusalem;
+  if (initialPlace && !activePins.some((p) => p.name === initialPlace.name)) {
+    activePins.unshift(initialPlace);
+  }
 
   let openDrawer = ''; // '' | 'places' | 'maps' | 'folder'
   let showLayersPopover = false;
@@ -167,6 +175,7 @@ export function openMapViewerModal({
   let viewMode = 'geo'; // 'geo' | 'image'
   let placeFilterText = '';
   let mapFilterText = '';
+  let visibleMapListLimit = MAP_LIST_PAGE_SIZE;
   let globalSearchResults = null;
 
   let leafletMap = null;
@@ -176,7 +185,6 @@ export function openMapViewerModal({
   let allPinsLayer = null;
   let leafletUnavailable = false;
 
-  // Estado de zoom/pan para modo imagem pura (ou fallback offline)
   let rawZoom = 1;
   let rawPanX = 0;
   let rawPanY = 0;
@@ -184,7 +192,7 @@ export function openMapViewerModal({
   let isClosed = false;
   let keyHandler = null;
 
-  function cleanupAndClose() {
+  function destroyMapInstance() {
     isClosed = true;
     if (keyHandler) {
       window.removeEventListener('keydown', keyHandler);
@@ -198,7 +206,31 @@ export function openMapViewerModal({
       }
       leafletMap = null;
     }
+  }
+
+  function cleanupAndClose() {
+    destroyMapInstance();
     closeModal();
+  }
+
+  function openPhotosForFocusedPin() {
+    const placeToOpen = focusedPin;
+    const savedMarker = markerInfo;
+    const savedModule = activeModulePath;
+    destroyMapInstance();
+    openPhotoViewerModal({
+      markerInfo: savedMarker,
+      initialPlace: placeToOpen,
+      onDirectoryChanged: onMapsDirectoryChanged,
+      onBackToMap: () => {
+        openMapViewerModal({
+          markerInfo: savedMarker,
+          initialPlace: placeToOpen,
+          initialModulePath: savedModule,
+          onMapsDirectoryChanged
+        });
+      }
+    });
   }
 
   keyHandler = (ev) => {
@@ -219,11 +251,6 @@ export function openMapViewerModal({
   };
   window.addEventListener('keydown', keyHandler);
 
-  function getActiveModule() {
-    if (!modules.length) return null;
-    return modules.find((m) => m.path === activeModulePath) || modules[0];
-  }
-
   function getActiveBaseLayerConfig() {
     return BASE_MAP_LAYERS.find((l) => l.id === uiPrefs.baseLayerId) || BASE_MAP_LAYERS[0];
   }
@@ -242,6 +269,10 @@ export function openMapViewerModal({
             <h1 class="map-hdr-title" id="map-hdr-title">Mapas Bíblicos</h1>
             <span class="map-hdr-sub" id="map-hdr-sub">Carregando mapa interativo...</span>
           </div>
+
+          <button type="button" class="map-hdr-btn hidden" id="map-btn-photos" title="Ver fotos e ilustrações deste local">
+            &#128247; Fotos
+          </button>
 
           <button type="button" class="map-hdr-btn" id="map-btn-places" title="Buscar localizações bíblicas">
             &#128205; Locais
@@ -270,7 +301,7 @@ export function openMapViewerModal({
               <button type="button" class="map-float-btn" id="map-zoom-out" aria-label="Diminuir zoom" title="Diminuir zoom">&minus;</button>
             </div>
             <button type="button" class="map-float-single" id="map-focus-pin" aria-label="Centralizar no pino" title="Centralizar no local marcado">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true">
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/>
               </svg>
             </button>
@@ -278,7 +309,7 @@ export function openMapViewerModal({
 
           <div class="map-float-right" id="map-float-right">
             <button type="button" class="map-float-single" id="map-layers-btn" aria-label="Camadas do mapa" title="Camadas e pinos">
-              <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
                 <polyline points="2 17 12 22 22 17"></polyline>
                 <polyline points="2 12 12 17 22 12"></polyline>
@@ -308,7 +339,7 @@ export function openMapViewerModal({
 
         <footer class="map-bottom-bar" id="map-bottom-bar">
           <button type="button" class="map-bottom-back" id="map-bottom-back" aria-label="Voltar" title="Voltar">
-            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <line x1="19" y1="12" x2="5" y2="12"></line>
               <polyline points="12 19 5 12 12 5"></polyline>
             </svg>
@@ -326,6 +357,7 @@ export function openMapViewerModal({
 
     document.getElementById('map-btn-close')?.addEventListener('click', cleanupAndClose);
     document.getElementById('map-bottom-back')?.addEventListener('click', cleanupAndClose);
+    document.getElementById('map-btn-photos')?.addEventListener('click', openPhotosForFocusedPin);
 
     document.getElementById('map-btn-places')?.addEventListener('click', () => {
       showLayersPopover = false;
@@ -403,9 +435,27 @@ export function openMapViewerModal({
     });
   }
 
+  async function refreshFocusedPinPhotoCount() {
+    if (!photoModules.length || !focusedPin) {
+      focusedPlacePhotoCount = 0;
+      updateHeader();
+      return;
+    }
+    try {
+      const hits = await resolvePhotosForPlace(focusedPin, { limit: 25 });
+      if (isClosed) return;
+      focusedPlacePhotoCount = hits.length;
+      updateHeader();
+      if (infoCardMode === 'location') renderInfoCard();
+    } catch (err) {
+      focusedPlacePhotoCount = 0;
+    }
+  }
+
   function updateHeader() {
     const titleEl = document.getElementById('map-hdr-title');
     const subEl = document.getElementById('map-hdr-sub');
+    const photosBtn = document.getElementById('map-btn-photos');
     const placesBtn = document.getElementById('map-btn-places');
     const idxBtn = document.getElementById('map-btn-index');
     const dirBtn = document.getElementById('map-btn-folder');
@@ -435,6 +485,12 @@ export function openMapViewerModal({
       subEl.textContent = parts.join(' • ');
     }
 
+    if (photosBtn) {
+      photosBtn.classList.toggle('hidden', photoModules.length === 0);
+      photosBtn.innerHTML = focusedPlacePhotoCount > 0
+        ? `&#128247; Fotos (${focusedPlacePhotoCount})`
+        : '&#128247; Fotos';
+    }
     if (placesBtn) placesBtn.classList.toggle('is-active', openDrawer === 'places');
     if (idxBtn) idxBtn.classList.toggle('is-active', openDrawer === 'maps');
     if (dirBtn) dirBtn.classList.toggle('is-active', openDrawer === 'folder');
@@ -502,7 +558,7 @@ export function openMapViewerModal({
     strip.innerHTML = `${pinsHtml}${recsHtml}`;
 
     strip.querySelectorAll('[data-pin-idx]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const idx = Number(btn.getAttribute('data-pin-idx'));
         const loc = activePins[idx];
         if (!loc) return;
@@ -510,6 +566,7 @@ export function openMapViewerModal({
         renderVerseStrip();
         updateHeader();
         renderActivePinsOnLeaflet();
+        refreshFocusedPinPhotoCount();
         if (leafletMap && viewMode === 'geo') {
           leafletMap.setView([loc.lat, loc.lng], Math.max(leafletMap.getZoom(), 6), { animate: true });
         }
@@ -550,11 +607,11 @@ export function openMapViewerModal({
 
     if (openDrawer === 'folder') {
       drawer.innerHTML = `
-        <div class="map-verse-tag">Pasta dos arquivos de mapa (apenas módulos de mapa válidos são carregados):</div>
+        <div class="map-verse-tag">Pasta dos módulos visuais (mapas e fotos são separados automaticamente):</div>
         <div class="map-path-box">${escapeHtml(dirPath || 'Nenhuma pasta configurada')}</div>
         <div class="map-drawer-row">
           <button type="button" class="primary-btn" id="map-pick-dir-btn">Escolher pasta (Android)</button>
-          <button type="button" class="secondary-btn" id="map-refresh-dir-btn">Reverificar (${modules.length} atlas)</button>
+          <button type="button" class="secondary-btn" id="map-refresh-dir-btn">Reverificar (${modules.length} atlas • ${photoModules.length} fotos)</button>
         </div>
         <form class="map-drawer-row" id="map-manual-dir-form">
           <input
@@ -585,7 +642,7 @@ export function openMapViewerModal({
 
       drawer.querySelector('#map-refresh-dir-btn')?.addEventListener('click', async () => {
         await reloadModules({ notifyParent: true });
-        eventBus.emit(EVENTS.TOAST, `${modules.length} módulo(s) de mapa válido(s).`);
+        eventBus.emit(EVENTS.TOAST, `${modules.length} atlas e ${photoModules.length} coleção(ões) de fotos.`);
       });
 
       drawer.querySelector('#map-manual-dir-form')?.addEventListener('submit', async (ev) => {
@@ -596,7 +653,7 @@ export function openMapViewerModal({
         try {
           const res = await setMapDirectory(nextPath);
           dirPath = (res && res.path) || nextPath;
-          eventBus.emit(EVENTS.TOAST, 'Pasta de mapas atualizada.');
+          eventBus.emit(EVENTS.TOAST, 'Pasta atualizada.');
           await reloadModules({ notifyParent: true });
         } catch (err) {
           eventBus.emit(EVENTS.TOAST, err && err.message ? err.message : 'Caminho inválido.');
@@ -612,7 +669,7 @@ export function openMapViewerModal({
         return normalizeAscii(`${p.name} ${p.info || ''} ${(p.aliases || []).join(' ')}`).includes(q);
       });
 
-      const itemsHtml = filteredPlaces.slice(0, 50).map((p, idx) => {
+      const itemsHtml = filteredPlaces.slice(0, 60).map((p, idx) => {
         const isCur = focusedPin && focusedPin.name === p.name;
         return (
           `<button type="button" class="map-index-item${isCur ? ' is-active' : ''}" data-place-pos="${idx}">` +
@@ -634,7 +691,7 @@ export function openMapViewerModal({
           />
         </div>
         <div class="map-index-list" id="map-places-list">
-          ${itemsHtml || '<div style="font-size:13px;color:var(--map-muted);padding:6px;">Nenhum local encontrado.</div>'}
+          ${itemsHtml || '<div style="font-size:14.5px;color:var(--map-muted);padding:8px;">Nenhum local encontrado.</div>'}
         </div>
       `;
 
@@ -658,11 +715,11 @@ export function openMapViewerModal({
         }
         renderDrawersAndResize();
         renderActivePinsOnLeaflet();
+        refreshFocusedPinPhotoCount();
         if (leafletMap && viewMode === 'geo') {
           leafletMap.setView([place.lat, place.lng], 6, { animate: true });
         }
 
-        // Busca automaticamente mapas históricos compatíveis com o local escolhido
         const recs = await resolveOverlaysForPlace(place);
         if (isClosed) return;
         recommendedMaps = recs;
@@ -680,18 +737,20 @@ export function openMapViewerModal({
       return;
     }
 
-    // Gaveta de Mapas Históricos para Sobreposição
+    // Gaveta de Mapas Históricos (apenas cartografia real; fotos ficam em "📷 Fotos")
     if (!modules.length) {
       drawer.innerHTML = `
-        <div class="map-verse-tag">Nenhum módulo de mapa encontrado na pasta atual.</div>
+        <div class="map-verse-tag">Nenhum atlas cartográfico encontrado na pasta atual.</div>
         <div class="map-drawer-row">
           <button type="button" class="primary-btn" id="map-no-mod-folder">Escolher pasta de mapas</button>
+          ${photoModules.length ? '<button type="button" class="secondary-btn" id="map-go-photos-btn">Abrir Fotos e Ilustrações</button>' : ''}
         </div>
       `;
       drawer.querySelector('#map-no-mod-folder')?.addEventListener('click', () => {
         openDrawer = 'folder';
         renderDrawersAndResize();
       });
+      drawer.querySelector('#map-go-photos-btn')?.addEventListener('click', openPhotosForFocusedPin);
       return;
     }
 
@@ -702,7 +761,7 @@ export function openMapViewerModal({
     }).join('');
 
     const cleanQ = normalizeAscii(mapFilterText).trim();
-    const listItems = Array.isArray(globalSearchResults)
+    const allFiltered = Array.isArray(globalSearchResults)
       ? globalSearchResults
       : activeIndex
           .filter((it) => it.hasImage !== false && !isTocTitle(it.title))
@@ -712,6 +771,9 @@ export function openMapViewerModal({
             modulePath: activeModulePath,
             moduleTitle: ''
           }));
+
+    const listItems = allFiltered.slice(0, visibleMapListLimit);
+    const remainingCount = Math.max(0, allFiltered.length - listItems.length);
 
     const itemsHtml = listItems.length
       ? listItems.map((it, idx) => {
@@ -728,7 +790,7 @@ export function openMapViewerModal({
             '</button>'
           );
         }).join('')
-      : '<div style="font-size:13px;color:var(--map-muted);padding:8px 2px;">Nenhum mapa de imagem encontrado para este filtro.</div>';
+      : '<div style="font-size:14.5px;color:var(--map-muted);padding:10px 4px;">Nenhum mapa de imagem encontrado para este filtro.</div>';
 
     drawer.innerHTML = `
       <select class="map-select" id="map-atlas-select" aria-label="Escolher módulo de atlas">
@@ -747,6 +809,7 @@ export function openMapViewerModal({
         ${currentOverlayEntry ? '<button type="button" class="secondary-btn" id="map-clear-overlay-btn">Remover</button>' : ''}
       </form>
       <div class="map-index-list" id="map-index-list">${itemsHtml}</div>
+      ${remainingCount > 0 ? `<button type="button" class="secondary-btn" id="map-load-more-btn">Carregar mais (${remainingCount} restantes)</button>` : ''}
     `;
 
     drawer.querySelector('#map-atlas-select')?.addEventListener('change', async (ev) => {
@@ -755,6 +818,7 @@ export function openMapViewerModal({
       activeModulePath = nextPath;
       setSavedActiveMapModulePath(nextPath);
       globalSearchResults = null;
+      visibleMapListLimit = MAP_LIST_PAGE_SIZE;
       activeIndex = await getMapModuleIndex(nextPath);
       if (!isClosed) renderDrawer();
     });
@@ -763,6 +827,7 @@ export function openMapViewerModal({
     searchInput?.addEventListener('input', () => {
       mapFilterText = searchInput.value || '';
       globalSearchResults = null;
+      visibleMapListLimit = MAP_LIST_PAGE_SIZE;
       renderDrawer();
     });
 
@@ -770,12 +835,13 @@ export function openMapViewerModal({
       ev.preventDefault();
       const q = searchInput ? searchInput.value.trim() : '';
       mapFilterText = q;
+      visibleMapListLimit = MAP_LIST_PAGE_SIZE;
       if (!q) {
         globalSearchResults = null;
         renderDrawer();
         return;
       }
-      globalSearchResults = await searchMaps(q, { limit: 35 });
+      globalSearchResults = await searchMaps(q, { limit: 35, kind: 'map' });
       if (!isClosed) renderDrawer();
     });
 
@@ -783,6 +849,11 @@ export function openMapViewerModal({
       openDrawer = '';
       clearOverlay();
       renderDrawersAndResize();
+    });
+
+    drawer.querySelector('#map-load-more-btn')?.addEventListener('click', () => {
+      visibleMapListLimit += MAP_LIST_PAGE_SIZE;
+      renderDrawer();
     });
 
     drawer.querySelector('#map-index-list')?.addEventListener('click', (ev) => {
@@ -946,11 +1017,15 @@ export function openMapViewerModal({
 
     if (infoCardMode === 'location' && focusedPin) {
       heading = focusedPin.name;
+      const photoActionHtml = photoModules.length
+        ? `<div style="margin-top:10px;"><button type="button" class="primary-btn" id="map-info-open-photos">&#128247; Ver fotos${focusedPlacePhotoCount > 0 ? ` (${focusedPlacePhotoCount})` : ''}</button></div>`
+        : '';
       bodyHtml = `
         <div>${escapeHtml(focusedPin.info || 'Localização bíblica cadastrada no atlas.')}</div>
-        <div style="margin-top:6px;font-size:12px;color:var(--map-muted);">
+        <div style="margin-top:6px;font-size:13px;color:var(--map-muted);">
           Coordenadas: ${escapeHtml(formatCoord(focusedPin.lat, focusedPin.lng))}
         </div>
+        ${photoActionHtml}
       `;
     } else if (infoCardMode === 'map' && currentOverlayEntry) {
       const b = currentOverlayEntry.resolvedBounds;
@@ -960,8 +1035,8 @@ export function openMapViewerModal({
       heading = currentOverlayEntry.title || 'Informações do Mapa';
       bodyHtml = `
         ${currentOverlayEntry.attribution ? `<div style="margin-bottom:4px;">${escapeHtml(currentOverlayEntry.attribution)}</div>` : ''}
-        <div style="font-size:12px;color:var(--map-muted);">${escapeHtml(geoStatus)}</div>
-        ${b ? `<div style="margin-top:4px;font-size:11.5px;color:var(--map-muted);">Limites: S ${b.south.toFixed(2)}° • O ${b.west.toFixed(2)}° • N ${b.north.toFixed(2)}° • L ${b.east.toFixed(2)}°</div>` : ''}
+        <div style="font-size:13px;color:var(--map-muted);">${escapeHtml(geoStatus)}</div>
+        ${b ? `<div style="margin-top:4px;font-size:12.5px;color:var(--map-muted);">Limites: S ${b.south.toFixed(2)}° • O ${b.west.toFixed(2)}° • N ${b.north.toFixed(2)}° • L ${b.east.toFixed(2)}°</div>` : ''}
       `;
     } else {
       card.classList.add('hidden');
@@ -980,6 +1055,7 @@ export function openMapViewerModal({
       infoCardMode = '';
       renderInfoCard();
     });
+    card.querySelector('#map-info-open-photos')?.addEventListener('click', openPhotosForFocusedPin);
   }
 
   function applyBaseLayerToLeaflet() {
@@ -1011,8 +1087,8 @@ export function openMapViewerModal({
     return window.L.divIcon({
       className: 'map-bible-pin',
       html: `<div class="map-bible-pin-dot${isSecondary ? ' map-bible-pin-dot--secondary' : ''}"></div>`,
-      iconSize: isSecondary ? [10, 10] : [14, 14],
-      iconAnchor: isSecondary ? [5, 5] : [7, 7]
+      iconSize: isSecondary ? [11, 11] : [15, 15],
+      iconAnchor: isSecondary ? [5.5, 5.5] : [7.5, 7.5]
     });
   }
 
@@ -1033,7 +1109,7 @@ export function openMapViewerModal({
       marker.bindTooltip(escapeHtml(loc.name), {
         permanent: true,
         direction: 'bottom',
-        offset: [0, 7],
+        offset: [0, 8],
         className: 'map-pin-tooltip'
       });
       marker.on('click', () => {
@@ -1042,6 +1118,7 @@ export function openMapViewerModal({
         updateHeader();
         renderVerseStrip();
         renderInfoCard();
+        refreshFocusedPinPhotoCount();
       });
       marker.addTo(activePinsLayer);
     }
@@ -1074,6 +1151,7 @@ export function openMapViewerModal({
         infoCardMode = 'location';
         updateHeader();
         renderInfoCard();
+        refreshFocusedPinPhotoCount();
       });
       m.addTo(allPinsLayer);
     }
@@ -1163,7 +1241,6 @@ export function openMapViewerModal({
     }
   }
 
-  // Palco de Imagem Pura (usado no botão "Imagem" ou se Leaflet estiver offline)
   function applyRawTransform() {
     const imgEl = document.getElementById('map-raw-img');
     const stageEl = document.getElementById('map-raw-stage');
@@ -1198,7 +1275,7 @@ export function openMapViewerModal({
     if (!rawStage) return;
     const img = currentOverlayEntry && currentOverlayEntry.images && currentOverlayEntry.images[0];
     if (!img || !img.url) {
-      rawStage.innerHTML = '<div style="padding:20px;text-align:center;color:var(--map-muted);">Selecione um mapa no botão <strong>&#9776; Mapas</strong>.</div>';
+      rawStage.innerHTML = '<div style="padding:20px;text-align:center;font-size:15px;color:var(--map-muted);">Selecione um mapa no botão <strong>&#9776; Mapas</strong>.</div>';
       return;
     }
     rawStage.innerHTML = `<img id="map-raw-img" class="map-stage-img" src="${escapeHtml(img.url)}" alt="${escapeHtml(currentOverlayEntry.title || 'Mapa')}" draggable="false" />`;
@@ -1372,6 +1449,7 @@ export function openMapViewerModal({
   async function reloadModules({ notifyParent = false } = {}) {
     if (!isMapReaderAvailable()) {
       modules = [];
+      photoModules = [];
       updateHeader();
       renderVerseStrip();
       updateAttributionBar();
@@ -1380,15 +1458,21 @@ export function openMapViewerModal({
 
     const dirInfo = await getMapDirectory();
     dirPath = dirInfo.path || '';
-    const listed = await listMapModules({ forceRefresh: true });
+    const [listedMaps, listedPhotos] = await Promise.all([
+      listMapModules({ forceRefresh: true }),
+      listPhotoModules({ forceRefresh: false })
+    ]);
     if (isClosed) return;
 
-    dirPath = listed.dirPath || dirPath;
-    modules = listed.modules || [];
+    dirPath = listedMaps.dirPath || dirPath;
+    modules = listedMaps.modules || [];
+    photoModules = listedPhotos.modules || [];
 
     if (notifyParent && typeof onMapsDirectoryChanged === 'function') {
-      onMapsDirectoryChanged({ dirPath, modules });
+      onMapsDirectoryChanged({ dirPath, modules, photoModules });
     }
+
+    refreshFocusedPinPhotoCount();
 
     if (!modules.length) {
       activeIndex = [];
@@ -1420,7 +1504,6 @@ export function openMapViewerModal({
     renderVerseStrip();
     if (openDrawer === 'folder' || openDrawer === 'maps') renderDrawer();
 
-    // Carrega automaticamente a melhor sobreposição histórica disponível
     if (recommendedMaps.length) {
       const best = recommendedMaps[0];
       await loadOverlayEntry({
