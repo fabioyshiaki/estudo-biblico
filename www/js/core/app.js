@@ -10,6 +10,7 @@ import {
 import { clearCompanionCache } from '../formats/companion-dicts.js';
 import { clearMediaIndexCache } from '../formats/media-cache.js';
 import { clearDictionaryLookupCache } from '../formats/dictionary-lookup.js';
+import { clearBibleSearchCache } from '../formats/bible-search.js';
 import {
   initReaderView,
   renderReader,
@@ -32,6 +33,11 @@ import {
   initSelectionLookupBar,
   getDictionaryViewState
 } from '../ui/dictionary-view.js';
+import {
+  openBibleSearchModal,
+  clearBibleSearchSession,
+  attachBibleSearchToLookupFab
+} from '../ui/bible-search-modal.js';
 import {
   openBiblePickerModal,
   openDictionaryPickerModal,
@@ -175,6 +181,7 @@ function syncModeChrome() {
   document.getElementById('nav-group-bible')?.classList.toggle('hidden', isDict);
   document.getElementById('nav-group-book')?.classList.toggle('hidden', isDict);
   document.getElementById('nav-group-dict')?.classList.toggle('hidden', !isDict);
+  document.getElementById('btn-bible-search')?.classList.toggle('hidden', isDict);
 
   const bibleBtn = document.getElementById('btn-mode-bible');
   const dictBtn = document.getElementById('btn-mode-dictionary');
@@ -211,6 +218,21 @@ function syncDictionariesFromStore() {
     setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
   }
   updateDictionaryChrome({ activeModule: activeDict });
+}
+
+function openBibleSearchDialog(initialQuery = '', autoRun = false) {
+  openBibleSearchModal({
+    initialQuery,
+    autoRun,
+    onNavigateVerse: ({ modulePath, book, chapter, verse }) => {
+      navigateToBibleReference(
+        { book, chapter, verse, preferredModulePath: modulePath || '' },
+        { recordHistory: true }
+      );
+    },
+    onOpenSources: () => openSettingsModal({ initialTab: 'sources', initialKind: 'bible' }),
+    onOpenLogs: () => openSettingsModal({ initialTab: 'logs' })
+  });
 }
 
 async function openCompanionEntryInDictionary(modulePath, entryWord, originVerse = 0) {
@@ -271,8 +293,28 @@ function handleOpenCompanionGroup({ verseObj, group, refLabel }) {
   });
 }
 
-async function findBibleContainingBook(bookId) {
+async function findBibleContainingBook(bookId, preferredModulePath = '') {
   const active = store.getActiveBible();
+  const allList = store.getBibles();
+
+  if (preferredModulePath) {
+    const preferred = allList.find((m) => m.path === preferredModulePath);
+    if (preferred) {
+      try {
+        const prefBooks = await loadBooksForBible(preferred);
+        if (prefBooks.includes(bookId)) {
+          return {
+            bible: preferred,
+            books: prefBooks,
+            switched: !active || active.path !== preferred.path
+          };
+        }
+      } catch (err) {
+        // Segue para fallback na Bíblia ativa / demais Bíblias
+      }
+    }
+  }
+
   if (active) {
     const activeBooks = await loadBooksForBible(active);
     if (activeBooks.includes(bookId)) {
@@ -280,7 +322,7 @@ async function findBibleContainingBook(bookId) {
     }
   }
 
-  const allBibles = store.getBibles().filter((m) => !active || m.path !== active.path);
+  const allBibles = allList.filter((m) => !active || m.path !== active.path);
   const isOT = bookId <= 39;
 
   const prioritized = allBibles.slice().sort((a, b) => {
@@ -305,7 +347,7 @@ async function findBibleContainingBook(bookId) {
   return null;
 }
 
-async function navigateToBibleReference({ book, chapter, verse }, options = {}) {
+async function navigateToBibleReference({ book, chapter, verse, preferredModulePath = '' }, options = {}) {
   closeModal();
 
   const bibles = store.getBibles();
@@ -314,7 +356,7 @@ async function navigateToBibleReference({ book, chapter, verse }, options = {}) 
     return;
   }
 
-  const targetMatch = await findBibleContainingBook(book);
+  const targetMatch = await findBibleContainingBook(book, preferredModulePath);
   if (!targetMatch) {
     showToast(`Nenhuma Bíblia instalada contém ${getBookName(book)}.`);
     return;
@@ -608,6 +650,10 @@ function bindShellEvents() {
     store.setActiveMode('dictionary');
   });
 
+  document.getElementById('btn-bible-search')?.addEventListener('click', () => {
+    openBibleSearchDialog();
+  });
+
   document.getElementById('btn-settings')?.addEventListener('click', () => {
     openSettingsModal({
       initialTab: 'sources',
@@ -649,6 +695,8 @@ function bindStateEvents() {
     clearCompanionCache();
     clearMediaIndexCache();
     clearDictionaryLookupCache();
+    clearBibleSearchCache();
+    clearBibleSearchSession();
     syncDictionariesFromStore();
     if (store.getActiveMode() === 'dictionary') {
       const dState = getDictionaryViewState();
@@ -767,6 +815,10 @@ async function bootstrap() {
   initSelectionLookupBar({
     onLookup: (term) => openTermInDictionary(term, { searchAll: false }),
     onLookupAll: (term) => openTermInDictionary(term, { searchAll: true })
+  });
+
+  attachBibleSearchToLookupFab({
+    onSearchBible: (term) => openBibleSearchDialog(term, true)
   });
 
   bindShellEvents();
