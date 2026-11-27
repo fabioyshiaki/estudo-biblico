@@ -65,7 +65,18 @@ function getKindMeta(kind) {
       formatId: 'mysword_dct',
       extLabel: '.dct.mybible',
       pluralLabel: 'Dicionário(s)',
-      browserTitle: 'Navegador manual (Dicionários MySword .dct.mybible)'
+      browserTitle: 'Navegador manual (Dicionários MySword .dct.mybible)',
+      iconChar: '&#128213;'
+    };
+  }
+  if (kind === 'commentary') {
+    return {
+      resourceKind: 'commentary',
+      formatId: 'mysword_cmt',
+      extLabel: '.cmt.mybible',
+      pluralLabel: 'Comentário(s)',
+      browserTitle: 'Navegador manual (Comentários MySword .cmt.mybible)',
+      iconChar: '&#128216;'
     };
   }
   return {
@@ -73,15 +84,25 @@ function getKindMeta(kind) {
     formatId: 'mysword_bbl',
     extLabel: '.bbl.mybible',
     pluralLabel: 'Bíblia(s)',
-    browserTitle: 'Navegador manual (Bíblias MySword .bbl.mybible)'
+    browserTitle: 'Navegador manual (Bíblias MySword .bbl.mybible)',
+    iconChar: '&#128214;'
   };
+}
+
+function resolveInitialKind(initialKind) {
+  if (initialKind === 'dictionary' || initialKind === 'commentary' || initialKind === 'bible') {
+    return initialKind;
+  }
+  const activeMode = store.getActiveMode();
+  if (activeMode === 'dictionary' || activeMode === 'commentary') {
+    return activeMode;
+  }
+  return 'bible';
 }
 
 export function openSettingsModal({ initialTab = 'sources', initialKind = null } = {}) {
   let activeTab = initialTab;
-  let browserKind = initialKind === 'dictionary'
-    ? 'dictionary'
-    : (initialKind === 'bible' ? 'bible' : (store.getActiveMode() === 'dictionary' ? 'dictionary' : 'bible'));
+  let browserKind = resolveInitialKind(initialKind);
   let browserOpen = false;
   let browserRoots = [];
   let browserDir = null;
@@ -174,7 +195,7 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
         <div class="settings-card">
           <div class="row-title">Permissão de acesso aos arquivos</div>
           <p class="row-sub" style="margin: 6px 0 12px;">
-            Necessária apenas para abrir suas Bíblias e Dicionários diretamente em modo somente leitura, sem duplicar arquivos.
+            Necessária apenas para abrir suas Bíblias, Comentários e Dicionários diretamente em modo somente leitura, sem duplicar arquivos.
           </p>
           <div class="browser-actions">
             <button type="button" class="primary-btn" id="btn-req-perm">Conceder permissão</button>
@@ -193,6 +214,9 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
         <div class="browser-actions">
           <button type="button" class="${browserOpen && browserKind === 'bible' ? 'primary-btn' : 'secondary-btn'}" id="btn-browse-bibles" ${busy ? 'disabled' : ''}>
             + Bíblias (.bbl)
+          </button>
+          <button type="button" class="${browserOpen && browserKind === 'commentary' ? 'primary-btn' : 'secondary-btn'}" id="btn-browse-cmts" ${busy ? 'disabled' : ''}>
+            + Comentários (.cmt)
           </button>
           <button type="button" class="${browserOpen && browserKind === 'dictionary' ? 'primary-btn' : 'secondary-btn'}" id="btn-browse-dicts" ${busy ? 'disabled' : ''}>
             + Dicionários (.dct)
@@ -219,11 +243,10 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
         </button>
       `).join('');
 
-      const iconChar = browserKind === 'dictionary' ? '&#128213;' : '&#128214;';
       const filesHtml = (browserDir && browserDir.files || []).map((f) => `
         <div class="browser-item">
           <div class="row-main">
-            <div class="row-title">${iconChar} ${escapeHtml(f.name)}</div>
+            <div class="row-title">${meta.iconChar} ${escapeHtml(f.name)}</div>
             <div class="row-sub">${formatBytes(f.sizeBytes)} • Somente leitura</div>
           </div>
           <button type="button" class="primary-btn" data-add-file="${escapeHtml(f.path)}" ${busy ? 'disabled' : ''}>
@@ -264,7 +287,9 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
       const listHtml = state.sources.map((s) => {
         const unitLabel = s.resourceKind === 'dictionary'
           ? 'Dicionário(s)'
-          : (s.resourceKind === 'mixed' ? 'Módulo(s)' : 'Bíblia(s)');
+          : (s.resourceKind === 'commentary'
+            ? 'Comentário(s)'
+            : (s.resourceKind === 'mixed' ? 'Módulo(s)' : 'Bíblia(s)'));
         return `
           <div class="source-card">
             <div class="row-main">
@@ -305,6 +330,10 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
 
     modal.body.querySelector('#btn-browse-bibles')?.addEventListener('click', () => {
       openBrowserAt(browserDir ? browserDir.currentPath : '', 'bible');
+    });
+
+    modal.body.querySelector('#btn-browse-cmts')?.addEventListener('click', () => {
+      openBrowserAt(browserDir ? browserDir.currentPath : '', 'commentary');
     });
 
     modal.body.querySelector('#btn-browse-dicts')?.addEventListener('click', () => {
@@ -532,7 +561,6 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
       if (ok) {
         eventBus.emit(EVENTS.TOAST, 'Logs copiados! Agora é só colar na conversa.');
       } else {
-        // Fallback visual: abre caixa selecionável caso o WebView bloqueie cópia automática
         const box = modal.body.querySelector('#logs-list-box');
         if (box) {
           box.innerHTML =
