@@ -95,6 +95,12 @@
   text-align: right;
 }
 
+.verse-text .il-multi-sec > .il-vnum {
+  margin-top: 0;
+  margin-inline-end: 6px;
+  vertical-align: middle;
+}
+
 .verse-text .il-multi-badge {
   display: inline-flex;
   align-items: center;
