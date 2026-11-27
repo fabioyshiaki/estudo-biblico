@@ -13,6 +13,7 @@ const RE_LATIN = /[A-Za-z\u00C0-\u024F]/;
 const RE_INTERLINEAR_Q = /<Q(?:\s+[^>]*)?>[\s\S]*?(?:<\/Q>|<q>)/;
 const RE_INTERLINEAR_LAYER = /<(?:H|G|X|E)(?:\s+[^>]*)?>/;
 const RE_STRUCTURED_ROW = /<R(?:\s+[^>]*)?>[\s\S]*?<T1(?:\s+[^>]*)?>/;
+const RE_REF_EMBED = /<VT(?:\s+[^>]*)?>[\s\S]*?<\/?VT>|<(?:NT|OT)(?:\s+[^>]*)?>\s*(?:[123]\s*)?[A-Za-zÀ-ÿ]{2,6}\.?\s+\d+[:.]\d+(?:\s*[-–—]\s*\d+)?\s*<\/?(?:NT|OT)>/gi;
 const RE_PAIR_TAG = /<(heb|grk|gk|arm|orig)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>\s*<(hbint|grint|gkint|arint|int|trans)(?:\s+[^>]*)?>([\s\S]*?)<\/\3>/gi;
 const RE_ANCIENT_RUN = /([\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF][\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u0001\u0003\u00040-9\s\u05BE\u05C0\u05C3\u05F3\u05F4׃:־'’·;,.-]*[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF\u05C3:]|[\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF]+)/g;
 
@@ -58,7 +59,9 @@ export function hasHebrewScript(str) {
 
 export function isBilingualAncientText(str) {
   const s = String(str || '');
-  const plain = s.replace(/<[^>]*>/g, ' ');
+  const plain = s
+    .replace(RE_REF_EMBED, ' ')
+    .replace(/<[^>]*>/g, ' ');
   if (
     isLinguisticClauseHtml(s) ||
     isSupFontInterlinear(s) ||
