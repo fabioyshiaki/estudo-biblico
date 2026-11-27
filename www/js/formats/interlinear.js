@@ -24,7 +24,8 @@ const RESERVED_MULTI_TAGS = new Set([
   'DIV', 'SPAN', 'FONT', 'FR', 'FI', 'FO', 'FU', 'RF', 'TS', 'TS1',
   'TS2', 'TS3', 'CM', 'CL', 'CI', 'PI', 'PF', 'RX', 'VT', 'NT', 'OT',
   'WG', 'WH', 'WT', 'WL', 'KQ', 'TW', 'CN', 'E1', 'E2', 'V1', 'V2',
-  'NB1', 'NB2', 'BOX', 'WORD'
+  'NB1', 'NB2', 'BOX', 'WORD', 'LN', 'GN', 'MN', 'WN', 'TF', 'KO',
+  'LX', 'ES', 'IT', 'LT', 'ST', 'VR', 'VG', 'NO', 'BO', 'PM'
 ]);
 
 function escapeHtml(str) {
@@ -61,6 +62,10 @@ function formatClauseInlineHtml(raw) {
     .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
     .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
     .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
+    .replace(/&lt;FO&gt;/g, '<span class="v-quote">')
+    .replace(/&lt;\/?Fo&gt;|&lt;\/FO&gt;/g, '</span>')
+    .replace(/&lt;FU&gt;/g, '<u>')
+    .replace(/&lt;\/?Fu&gt;|&lt;\/FU&gt;/g, '</u>')
     .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
     .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
     .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
@@ -68,11 +73,16 @@ function formatClauseInlineHtml(raw) {
     .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
     .replace(/&lt;u&gt;/gi, '<u>')
     .replace(/&lt;\/u&gt;/gi, '</u>')
+    .replace(/&lt;sup&gt;/gi, '<sup>')
+    .replace(/&lt;\/sup&gt;/gi, '</sup>')
+    .replace(/&lt;sub&gt;/gi, '<sub>')
+    .replace(/&lt;\/sub&gt;/gi, '</sub>')
     .replace(/&lt;\/?[a-zA-Z][a-zA-Z0-9_:*.-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g, '');
 
   return safe
     .replace(/\u00A0/g, ' ')
-    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[\t\r\n]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
     .replace(/(?:<br>\s*)+$/, '')
     .replace(/^(?:<br>\s*)+/, '')
     .trim();
@@ -80,6 +90,46 @@ function formatClauseInlineHtml(raw) {
 
 export function hasHebrewScript(str) {
   return RE_HEBREW.test(String(str || ''));
+}
+
+function findMultiSectionBadges(source) {
+  const s = String(source || '');
+
+  // Mapeia intervalos de <Q>...<q> para não confundir nada interno com etiqueta de seção
+  const qRanges = [];
+  const qRe = /<Q(?:\s+[^>]*)?>[\s\S]*?(?:<\/Q>|<q>)/g;
+  let qm;
+  while ((qm = qRe.exec(s)) !== null) {
+    qRanges.push([qm.index, qRe.lastIndex]);
+  }
+  const insideQ = (pos) => qRanges.some(([start, end]) => pos >= start && pos < end);
+
+  const badgeRe = /<([A-Z][A-Z0-9_-]{1,9})(?:\s+[^>]*)?>\s*([^<>]{1,24}?)\s*(?:<\/([A-Za-z][A-Za-z0-9_-]{1,9})>|<([a-z][a-z0-9_-]{1,9})>)/g;
+  const matches = [];
+  let bm;
+
+  while ((bm = badgeRe.exec(s)) !== null) {
+    const tag = bm[1];
+    const closeTag = (bm[3] || bm[4] || '').toUpperCase();
+    if (closeTag !== tag) continue;
+    if (RESERVED_MULTI_TAGS.has(tag)) continue;
+    if (insideQ(bm.index)) continue;
+
+    const label = cleanText(bm[2]);
+    if (!label || !label.toUpperCase().startsWith(tag)) continue;
+
+    matches.push({
+      start: bm.index,
+      end: badgeRe.lastIndex,
+      label
+    });
+  }
+
+  return matches;
+}
+
+export function isMultiSectionText(str) {
+  return findMultiSectionBadges(str).length >= 2;
 }
 
 export function isReverseInterlinearQ(str) {
@@ -413,36 +463,7 @@ function renderMultiSectionQFlow(sectionRaw, badgeLabel, verseNum) {
 
 function parseMultiSectionInterlinear(rawHtml, verseNum) {
   const source = String(rawHtml || '');
-
-  // Mapeia intervalos de <Q>...<q> para não confundir nada interno com etiqueta de seção
-  const qRanges = [];
-  const qRe = /<Q(?:\s+[^>]*)?>[\s\S]*?(?:<\/Q>|<q>)/g;
-  let qm;
-  while ((qm = qRe.exec(source)) !== null) {
-    qRanges.push([qm.index, qRe.lastIndex]);
-  }
-  const insideQ = (pos) => qRanges.some(([s, e]) => pos >= s && pos < e);
-
-  const badgeRe = /<([A-Z][A-Z0-9]{1,7})>\s*([^<>]{1,20}?)\s*<\/([A-Za-z][A-Za-z0-9]{1,7})>/g;
-  const matches = [];
-  let bm;
-
-  while ((bm = badgeRe.exec(source)) !== null) {
-    const tag = bm[1];
-    const closeTag = bm[3].toUpperCase();
-    if (closeTag !== tag) continue;
-    if (RESERVED_MULTI_TAGS.has(tag)) continue;
-    if (insideQ(bm.index)) continue;
-
-    const label = cleanText(bm[2]);
-    if (!label || !label.toUpperCase().startsWith(tag)) continue;
-
-    matches.push({
-      start: bm.index,
-      end: badgeRe.lastIndex,
-      label
-    });
-  }
+  const matches = findMultiSectionBadges(source);
 
   if (matches.length < 2) return '';
 
@@ -467,7 +488,7 @@ function parseMultiSectionInterlinear(rawHtml, verseNum) {
     const dirStr = isRtl ? 'rtl' : 'ltr';
     const alignCls = isRtl ? 'is-rtl' : 'is-ltr';
     const hebrewCls = isRtl ? ' is-hebrew' : '';
-    const vnumHtml = showVnum ? `<span class="il-vnum">${showVnum}</span> ` : '';
+    const vnumHtml = showVnum ? `<span class="il-vnum">${showVnum}</span>` : '';
     const badgeHtml = `<span class="il-multi-badge" dir="ltr">${escapeHtml(cur.label)}</span>`;
 
     sections.push(
