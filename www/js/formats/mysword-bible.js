@@ -152,13 +152,21 @@ function restoreFootnotes(html, footnoteLabels = []) {
     });
 }
 
+function stripInlinePilcrow(str) {
+  return String(str || '')
+    .replace(/([.,;:!?])¶(?=\S)/g, '$1 ')
+    .replace(/[ \t]*¶(?=[ \t]|$|[.,;:!?)}\]])/g, '')
+    .replace(/¶/g, '');
+}
+
 function applyPilcrowInitialBold(html) {
-  return String(html || '')
-    .replace(
-      /¶\s*((?:<[^>]+>\s*)*)([\s—–\-“”‘’"'(\[«¡¿]*)(\p{L})/gu,
-      (_, tags, punct, letter) => `${tags}${punct}<strong class="v-para-initial">${letter}</strong>`
-    )
-    .replace(/¶\s*/g, '');
+  // Negrita a primeira letra apenas quando ¶ está no início do versículo/linha; no meio ou fim, apenas oculta ¶
+  const withLeadingBold = String(html || '').replace(
+    /(^|<br>\s*)((?:<[^>]+>\s*)*)¶\s*((?:<[^>]+>\s*)*)([\s—–\-“”‘’"'(\[«¡¿]*)(\p{L})/gu,
+    (_, lead, beforeTags, afterTags, punct, letter) =>
+      `${lead}${beforeTags}${afterTags}${punct}<strong class="v-para-initial">${letter}</strong>`
+  );
+  return stripInlinePilcrow(withLeadingBold);
 }
 
 function formatStandardInlineHtml(rawSegment) {
