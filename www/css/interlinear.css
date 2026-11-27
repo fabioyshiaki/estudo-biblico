@@ -5,6 +5,8 @@
   --il-translit-color: #964532;
   --il-t2-color: #16656c;
   --il-t3-color: #2f5597;
+  --il-strong-color: #1d5fa7;
+  --il-morph-color: #1d7a46;
 }
 
 :root[data-theme="light"] {
@@ -13,6 +15,8 @@
   --il-translit-color: #9c3b28;
   --il-t2-color: #0f6b70;
   --il-t3-color: #24519c;
+  --il-strong-color: #1b63b8;
+  --il-morph-color: #18794e;
 }
 
 :root[data-theme="sepia"] {
@@ -21,6 +25,8 @@
   --il-translit-color: #8c3f26;
   --il-t2-color: #1f5f61;
   --il-t3-color: #2e4f82;
+  --il-strong-color: #215996;
+  --il-morph-color: #217042;
 }
 
 :root[data-theme="dark"] {
@@ -29,6 +35,8 @@
   --il-translit-color: #d9826c;
   --il-t2-color: #63c5ce;
   --il-t3-color: #82aaff;
+  --il-strong-color: #6cb0ff;
+  --il-morph-color: #52c97a;
 }
 
 .reader-content.has-interlinear {
@@ -112,6 +120,11 @@
   gap: 8px 6px;
 }
 
+.verse-text .il-rev-flow {
+  gap: 8px 6px;
+  align-items: stretch;
+}
+
 .verse-text .il-vnum {
   display: inline-flex;
   align-items: center;
@@ -146,6 +159,81 @@
   border-radius: var(--radius-sm);
   background: var(--il-card-bg);
   border: 1px solid var(--border);
+}
+
+.verse-text .il-rev-stack {
+  gap: 2px;
+  min-width: 52px;
+  padding: 5px 8px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--il-card-bg);
+  border: 1px solid var(--border);
+}
+
+.verse-text .il-rev-en {
+  display: block;
+  min-height: 1.24em;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.76em;
+  font-weight: 500;
+  line-height: 1.24;
+  color: var(--text-muted);
+}
+
+.verse-text .il-rev-en.is-allcaps {
+  font-size: 0.68em;
+  letter-spacing: 0.02em;
+}
+
+.verse-text .il-rev-en.is-empty {
+  opacity: 0.25;
+}
+
+.verse-text .il-rev-lex-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.verse-text .il-rev-lex {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 4px;
+  min-height: 1.22em;
+  font-family: var(--font-ui);
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.22;
+}
+
+.verse-text .il-rev-lex.is-empty {
+  opacity: 0.25;
+}
+
+.verse-text .il-rev-lex .il-rev-tag {
+  font-size: 1em;
+  line-height: 1.22;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  font-weight: 600;
+}
+
+.verse-text .il-rev-lex .il-rev-strong {
+  color: var(--il-strong-color);
+}
+
+.verse-text .il-rev-lex .il-rev-morph {
+  color: var(--il-morph-color);
 }
 
 .verse-text .il-strong-line {
