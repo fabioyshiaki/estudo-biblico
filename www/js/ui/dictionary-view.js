@@ -14,6 +14,7 @@ import { parseBibleReference } from '../core/bible-refs.js';
 import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
 import { ensureCompanionStyles } from '../formats/companion-dicts.js';
 import { openDictionaryTermsModal } from './dictionary-terms-modal.js';
+import { appLogger } from '../core/logger.js';
 
 const SEARCH_OPTS_STORAGE_KEY = 'estudo_biblico_dct_search_opts_v1';
 
@@ -44,7 +45,7 @@ const viewState = {
   searchOptions: loadSavedSearchOptions(),
   optionsOpen: false,
   searchScope: 'current', // 'current' | 'all'
-  mode: 'entry',          // 'entry' | 'results' | 'loading' | 'empty'
+  mode: 'entry',          // 'entry' | 'results' | 'loading' | 'empty' | 'error'
   statusText: '',
   results: [],
   history: [],            // [{ modulePath, word, filterTerm }]
@@ -56,6 +57,7 @@ let isSteppingDict = false;
 
 let callbacks = {
   onOpenSources: () => {},
+  onOpenLogs: () => {},
   onOpenFootnote: () => {},
   onNavigateBible: () => {},
   onStateMetaChange: () => {},
@@ -182,6 +184,8 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
   const imgs = Array.from(rootEl.querySelectorAll('img[data-dct-img-src]'));
   if (!imgs.length) return;
 
+  const modName = modulePath.split(/[\\/]/).pop() || modulePath;
+
   for (const img of imgs) {
     if (seq !== imageRenderSeq) return;
     const rawSrc = img.getAttribute('data-dct-img-src') || '';
@@ -195,10 +199,21 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
       });
       if (seq !== imageRenderSeq) return;
 
-      const resolvedUrl = res && res.url ? res.url : '';
+      const resolvedUrl = typeof res === 'string'
+        ? res
+        : (res && res.url ? res.url : '');
+      const errReason = res && typeof res === 'object' && res.error
+        ? res.error
+        : 'não encontrada';
+
       if (!resolvedUrl) {
         img.classList.remove('is-loading');
-        showImageErrorHint(picEl, rawSrc, res && res.error ? res.error : 'não encontrada');
+        appLogger.warn('DICT_IMG', `Imagem não carregada (${rawSrc}) em ${modName}: ${errReason}`, {
+          module: modName,
+          src: rawSrc,
+          fallbackUrl
+        });
+        showImageErrorHint(picEl, rawSrc, errReason);
         continue;
       }
 
@@ -207,6 +222,11 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
       };
       img.onerror = () => {
         img.classList.remove('is-loading');
+        appLogger.warn('DICT_IMG', `Falha ao decodificar imagem (${rawSrc}) no WebView`, {
+          module: modName,
+          src: rawSrc,
+          urlPreview: String(resolvedUrl).slice(0, 90)
+        });
         showImageErrorHint(picEl, rawSrc, 'falha ao decodificar no WebView');
       };
       img.src = resolvedUrl;
@@ -215,8 +235,10 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
       }
     } catch (err) {
       if (seq !== imageRenderSeq) return;
+      const reason = err && err.message ? err.message : 'erro inesperado';
       img.classList.remove('is-loading');
-      showImageErrorHint(picEl, rawSrc, err && err.message ? err.message : 'erro inesperado');
+      appLogger.error('DICT_IMG', `Exceção ao carregar imagem (${rawSrc}) em ${modName}: ${reason}`, err);
+      showImageErrorHint(picEl, rawSrc, reason);
     }
   }
 }
@@ -324,7 +346,6 @@ export async function stepDictionaryModule(delta) {
 
   const activeFilter = normalizeLookupTerm(viewState.filterTerm);
 
-  // Quando há um termo pesquisado ativo, navega apenas entre os dicionários que contêm o termo
   if (activeFilter) {
     isSteppingDict = true;
     try {
@@ -378,6 +399,9 @@ export async function stepDictionaryModule(delta) {
         keepFilterTerm: true,
         directWord: true
       });
+    } catch (err) {
+      appLogger.error('DICT_STEP', `Erro ao alternar dicionário para "${activeFilter}"`, err);
+      callbacks.onToast('Erro ao alternar dicionário. Verifique Configurações → Logs.');
     } finally {
       isSteppingDict = false;
     }
@@ -423,9 +447,11 @@ export async function loadFirstOrCurrentEntry() {
     viewState.mode = first ? 'entry' : 'empty';
     viewState.statusText = first ? '' : 'Nenhum verbete encontrado neste dicionário.';
   } catch (err) {
+    const msg = err && err.message ? err.message : 'Erro ao ler dicionário.';
+    appLogger.error('DICT_LOAD', `Falha ao abrir primeiro verbete de ${getModuleLabel(mod)}: ${msg}`, err);
     viewState.currentEntry = null;
-    viewState.mode = 'empty';
-    viewState.statusText = err && err.message ? err.message : 'Erro ao ler dicionário.';
+    viewState.mode = 'error';
+    viewState.statusText = msg;
   }
 
   notifyMeta();
@@ -469,7 +495,6 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     ? viewState.dictionaries.find((m) => m.path === options.modulePath)
     : getActiveModule();
 
-  // Ao abrir um verbete já selecionado de uma lista/histórico, ignora restrições rígidas para garantir abertura
   const lookupOpts = options.directWord
     ? { accentSensitive: false, caseSensitive: false, searchAltWords: true, favoritesOnly: false }
     : { ...viewState.searchOptions };
@@ -533,8 +558,14 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     return false;
   } catch (err) {
     if (controller.signal.aborted) return false;
-    viewState.mode = 'empty';
-    viewState.statusText = err && err.message ? err.message : 'Erro ao consultar dicionário.';
+    const msg = err && err.message ? err.message : 'Erro ao consultar dicionário.';
+    appLogger.error('DICT_OPEN', `Falha ao abrir verbete "${clean}": ${msg}`, {
+      module: preferredMod ? (preferredMod.fileName || preferredMod.abbr) : '',
+      options: lookupOpts,
+      error: err
+    });
+    viewState.mode = 'error';
+    viewState.statusText = msg;
     renderDictionaryView();
     return false;
   }
@@ -572,6 +603,7 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
   viewState.searchOptions = mergedOpts;
   saveSearchOptions(mergedOpts);
 
+  const activeMod = getActiveModule();
   const targetCount = scope === 'all'
     ? (mergedOpts.favoritesOnly
       ? viewState.dictionaries.filter((m) => m.isFavorite).length
@@ -591,7 +623,7 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
   viewState.results = [];
   viewState.statusText = scope === 'all'
     ? `Buscando "${clean}" em ${targetCount} dicionário(s)...`
-    : `Buscando "${clean}"...`;
+    : `Buscando "${clean}" em ${getModuleLabel(activeMod)}...`;
   renderDictionaryView();
 
   try {
@@ -620,15 +652,14 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
         ? `${hits.length} resultado(s) para "${clean}" ${scopeLabel}`
         : `Nenhum resultado para "${clean}" ${scopeLabel} com os filtros ativos.`;
     } else {
-      const mod = getActiveModule();
-      const hits = await myswordDictionaryAdapter.searchEntries(mod.path, clean, {
+      const hits = await myswordDictionaryAdapter.searchEntries(activeMod.path, clean, {
         ...mergedOpts,
         limit: 50
       });
       if (controller.signal.aborted) return;
 
       viewState.results = hits.map((h) => ({
-        module: mod,
+        module: activeMod,
         word: h.word,
         matchType: h.matchType,
         snippet: h.snippet,
@@ -636,16 +667,22 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
       }));
       viewState.mode = 'results';
       viewState.statusText = hits.length
-        ? `${hits.length} resultado(s) para "${clean}" em ${getModuleLabel(mod)}`
-        : `Nenhum resultado para "${clean}" em ${getModuleLabel(mod)} com os filtros ativos.`;
+        ? `${hits.length} resultado(s) para "${clean}" em ${getModuleLabel(activeMod)}`
+        : `Nenhum resultado para "${clean}" em ${getModuleLabel(activeMod)} com os filtros ativos.`;
     }
 
     notifyMeta();
     renderDictionaryView({ resetScroll: true });
   } catch (err) {
     if (controller.signal.aborted) return;
-    viewState.mode = 'empty';
-    viewState.statusText = err && err.message ? err.message : 'Falha ao buscar nos dicionários.';
+    const msg = err && err.message ? err.message : 'Falha ao buscar nos dicionários.';
+    appLogger.error('DICT_SEARCH', `Erro na busca "${clean}" (${scope}): ${msg}`, {
+      module: activeMod ? (activeMod.fileName || activeMod.abbr) : '',
+      options: mergedOpts,
+      error: err
+    });
+    viewState.mode = 'error';
+    viewState.statusText = msg;
     renderDictionaryView();
   }
 }
@@ -668,6 +705,7 @@ export async function stepDictionaryEntry(direction) {
     notifyMeta();
     renderDictionaryView({ resetScroll: true });
   } catch (err) {
+    appLogger.error('DICT_ADJ', `Erro ao avançar verbete em ${getModuleLabel(mod)}`, err);
     callbacks.onToast('Não foi possível avançar o verbete.');
   }
 }
@@ -692,8 +730,18 @@ export function canGoBackDictionaryHistory() {
   return viewState.history.length > 0;
 }
 
-function updateSearchOptionsAndRefresh(nextPartial, rootEl) {
-  const input = rootEl ? rootEl.querySelector('#dct-search-input') : null;
+function rerenderHeaderOnly() {
+  const headerZone = document.getElementById('dct-header-zone');
+  if (!headerZone) {
+    renderDictionaryView({ resetScroll: false });
+    return;
+  }
+  headerZone.innerHTML = `${buildToolbarHtml()}${buildOptionsSectionHtml()}`;
+  bindHeaderEvents(headerZone);
+}
+
+function updateSearchOptionsAndRefresh(nextPartial, headerZone) {
+  const input = headerZone ? headerZone.querySelector('#dct-search-input') : null;
   if (input) {
     viewState.query = input.value || '';
   }
@@ -708,7 +756,8 @@ function updateSearchOptionsAndRefresh(nextPartial, rootEl) {
   if (viewState.mode === 'results' && normalizeLookupTerm(viewState.query)) {
     searchDictionaryTerm(viewState.query, { scope: viewState.searchScope });
   } else {
-    renderDictionaryView({ resetScroll: false });
+    // Atualiza apenas barra e painel de opções sem recarregar o verbete aberto nem suas imagens
+    rerenderHeaderOnly();
   }
 }
 
@@ -796,7 +845,28 @@ function buildOptionsSectionHtml() {
   );
 }
 
+function buildErrorHtml() {
+  const restoreBtn = viewState.currentEntry && viewState.currentEntry.word
+    ? `<button type="button" class="dct-action-btn is-primary" id="dct-btn-restore-entry">Voltar para "${escapeHtml(viewState.currentEntry.word)}"</button>`
+    : '';
+
+  return (
+    '<div class="empty-state">' +
+      '<h2>Erro na consulta</h2>' +
+      `<p>${escapeHtml(viewState.statusText || 'Ocorreu uma falha ao consultar o dicionário.')}</p>` +
+      '<div class="empty-state-actions">' +
+        restoreBtn +
+        '<button type="button" class="dct-action-btn" id="dct-btn-open-logs">Abrir Logs</button>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
 function buildResultsHtml() {
+  const restoreBtn = viewState.currentEntry && viewState.currentEntry.word
+    ? `<button type="button" class="dct-action-btn" id="dct-btn-restore-entry">Voltar para "${escapeHtml(viewState.currentEntry.word)}"</button>`
+    : '';
+
   if (!viewState.results.length) {
     const actions = [];
     if (viewState.searchScope !== 'all') {
@@ -804,6 +874,9 @@ function buildResultsHtml() {
     }
     if (!viewState.searchOptions.searchBody) {
       actions.push('<button type="button" class="dct-action-btn" id="dct-btn-retry-body">Buscar também no texto</button>');
+    }
+    if (restoreBtn) {
+      actions.push(restoreBtn);
     }
     const actionsHtml = actions.length
       ? `<div class="empty-state-actions">${actions.join('')}</div>`
@@ -840,10 +913,15 @@ function buildResultsHtml() {
     );
   }).join('');
 
-  return (
-    `<div class="chapter-subtitle" style="margin:0 2px;">${escapeHtml(viewState.statusText)}</div>` +
-    `<div class="dct-results-list">${itemsHtml}</div>`
-  );
+  const topBar =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 2px;">' +
+      `<div class="chapter-subtitle" style="margin:0;">${escapeHtml(viewState.statusText)}</div>` +
+      (viewState.currentEntry && viewState.currentEntry.word
+        ? `<button type="button" class="dct-action-btn" id="dct-btn-restore-entry" style="height:30px;padding:0 10px;font-size:12px;">Voltar para "${escapeHtml(viewState.currentEntry.word)}"</button>`
+        : '') +
+    '</div>';
+
+  return `${topBar}<div class="dct-results-list">${itemsHtml}</div>`;
 }
 
 function buildEntryHtml() {
@@ -877,9 +955,9 @@ function buildEntryHtml() {
   );
 }
 
-function bindRenderedEvents(rootEl) {
-  const form = rootEl.querySelector('#dct-search-form');
-  const input = rootEl.querySelector('#dct-search-input');
+function bindHeaderEvents(headerZone) {
+  const form = headerZone.querySelector('#dct-search-form');
+  const input = headerZone.querySelector('#dct-search-input');
 
   if (input) {
     input.addEventListener('input', () => {
@@ -900,75 +978,89 @@ function bindRenderedEvents(rootEl) {
     });
   }
 
-  rootEl.querySelector('#dct-btn-terms')?.addEventListener('click', () => {
+  headerZone.querySelector('#dct-btn-back')?.addEventListener('click', () => {
+    goBackDictionaryHistory();
+  });
+
+  headerZone.querySelector('#dct-btn-terms')?.addEventListener('click', () => {
     openActiveDictionaryTerms();
   });
 
-  rootEl.querySelector('#dct-btn-search-all')?.addEventListener('click', () => {
+  headerZone.querySelector('#dct-btn-search-all')?.addEventListener('click', () => {
     const term = input ? input.value : viewState.query;
     searchDictionaryTerm(term, { scope: 'all' });
   });
 
-  rootEl.querySelector('#dct-btn-opts')?.addEventListener('click', () => {
+  headerZone.querySelector('#dct-btn-opts')?.addEventListener('click', () => {
     if (input) viewState.query = input.value || '';
     viewState.optionsOpen = !viewState.optionsOpen;
-    renderDictionaryView({ resetScroll: false });
+    rerenderHeaderOnly();
   });
 
-  rootEl.querySelectorAll('[data-open-opts]').forEach((pill) => {
+  headerZone.querySelectorAll('[data-open-opts]').forEach((pill) => {
     pill.addEventListener('click', () => {
       if (input) viewState.query = input.value || '';
       viewState.optionsOpen = true;
-      renderDictionaryView({ resetScroll: false });
+      rerenderHeaderOnly();
     });
   });
 
-  rootEl.querySelectorAll('[data-opt-mode]').forEach((btn) => {
+  headerZone.querySelectorAll('[data-opt-mode]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.getAttribute('data-opt-mode') || 'contains';
       if (mode === viewState.searchOptions.matchMode) return;
-      updateSearchOptionsAndRefresh({ matchMode: mode }, rootEl);
+      updateSearchOptionsAndRefresh({ matchMode: mode }, headerZone);
     });
   });
 
-  rootEl.querySelectorAll('[data-opt-toggle]').forEach((btn) => {
+  headerZone.querySelectorAll('[data-opt-toggle]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const key = btn.getAttribute('data-opt-toggle') || '';
       if (!key || !Object.prototype.hasOwnProperty.call(viewState.searchOptions, key)) return;
-      updateSearchOptionsAndRefresh({ [key]: !viewState.searchOptions[key] }, rootEl);
+      updateSearchOptionsAndRefresh({ [key]: !viewState.searchOptions[key] }, headerZone);
     });
   });
 
-  rootEl.querySelector('#dct-btn-reset-opts')?.addEventListener('click', () => {
-    updateSearchOptionsAndRefresh({ ...DEFAULT_DICT_SEARCH_OPTIONS }, rootEl);
+  headerZone.querySelector('#dct-btn-reset-opts')?.addEventListener('click', () => {
+    updateSearchOptionsAndRefresh({ ...DEFAULT_DICT_SEARCH_OPTIONS }, headerZone);
   });
+}
 
-  rootEl.querySelector('#dct-btn-retry-all')?.addEventListener('click', () => {
+function bindBodyEvents(bodyZone) {
+  bodyZone.querySelector('#dct-btn-retry-all')?.addEventListener('click', () => {
     searchDictionaryTerm(viewState.query, { scope: 'all' });
   });
 
-  rootEl.querySelector('#dct-btn-retry-body')?.addEventListener('click', () => {
+  bodyZone.querySelector('#dct-btn-retry-body')?.addEventListener('click', () => {
     searchDictionaryTerm(viewState.query, {
       scope: viewState.searchScope,
       searchBody: true
     });
   });
 
-  rootEl.querySelector('#dct-btn-back')?.addEventListener('click', () => {
-    goBackDictionaryHistory();
+  bodyZone.querySelector('#dct-btn-restore-entry')?.addEventListener('click', () => {
+    if (viewState.currentEntry) {
+      viewState.mode = 'entry';
+      viewState.statusText = '';
+      renderDictionaryView({ resetScroll: false });
+    }
   });
 
-  rootEl.querySelector('#dct-btn-compare-all')?.addEventListener('click', () => {
+  bodyZone.querySelector('#dct-btn-open-logs')?.addEventListener('click', () => {
+    callbacks.onOpenLogs();
+  });
+
+  bodyZone.querySelector('#dct-btn-compare-all')?.addEventListener('click', () => {
     if (viewState.currentEntry && viewState.currentEntry.word) {
       searchDictionaryTerm(viewState.currentEntry.word, { scope: 'all' });
     }
   });
 
-  rootEl.querySelector('#dct-btn-open-sources')?.addEventListener('click', () => {
+  bodyZone.querySelector('#dct-btn-open-sources')?.addEventListener('click', () => {
     callbacks.onOpenSources();
   });
 
-  rootEl.addEventListener('click', (ev) => {
+  bodyZone.addEventListener('click', (ev) => {
     const imgEl = ev.target.closest('img.dct-img');
     if (imgEl && !imgEl.classList.contains('is-loading') && (imgEl.currentSrc || imgEl.src)) {
       ev.stopPropagation();
@@ -1080,6 +1172,8 @@ export function renderDictionaryView(options = {}) {
       '<div class="empty-state">' +
         `<p id="dct-loading-status">${escapeHtml(viewState.statusText || 'Carregando...')}</p>` +
       '</div>';
+  } else if (viewState.mode === 'error') {
+    bodyHtml = buildErrorHtml();
   } else if (viewState.mode === 'results') {
     bodyHtml = buildResultsHtml();
   } else {
@@ -1087,15 +1181,24 @@ export function renderDictionaryView(options = {}) {
   }
 
   container.innerHTML =
-    `<div class="dct-reader">${buildToolbarHtml()}${buildOptionsSectionHtml()}${bodyHtml}</div>`;
-  const rootEl = container.querySelector('.dct-reader');
-  if (rootEl) {
-    bindRenderedEvents(rootEl);
+    '<div class="dct-reader">' +
+      `<div id="dct-header-zone" style="display:flex;flex-direction:column;gap:10px;">${buildToolbarHtml()}${buildOptionsSectionHtml()}</div>` +
+      `<div id="dct-body-zone" style="display:flex;flex-direction:column;gap:12px;">${bodyHtml}</div>` +
+    '</div>';
+
+  const headerZone = container.querySelector('#dct-header-zone');
+  const bodyZone = container.querySelector('#dct-body-zone');
+
+  if (headerZone) {
+    bindHeaderEvents(headerZone);
+  }
+  if (bodyZone) {
+    bindBodyEvents(bodyZone);
 
     if (viewState.mode === 'entry' && viewState.currentEntry && viewState.currentEntry.hasImages) {
       const mod = getActiveModule();
       if (mod) {
-        hydrateDictionaryImages(rootEl, mod.path, viewState.currentEntry.raw || '', imgSeq);
+        hydrateDictionaryImages(bodyZone, mod.path, viewState.currentEntry.raw || '', imgSeq);
       }
     }
   }
