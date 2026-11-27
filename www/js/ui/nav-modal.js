@@ -22,7 +22,7 @@ function normalizeSearch(str) {
     .trim();
 }
 
-function matchesBibleQuery(mod, terms) {
+function matchesModuleQuery(mod, terms) {
   if (!terms.length) return true;
   const haystack = normalizeSearch(
     `${mod.abbr || ''} ${mod.title || ''} ${mod.language || ''} ${mod.fileName || ''}`
@@ -99,15 +99,24 @@ export function openFootnoteModal(refLabel, text) {
   modal.body.innerHTML = `<div class="footnote-box">${escapeHtml(text)}</div>`;
 }
 
-export function openBiblePickerModal({ onOpenSources } = {}) {
-  const modal = openModalShell({ title: 'Selecionar Bíblia' });
+function openModulePickerModal({
+  title,
+  emptyTitle,
+  emptyDesc,
+  unitLabel,
+  getList,
+  getActive,
+  onSelect,
+  onOpenSources
+}) {
+  const modal = openModalShell({ title });
   if (!modal || !modal.body) return;
 
-  if (!store.getBibles().length) {
+  if (!getList().length) {
     modal.body.innerHTML = `
       <div class="empty-state">
-        <h2>Nenhuma Bíblia registrada</h2>
-        <p>Adicione um arquivo .bbl.mybible ou uma pasta em Configurações → Fontes.</p>
+        <h2>${escapeHtml(emptyTitle)}</h2>
+        <p>${escapeHtml(emptyDesc)}</p>
         <button type="button" class="primary-btn" id="btn-go-sources">Configurar Fontes</button>
       </div>
     `;
@@ -121,34 +130,34 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   let searchQuery = '';
 
   modal.body.innerHTML = `
-    <div class="picker-search-wrap" id="bible-search-wrap">
+    <div class="picker-search-wrap" id="mod-search-wrap">
       <div class="search-input-box">
         <input
           type="search"
-          id="bible-search-input"
+          id="mod-search-input"
           class="search-input"
           placeholder="Buscar por abreviação, descrição ou arquivo..."
           autocomplete="off"
           autocorrect="off"
           spellcheck="false"
         />
-        <button type="button" id="bible-search-clear" class="search-clear-btn hidden" aria-label="Limpar busca">&times;</button>
+        <button type="button" id="mod-search-clear" class="search-clear-btn hidden" aria-label="Limpar busca">&times;</button>
       </div>
-      <div class="picker-meta" id="bible-picker-meta"></div>
+      <div class="picker-meta" id="mod-picker-meta"></div>
     </div>
-    <div class="module-list" id="bible-picker-list"></div>
+    <div class="module-list" id="mod-picker-list"></div>
     <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
       <button type="button" class="secondary-btn" id="btn-manage-sources">Gerenciar fontes</button>
     </div>
   `;
 
-  const searchWrap = modal.body.querySelector('#bible-search-wrap');
-  const inputEl = modal.body.querySelector('#bible-search-input');
-  const clearBtn = modal.body.querySelector('#bible-search-clear');
-  const metaEl = modal.body.querySelector('#bible-picker-meta');
-  const listEl = modal.body.querySelector('#bible-picker-list');
+  const searchWrap = modal.body.querySelector('#mod-search-wrap');
+  const inputEl = modal.body.querySelector('#mod-search-input');
+  const clearBtn = modal.body.querySelector('#mod-search-clear');
+  const metaEl = modal.body.querySelector('#mod-picker-meta');
+  const listEl = modal.body.querySelector('#mod-picker-list');
 
-  function scrollActiveBibleToTop() {
+  function scrollActiveToTop() {
     window.requestAnimationFrame(() => {
       const activeRow = listEl && listEl.querySelector('.module-row.active');
       if (!activeRow) return;
@@ -158,27 +167,27 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   }
 
   function renderRows() {
-    const bibles = store.getBibles();
-    const active = store.getActiveBible();
+    const items = getList();
+    const active = getActive();
     const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
     const sortLabel = sortBy === 'title' ? 'Descrição' : 'Abreviação';
 
     const norm = normalizeSearch(searchQuery);
     const terms = norm ? norm.split(/\s+/).filter(Boolean) : [];
-    const filtered = bibles.filter((m) => matchesBibleQuery(m, terms));
+    const filtered = items.filter((m) => matchesModuleQuery(m, terms));
 
     clearBtn?.classList.toggle('hidden', !searchQuery.length);
 
     if (metaEl) {
       metaEl.textContent = terms.length
-        ? `${filtered.length} de ${bibles.length} Bíblia(s) • Ordem: ${sortLabel}`
-        : `${bibles.length} Bíblia(s) • Ordem: ${sortLabel}`;
+        ? `${filtered.length} de ${items.length} ${unitLabel} • Ordem: ${sortLabel}`
+        : `${items.length} ${unitLabel} • Ordem: ${sortLabel}`;
     }
 
     if (!listEl) return;
 
     if (!filtered.length) {
-      listEl.innerHTML = `<div class="picker-empty">Nenhuma Bíblia encontrada para "${escapeHtml(searchQuery.trim())}".</div>`;
+      listEl.innerHTML = `<div class="picker-empty">Nenhum módulo encontrado para "${escapeHtml(searchQuery.trim())}".</div>`;
       return;
     }
 
@@ -214,7 +223,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
     if (searchQuery.trim()) {
       modal.body.scrollTop = 0;
     } else {
-      scrollActiveBibleToTop();
+      scrollActiveToTop();
     }
   });
 
@@ -225,7 +234,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
       inputEl.focus();
     }
     renderRows();
-    scrollActiveBibleToTop();
+    scrollActiveToTop();
   });
 
   listEl?.addEventListener('click', async (ev) => {
@@ -248,7 +257,7 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
 
     const selectBtn = ev.target.closest('[data-select-path]');
     if (selectBtn) {
-      store.setActiveModule(selectBtn.dataset.selectPath);
+      onSelect(selectBtn.dataset.selectPath);
       closeModal();
     }
   });
@@ -259,7 +268,33 @@ export function openBiblePickerModal({ onOpenSources } = {}) {
   });
 
   renderRows();
-  scrollActiveBibleToTop();
+  scrollActiveToTop();
+}
+
+export function openBiblePickerModal({ onOpenSources } = {}) {
+  openModulePickerModal({
+    title: 'Selecionar Bíblia',
+    emptyTitle: 'Nenhuma Bíblia registrada',
+    emptyDesc: 'Adicione um arquivo .bbl.mybible ou uma pasta em Configurações → Fontes.',
+    unitLabel: 'Bíblia(s)',
+    getList: () => store.getBibles(),
+    getActive: () => store.getActiveBible(),
+    onSelect: (path) => store.setActiveModule(path),
+    onOpenSources
+  });
+}
+
+export function openDictionaryPickerModal({ onOpenSources } = {}) {
+  openModulePickerModal({
+    title: 'Selecionar Dicionário',
+    emptyTitle: 'Nenhum Dicionário registrado',
+    emptyDesc: 'Adicione um arquivo .dct.mybible ou uma pasta em Configurações → Fontes.',
+    unitLabel: 'Dicionário(s)',
+    getList: () => store.getDictionaries(),
+    getActive: () => store.getActiveDictionary(),
+    onSelect: (path) => store.setActiveDictionary(path),
+    onOpenSources
+  });
 }
 
 export async function openLocationPickerModal() {
@@ -385,5 +420,3 @@ export async function openLocationPickerModal() {
 
   renderBooks();
 }
-
-// FIM nav-modal.js
