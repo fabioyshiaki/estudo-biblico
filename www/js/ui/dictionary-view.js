@@ -4,9 +4,9 @@ import {
 } from '../formats/mysword-dictionary.js';
 import {
   lookupExactAcrossDictionaries,
-  searchAcrossDictionaries,
-  parseBibleReference
+  searchAcrossDictionaries
 } from '../formats/dictionary-lookup.js';
+import { parseBibleReference } from '../core/bible-refs.js';
 import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
 import { ensureCompanionStyles } from '../formats/companion-dicts.js';
 
@@ -655,8 +655,26 @@ function bindRenderedEvents(rootEl) {
 
     const dctLink = ev.target.closest('[data-dct-lookup]');
     if (dctLink) {
-      const term = dctLink.getAttribute('data-dct-lookup') || '';
-      const modHint = dctLink.getAttribute('data-dct-module') || '';
+      const term = (dctLink.getAttribute('data-dct-lookup') || '').trim();
+      const modHint = (dctLink.getAttribute('data-dct-module') || '').trim();
+      const labelTxt = (dctLink.textContent || '').trim();
+
+      // Garantia extra: qualquer link cuja meta ou rótulo seja uma passagem bíblica vai direto para a Bíblia
+      const isExplicitBible = /^#?(?:rx|b|v)[\s.:_-]*(?:\d|[A-Za-zÀ-ÿ])|^tw:\/\/bible|^bible:/i.test(term);
+      const bibleTarget = isExplicitBible
+        ? parseBibleReference(term, { allowChapterOnly: true })
+        : (!modHint
+          ? (parseBibleReference(term, { allowChapterOnly: false, allowNumeric: false })
+            || parseBibleReference(labelTxt, { allowChapterOnly: false, allowNumeric: false }))
+          : null);
+
+      if (bibleTarget) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        callbacks.onNavigateBible(bibleTarget);
+        return;
+      }
+
       if (term) {
         openDictionaryEntry(term, {
           moduleHint: modHint,
@@ -669,12 +687,15 @@ function bindRenderedEvents(rootEl) {
 
     const bibleLink = ev.target.closest('[data-bible-ref]');
     if (bibleLink) {
-      const rawRef = bibleLink.getAttribute('data-bible-ref') || bibleLink.textContent || '';
-      const parsed = parseBibleReference(rawRef);
+      const attrRaw = bibleLink.getAttribute('data-bible-ref') || '';
+      const textRaw = (bibleLink.textContent || '').trim();
+      const parsed =
+        parseBibleReference(attrRaw, { allowChapterOnly: true }) ||
+        parseBibleReference(textRaw, { allowChapterOnly: false, allowNumeric: false });
       if (parsed) {
         callbacks.onNavigateBible(parsed);
       } else {
-        callbacks.onToast(`Referência não reconhecida: ${rawRef}`);
+        callbacks.onToast(`Referência não reconhecida: ${attrRaw || textRaw}`);
       }
       return;
     }
@@ -754,16 +775,22 @@ export function initSelectionLookupBar({ onLookup, onLookupAll }) {
     fab.className = 'lookup-fab hidden';
     fab.innerHTML =
       '<span class="lookup-fab-term" id="lookup-fab-term"></span>' +
+      '<button type="button" class="lookup-fab-btn hidden" id="lookup-fab-bible">Bíblia</button>' +
       '<button type="button" class="lookup-fab-btn" id="lookup-fab-one">Dicionário</button>' +
       '<button type="button" class="lookup-fab-btn" id="lookup-fab-all">Todos</button>';
     document.body.appendChild(fab);
   }
 
   let selectedTerm = '';
+  let selectedBibleRef = null;
   let hideTimer = null;
+
+  const bibleBtn = fab.querySelector('#lookup-fab-bible');
 
   const hideFab = () => {
     selectedTerm = '';
+    selectedBibleRef = null;
+    if (bibleBtn) bibleBtn.classList.add('hidden');
     fab.classList.add('hidden');
   };
 
@@ -788,6 +815,11 @@ export function initSelectionLookupBar({ onLookup, onLookupAll }) {
     }
 
     selectedTerm = clean;
+    selectedBibleRef = parseBibleReference(clean, { allowChapterOnly: false, allowNumeric: false });
+    if (bibleBtn) {
+      bibleBtn.classList.toggle('hidden', !selectedBibleRef);
+    }
+
     const termEl = fab.querySelector('#lookup-fab-term');
     if (termEl) termEl.textContent = clean;
     fab.classList.remove('hidden');
@@ -796,6 +828,14 @@ export function initSelectionLookupBar({ onLookup, onLookupAll }) {
   document.addEventListener('selectionchange', () => {
     if (hideTimer) window.clearTimeout(hideTimer);
     hideTimer = window.setTimeout(updateFromSelection, 160);
+  });
+
+  bibleBtn?.addEventListener('click', () => {
+    const target = selectedBibleRef;
+    if (!target) return;
+    window.getSelection?.()?.removeAllRanges?.();
+    hideFab();
+    callbacks.onNavigateBible(target);
   });
 
   fab.querySelector('#lookup-fab-one')?.addEventListener('click', () => {
