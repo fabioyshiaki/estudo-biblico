@@ -4,6 +4,7 @@ import {
   buildLookupCandidates,
   normalizeDictSearchOptions
 } from './mysword-dictionary.js';
+import { appLogger } from '../core/logger.js';
 
 const TERM_PRESENCE_CACHE_LIMIT = 40;
 const termPresenceCache = new Map();
@@ -306,6 +307,8 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 4, 6));
   const matches = [];
   let scanned = 0;
+  let errorCount = 0;
+  let firstError = null;
 
   await runWithConcurrency(
     ranked,
@@ -325,7 +328,13 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
           added = true;
         }
       } catch (err) {
-        // Ignora módulo com esquema incompatível
+        errorCount++;
+        if (!firstError) {
+          firstError = {
+            module: mod.fileName || mod.abbr || mod.path,
+            message: err && err.message ? err.message : String(err)
+          };
+        }
       } finally {
         scanned++;
         if (onProgress && (!signal || !signal.aborted)) {
@@ -340,21 +349,32 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
 
   if (signal && signal.aborted) return [];
 
-  const finalSorted = sortPresenceMatches(matches, origOrder);
-  const cacheKey = buildPresenceCacheKey(targets, clean, opts);
-
-  if (termPresenceCache.size >= TERM_PRESENCE_CACHE_LIMIT) {
-    const oldestKey = termPresenceCache.keys().next().value;
-    if (oldestKey !== undefined) termPresenceCache.delete(oldestKey);
+  if (errorCount > 0) {
+    appLogger.warn(
+      'DICT_FILTER',
+      `${errorCount} de ${ranked.length} dicionário(s) falharam ao verificar "${clean}"`,
+      { firstError, options: opts }
+    );
   }
-  termPresenceCache.set(
-    cacheKey,
-    finalSorted.map((item) => ({
-      path: item.module.path,
-      word: item.word,
-      matchType: item.matchType
-    }))
-  );
+
+  const finalSorted = sortPresenceMatches(matches, origOrder);
+
+  // Só grava em cache se pelo menos a maioria dos módulos respondeu sem erro
+  if (errorCount < ranked.length) {
+    const cacheKey = buildPresenceCacheKey(targets, clean, opts);
+    if (termPresenceCache.size >= TERM_PRESENCE_CACHE_LIMIT) {
+      const oldestKey = termPresenceCache.keys().next().value;
+      if (oldestKey !== undefined) termPresenceCache.delete(oldestKey);
+    }
+    termPresenceCache.set(
+      cacheKey,
+      finalSorted.map((item) => ({
+        path: item.module.path,
+        word: item.word,
+        matchType: item.matchType
+      }))
+    );
+  }
 
   return finalSorted;
 }
@@ -369,6 +389,9 @@ export async function lookupExactAcrossDictionaries(dictionaries, rawTerm, optio
   const ranked = rankDictionariesForQuery(pool, rawTerm, options);
   const signal = options.signal || null;
 
+  let errorCount = 0;
+  let firstError = null;
+
   for (const mod of ranked) {
     if (signal && signal.aborted) return null;
     try {
@@ -377,8 +400,22 @@ export async function lookupExactAcrossDictionaries(dictionaries, rawTerm, optio
         return { module: mod, entry };
       }
     } catch (err) {
-      // Ignora módulos com esquema incompatível e continua a varredura
+      errorCount++;
+      if (!firstError) {
+        firstError = {
+          module: mod.fileName || mod.abbr || mod.path,
+          message: err && err.message ? err.message : String(err)
+        };
+      }
     }
+  }
+
+  if (errorCount > 0) {
+    appLogger.warn(
+      'DICT_LOOKUP',
+      `Falha em ${errorCount} dicionário(s) ao buscar verbete exato "${rawTerm}"`,
+      { firstError, options: opts }
+    );
   }
   return null;
 }
@@ -400,6 +437,8 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
 
   const collected = [];
   let scanned = 0;
+  let errorCount = 0;
+  let firstError = null;
 
   await runWithConcurrency(
     ranked,
@@ -424,7 +463,13 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
           });
         }
       } catch (err) {
-        // Ignora módulo que falhou para não interromper os demais
+        errorCount++;
+        if (!firstError) {
+          firstError = {
+            module: mod.fileName || mod.abbr || mod.path,
+            message: err && err.message ? err.message : String(err)
+          };
+        }
       } finally {
         scanned++;
         if (onProgress && (!signal || !signal.aborted)) {
@@ -436,6 +481,14 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
   );
 
   if (signal && signal.aborted) return [];
+
+  if (errorCount > 0) {
+    appLogger.warn(
+      'DICT_SEARCH_ALL',
+      `${errorCount} de ${ranked.length} dicionário(s) falharam ao buscar "${clean}"`,
+      { firstError, options: opts }
+    );
+  }
 
   const matchPriority = { exact: 0, prefix: 1, title: 2, body: 3 };
   collected.sort((a, b) => {
