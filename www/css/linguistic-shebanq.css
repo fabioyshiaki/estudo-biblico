@@ -6,6 +6,7 @@
   --shb-translit-color: #5c7a29;
   --shb-lemma-color: #6b6257;
   --shb-gloss-color: #b43e2e;
+  --shb-en-color: #4f5d6b;
   --shb-freq-color: #8f8679;
   --shb-gram-color: #7b7265;
   --shb-strong-color: #1d5fa7;
@@ -18,6 +19,10 @@
   --shb-var-bg: #f8f2e4;
   --shb-var-border: #c9a66b;
   --shb-var-sigla: #9e5a16;
+  --shb-act-bg: rgba(107, 98, 87, 0.11);
+  --shb-act-fg: #5c5346;
+  --shb-act-var-bg: rgba(158, 90, 22, 0.13);
+  --shb-act-var-fg: #944e0c;
 }
 
 :root[data-theme="light"] {
@@ -27,6 +32,7 @@
   --shb-translit-color: #4f7322;
   --shb-lemma-color: #5a6678;
   --shb-gloss-color: #b8372c;
+  --shb-en-color: #475569;
   --shb-freq-color: #828e9e;
   --shb-gram-color: #6b7687;
   --shb-strong-color: #1b63b8;
@@ -39,6 +45,10 @@
   --shb-var-bg: #fef8eb;
   --shb-var-border: #d4a44c;
   --shb-var-sigla: #a1520b;
+  --shb-act-bg: rgba(71, 85, 105, 0.11);
+  --shb-act-fg: #475569;
+  --shb-act-var-bg: rgba(161, 82, 11, 0.13);
+  --shb-act-var-fg: #9a4a09;
 }
 
 :root[data-theme="sepia"] {
@@ -48,6 +58,7 @@
   --shb-translit-color: #5b7223;
   --shb-lemma-color: #685844;
   --shb-gloss-color: #a93b2a;
+  --shb-en-color: #5d4f3d;
   --shb-freq-color: #8c7b65;
   --shb-gram-color: #786752;
   --shb-strong-color: #215996;
@@ -60,6 +71,10 @@
   --shb-var-bg: #f2e6cf;
   --shb-var-border: #bd975c;
   --shb-var-sigla: #8f4e10;
+  --shb-act-bg: rgba(93, 79, 61, 0.13);
+  --shb-act-fg: #594a38;
+  --shb-act-var-bg: rgba(143, 78, 16, 0.14);
+  --shb-act-var-fg: #85460d;
 }
 
 :root[data-theme="dark"] {
@@ -69,6 +84,7 @@
   --shb-translit-color: #9ec95b;
   --shb-lemma-color: #a6b0c2;
   --shb-gloss-color: #e67c73;
+  --shb-en-color: #9fb0c7;
   --shb-freq-color: #7a8496;
   --shb-gram-color: #8f99ad;
   --shb-strong-color: #6cb0ff;
@@ -81,6 +97,10 @@
   --shb-var-bg: #221e16;
   --shb-var-border: #785c30;
   --shb-var-sigla: #f0b762;
+  --shb-act-bg: rgba(166, 176, 194, 0.14);
+  --shb-act-fg: #c2ccdc;
+  --shb-act-var-bg: rgba(240, 183, 98, 0.16);
+  --shb-act-var-fg: #f3c173;
 }
 
 .verse-text .shb-flow {
@@ -236,6 +256,18 @@
   color: var(--shb-gloss-color);
 }
 
+.verse-text .shb-en-gloss {
+  display: block;
+  min-height: 1.24em;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.70em;
+  font-weight: 500;
+  line-height: 1.24;
+  color: var(--shb-en-color);
+}
+
 .verse-text .shb-gloss.shb-pt {
   margin-top: 2px;
   padding-top: 3px;
@@ -269,6 +301,43 @@
   color: var(--shb-gram-color);
 }
 
+.verse-text .shb-ognt-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 1.3em;
+  margin-top: 3px;
+  font-family: var(--font-ui);
+}
+
+.verse-text .shb-ognt-actions .v-fn-btn,
+.verse-text .shb-ognt-actions .v-fn-btn.v-fn-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  margin: 0;
+  border-radius: 4px;
+  font-size: 0.64em;
+  font-weight: 700;
+  line-height: 1.3;
+  vertical-align: baseline;
+}
+
+.verse-text .shb-act-more .v-fn-btn {
+  background: var(--shb-act-bg);
+  color: var(--shb-act-fg);
+}
+
+.verse-text .shb-act-var .v-fn-btn,
+.verse-text .shb-act-var .v-fn-btn.v-fn-chip {
+  background: var(--shb-act-var-bg);
+  color: var(--shb-act-var-fg);
+}
+
 .verse-text .shb-meta,
 .verse-text .shb-lex-block {
   display: flex;
@@ -285,7 +354,7 @@
   display: inline-flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 2px 4px;
+  gap: 2px 5px;
   min-height: 1.25em;
   font-family: var(--font-ui);
   font-size: 0.72em;
