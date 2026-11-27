@@ -1,0 +1,377 @@
+/* Estilos do leitor de dicionários, seletor de modo e busca cruzada */
+
+:root,
+:root[data-theme="paper"] {
+  --dct-card-bg: #ffffff;
+  --dct-card-border: #dcd4c6;
+  --dct-link-term-fg: #1d5fa7;
+  --dct-link-term-bg: rgba(29, 95, 167, 0.09);
+  --dct-link-strong-fg: #6c46a8;
+  --dct-link-strong-bg: rgba(108, 70, 168, 0.10);
+  --dct-link-bible-fg: #1b7242;
+  --dct-link-bible-bg: rgba(27, 114, 66, 0.10);
+  --dct-link-morph-fg: #9e5a16;
+  --dct-link-morph-bg: rgba(158, 90, 22, 0.10);
+  --dct-switch-bg: #efe9dc;
+  --dct-switch-active-bg: #ffffff;
+}
+
+:root[data-theme="light"] {
+  --dct-card-bg: #ffffff;
+  --dct-card-border: #d7dee8;
+  --dct-link-term-fg: #1b63b8;
+  --dct-link-term-bg: rgba(27, 99, 184, 0.09);
+  --dct-link-strong-fg: #6b42b0;
+  --dct-link-strong-bg: rgba(107, 66, 176, 0.10);
+  --dct-link-bible-fg: #157347;
+  --dct-link-bible-bg: rgba(21, 115, 71, 0.10);
+  --dct-link-morph-fg: #a1520b;
+  --dct-link-morph-bg: rgba(161, 82, 11, 0.10);
+  --dct-switch-bg: #e9eef5;
+  --dct-switch-active-bg: #ffffff;
+}
+
+:root[data-theme="sepia"] {
+  --dct-card-bg: #faf4e8;
+  --dct-card-border: #d2c2a8;
+  --dct-link-term-fg: #205791;
+  --dct-link-term-bg: rgba(32, 87, 145, 0.10);
+  --dct-link-strong-fg: #663d94;
+  --dct-link-strong-bg: rgba(102, 61, 148, 0.11);
+  --dct-link-bible-fg: #1f6b3e;
+  --dct-link-bible-bg: rgba(31, 107, 62, 0.11);
+  --dct-link-morph-fg: #8f4e10;
+  --dct-link-morph-bg: rgba(143, 78, 16, 0.11);
+  --dct-switch-bg: #e7dac3;
+  --dct-switch-active-bg: #fcf8ef;
+}
+
+:root[data-theme="dark"] {
+  --dct-card-bg: #171b22;
+  --dct-card-border: #2e3542;
+  --dct-link-term-fg: #7ab8ff;
+  --dct-link-term-bg: rgba(122, 184, 255, 0.13);
+  --dct-link-strong-fg: #c29dff;
+  --dct-link-strong-bg: rgba(194, 157, 255, 0.14);
+  --dct-link-bible-fg: #5cd48a;
+  --dct-link-bible-bg: rgba(92, 212, 138, 0.13);
+  --dct-link-morph-fg: #f0b762;
+  --dct-link-morph-bg: rgba(240, 183, 98, 0.14);
+  --dct-switch-bg: #1c222d;
+  --dct-switch-active-bg: #2a3342;
+}
+
+/* Alternador Bíblia / Dicionário na barra superior */
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  gap: 2px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--dct-switch-bg);
+  border: 1px solid var(--border);
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+.mode-switch-btn {
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.mode-switch-btn.is-active {
+  background: var(--dct-switch-active-bg);
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* Área principal do leitor de dicionário */
+.dct-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dct-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--dct-card-bg);
+  border: 1px solid var(--dct-card-border);
+}
+
+.dct-search-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-app);
+  color: var(--text-main);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  outline: none;
+}
+
+.dct-search-input:focus {
+  border-color: var(--accent);
+}
+
+.dct-action-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-main);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.dct-action-btn.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.dct-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dct-entry-card {
+  padding: 18px 18px 22px;
+  border-radius: var(--radius-lg);
+  background: var(--dct-card-bg);
+  border: 1px solid var(--dct-card-border);
+}
+
+.dct-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dct-entry-title {
+  margin: 0;
+  font-family: var(--reader-font-family);
+  font-size: clamp(20px, 2.8vw, 26px);
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.dct-entry-source {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dct-entry-body {
+  font-family: var(--reader-font-family);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+  color: var(--text-main);
+  word-wrap: break-word;
+}
+
+.dct-entry-body[dir="rtl"] {
+  text-align: right;
+}
+
+.dct-entry-body p {
+  margin: 0 0 10px;
+}
+
+.dct-entry-body ul,
+.dct-entry-body ol {
+  margin: 6px 0 12px;
+  padding-left: 22px;
+}
+
+.dct-entry-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 0.92em;
+}
+
+.dct-entry-body th,
+.dct-entry-body td {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.dct-subhead {
+  margin: 14px 0 6px;
+  font-family: var(--font-ui);
+  font-size: 0.92em;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.dct-hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+/* Botões clicáveis dentro das definições */
+.dct-link {
+  display: inline-block;
+  padding: 0 5px;
+  margin: 0 1px;
+  border: 0;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 0.88em;
+  font-weight: 600;
+  line-height: 1.45;
+  cursor: pointer;
+  vertical-align: baseline;
+  touch-action: manipulation;
+}
+
+.dct-link--term {
+  color: var(--dct-link-term-fg);
+  background: var(--dct-link-term-bg);
+}
+
+.dct-link--strong {
+  color: var(--dct-link-strong-fg);
+  background: var(--dct-link-strong-bg);
+}
+
+.dct-link--bible {
+  color: var(--dct-link-bible-fg);
+  background: var(--dct-link-bible-bg);
+}
+
+.dct-link--morph {
+  color: var(--dct-link-morph-fg);
+  background: var(--dct-link-morph-bg);
+}
+
+/* Resultados de busca e barra flutuante de seleção de palavra */
+.dct-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dct-result-item {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--dct-card-bg);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.dct-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.dct-result-word {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.dct-result-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dct-result-snippet {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* Barra flutuante para buscar palavra selecionada (Bíblia ou Dicionário) */
+.lookup-fab {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--dct-card-bg);
+  border: 1px solid var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-family: var(--font-ui);
+  max-width: calc(100vw - 24px);
+}
+
+.lookup-fab.hidden {
+  display: none;
+}
+
+.lookup-fab-term {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lookup-fab-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
