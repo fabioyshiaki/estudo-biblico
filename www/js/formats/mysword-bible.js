@@ -2,6 +2,7 @@ import { nativeBridge } from '../bridge/native-bridge.js';
 import {
   hasHebrewScript,
   isBilingualAncientText,
+  isMultiSectionText,
   formatInterlinearHtml,
   isReverseInterlinearQ,
   formatReverseInterlinearQHtml
@@ -443,8 +444,8 @@ export function formatMySwordScripture(rawText, options = {}) {
   RE_SELO_TAG.lastIndex = 0;
   if (RE_SELO_TAG.test(text)) {
     safe = formatParallelSeloHtml(text);
-  } else if (isBilingualAncientText(text)) {
-    // Desembrulha links <a href='sH...'>palavra</a> para preservar o texto original no interlinear
+  } else if (isMultiSectionText(text) || isBilingualAncientText(text)) {
+    // Desembrulha links <a href='sH...'>palavra</a> para preservar o texto original no interlinear/paralelo
     const unwrapped = text.replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1');
     safe = formatInterlinearHtml(decodeCommonEntities(unwrapped), options.verseNum);
   } else {
