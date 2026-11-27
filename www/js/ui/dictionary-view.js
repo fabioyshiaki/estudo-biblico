@@ -125,12 +125,19 @@ function openImageLightbox(src, altText) {
   document.body.appendChild(overlay);
 }
 
+function showImageErrorHint(picEl, rawSrc, reason) {
+  if (!picEl) return;
+  picEl.innerHTML =
+    '<figcaption class="dct-info" style="margin:4px 6px;text-align:left;">' +
+      `Imagem não carregada (${escapeHtml(rawSrc)}): ${escapeHtml(reason || 'erro desconhecido')}` +
+    '</figcaption>';
+}
+
 async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
   if (!rootEl || !modulePath) return;
   const imgs = Array.from(rootEl.querySelectorAll('img[data-dct-img-src]'));
   if (!imgs.length) return;
 
-  // Carrega sequencialmente para exibir a primeira foto rápido sem sobrecarregar o WebView
   for (const img of imgs) {
     if (seq !== imageRenderSeq) return;
     const rawSrc = img.getAttribute('data-dct-img-src') || '';
@@ -138,15 +145,16 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
     const picEl = img.closest('.dct-pic');
 
     try {
-      const resolvedUrl = await resolveDictionaryImageUrl(modulePath, rawSrc, {
+      const res = await resolveDictionaryImageUrl(modulePath, rawSrc, {
         contextRaw: rawContext || '',
         fallbackUrl
       });
       if (seq !== imageRenderSeq) return;
 
+      const resolvedUrl = res && res.url ? res.url : '';
       if (!resolvedUrl) {
         img.classList.remove('is-loading');
-        if (picEl) picEl.classList.add('is-failed');
+        showImageErrorHint(picEl, rawSrc, res && res.error ? res.error : 'não encontrada');
         continue;
       }
 
@@ -155,7 +163,7 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
       };
       img.onerror = () => {
         img.classList.remove('is-loading');
-        if (picEl) picEl.classList.add('is-failed');
+        showImageErrorHint(picEl, rawSrc, 'falha ao decodificar no WebView');
       };
       img.src = resolvedUrl;
       if (img.complete && img.naturalWidth > 0) {
@@ -164,7 +172,7 @@ async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
     } catch (err) {
       if (seq !== imageRenderSeq) return;
       img.classList.remove('is-loading');
-      if (picEl) picEl.classList.add('is-failed');
+      showImageErrorHint(picEl, rawSrc, err && err.message ? err.message : 'erro inesperado');
     }
   }
 }
@@ -296,7 +304,6 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     : getActiveModule();
 
   try {
-    // 1. Se veio dica explícita de módulo (ex.: d-LouwNida 33.38), tenta primeiro nos módulos que combinam
     if (options.moduleHint) {
       const exactHinted = await lookupExactAcrossDictionaries(viewState.dictionaries, clean, {
         activePath: preferredMod ? preferredMod.path : '',
@@ -315,7 +322,6 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
       }
     }
 
-    // 2. Tenta correspondência exata no dicionário preferido/ativo
     if (preferredMod) {
       const exactHere = await myswordDictionaryAdapter.getEntry(preferredMod.path, clean);
       if (controller.signal.aborted) return false;
@@ -330,7 +336,6 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
       }
     }
 
-    // 3. Fallback: procura correspondência exata nos demais dicionários
     if (options.fallbackAll !== false) {
       const exactAny = await lookupExactAcrossDictionaries(viewState.dictionaries, clean, {
         activePath: preferredMod ? preferredMod.path : '',
@@ -349,7 +354,6 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
       }
     }
 
-    // 4. Não encontrou exato: mostra resultados aproximados (no ativo ou em todos)
     await searchDictionaryTerm(clean, {
       scope: options.fallbackAll !== false ? 'all' : 'current',
       searchBody: Boolean(options.searchBody)
@@ -628,7 +632,6 @@ function bindRenderedEvents(rootEl) {
   });
 
   rootEl.addEventListener('click', (ev) => {
-    // 1. Clique em imagem carregada -> amplia em tela cheia
     const imgEl = ev.target.closest('img.dct-img');
     if (imgEl && !imgEl.classList.contains('is-loading') && (imgEl.currentSrc || imgEl.src)) {
       ev.stopPropagation();
@@ -636,7 +639,6 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 2. Clique em item da lista de resultados
     const resBtn = ev.target.closest('[data-dct-res-idx]');
     if (resBtn) {
       const idx = Number(resBtn.getAttribute('data-dct-res-idx'));
@@ -651,7 +653,6 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 3. Link interno de dicionário -> busca recursiva no dicionário
     const dctLink = ev.target.closest('[data-dct-lookup]');
     if (dctLink) {
       const term = dctLink.getAttribute('data-dct-lookup') || '';
@@ -666,7 +667,6 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 4. Link de referência bíblica dentro da definição -> salta para a Bíblia
     const bibleLink = ev.target.closest('[data-bible-ref]');
     if (bibleLink) {
       const rawRef = bibleLink.getAttribute('data-bible-ref') || bibleLink.textContent || '';
@@ -679,7 +679,6 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 5. Nota de rodapé dentro da definição
     const fnBtn = ev.target.closest('.v-fn-btn');
     if (fnBtn && viewState.currentEntry && Array.isArray(viewState.currentEntry.footnotes)) {
       const idx = Number(fnBtn.getAttribute('data-fn-idx'));
