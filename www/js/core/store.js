@@ -24,7 +24,7 @@ function loadPersisted() {
   }
 }
 
-function compareBibles(a, b, sortBy) {
+function compareModules(a, b, sortBy) {
   const favDiff = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
   if (favDiff !== 0) return favDiff;
 
@@ -50,7 +50,9 @@ const state = {
   hasStoragePermission: false,
   sources: [],
   modules: [],
+  activeMode: persisted.activeMode === 'dictionary' ? 'dictionary' : 'bible',
   activeModulePath: typeof persisted.activeModulePath === 'string' ? persisted.activeModulePath : '',
+  activeDictionaryPath: typeof persisted.activeDictionaryPath === 'string' ? persisted.activeDictionaryPath : '',
   book: Number(persisted.book) > 0 ? Number(persisted.book) : 1,
   chapter: Number(persisted.chapter) > 0 ? Number(persisted.chapter) : 1,
   prefs: {
@@ -64,7 +66,9 @@ const state = {
 function persistNow() {
   try {
     const payload = {
+      activeMode: state.activeMode,
       activeModulePath: state.activeModulePath,
+      activeDictionaryPath: state.activeDictionaryPath,
       book: state.book,
       chapter: state.chapter,
       prefs: state.prefs
@@ -88,6 +92,18 @@ export const store = {
     state.hasStoragePermission = Boolean(granted);
   },
 
+  getActiveMode() {
+    return state.activeMode;
+  },
+
+  setActiveMode(mode) {
+    const next = mode === 'dictionary' ? 'dictionary' : 'bible';
+    if (next === state.activeMode) return;
+    state.activeMode = next;
+    persistNow();
+    eventBus.emit(EVENTS.MODE_CHANGED, next);
+  },
+
   updatePrefs(partial) {
     state.prefs = { ...state.prefs, ...partial };
     persistNow();
@@ -98,11 +114,23 @@ export const store = {
     state.sources = Array.isArray(sources) ? sources : [];
     state.modules = Array.isArray(modules) ? modules : [];
 
-    const bibles = this.getBibles();
-    const stillExists = bibles.some((m) => m.path === state.activeModulePath);
+    let changed = false;
 
-    if (!stillExists) {
+    const bibles = this.getBibles();
+    const bibleExists = bibles.some((m) => m.path === state.activeModulePath);
+    if (!bibleExists) {
       state.activeModulePath = bibles.length > 0 ? bibles[0].path : '';
+      changed = true;
+    }
+
+    const dicts = this.getDictionaries();
+    const dictExists = dicts.some((m) => m.path === state.activeDictionaryPath);
+    if (!dictExists) {
+      state.activeDictionaryPath = dicts.length > 0 ? dicts[0].path : '';
+      changed = true;
+    }
+
+    if (changed) {
       persistNow();
     }
 
@@ -120,7 +148,7 @@ export const store = {
     const sortBy = state.prefs.bibleSortBy === 'title' ? 'title' : 'abbr';
     return state.modules
       .filter((m) => m.resourceKind === 'bible')
-      .sort((a, b) => compareBibles(a, b, sortBy));
+      .sort((a, b) => compareModules(a, b, sortBy));
   },
 
   getActiveBible() {
@@ -134,6 +162,28 @@ export const store = {
     state.activeModulePath = modulePath;
     persistNow();
     eventBus.emit(EVENTS.MODULE_CHANGED, this.getActiveBible());
+  },
+
+  getDictionaries() {
+    const sortBy = state.prefs.bibleSortBy === 'title' ? 'title' : 'abbr';
+    return state.modules
+      .filter((m) => m.resourceKind === 'dictionary')
+      .sort((a, b) => compareModules(a, b, sortBy));
+  },
+
+  getActiveDictionary() {
+    const dicts = this.getDictionaries();
+    if (!dicts.length) return null;
+    return dicts.find((m) => m.path === state.activeDictionaryPath) || dicts[0];
+  },
+
+  setActiveDictionary(modulePath, { silent = false } = {}) {
+    if (!modulePath || modulePath === state.activeDictionaryPath) return;
+    state.activeDictionaryPath = modulePath;
+    persistNow();
+    if (!silent) {
+      eventBus.emit(EVENTS.DICT_CHANGED, this.getActiveDictionary());
+    }
   },
 
   setLocation(book, chapter) {
