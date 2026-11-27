@@ -99,6 +99,7 @@ public class MapReaderPlugin extends Plugin {
     @PluginMethod
     public void listMapModules(PluginCall call) {
         String customPath = call.getString("dirPath");
+        String kindFilter = call.getString("kind", "");
         String dirPath = (customPath != null && !customPath.isEmpty())
             ? customPath
             : MapPathResolver.getSavedMapDirectory(getContext());
@@ -108,9 +109,16 @@ public class MapReaderPlugin extends Plugin {
             JSArray modules = new JSArray();
             for (File f : files) {
                 JSObject meta = MapSqliteRepository.inspectMapModule(f);
-                if (meta != null) {
-                    modules.put(meta);
+                if (meta == null) {
+                    continue;
                 }
+                if (kindFilter != null && !kindFilter.trim().isEmpty()) {
+                    String modKind = meta.optString("moduleKind", "map");
+                    if (!kindFilter.equalsIgnoreCase(modKind)) {
+                        continue;
+                    }
+                }
+                modules.put(meta);
             }
             JSObject ret = new JSObject();
             ret.put("dirPath", dirPath);
@@ -147,8 +155,9 @@ public class MapReaderPlugin extends Plugin {
                     continue;
                 }
                 String modTitle = meta.optString("title", f.getName());
+                String modKind = meta.optString("moduleKind", "map");
                 Map<Integer, List<JSObject>> modMarkers =
-                    MapSqliteRepository.getChapterVerseMaps(f, modTitle, book, chapter);
+                    MapSqliteRepository.getChapterVerseMaps(f, modTitle, modKind, book, chapter);
 
                 for (Map.Entry<Integer, List<JSObject>> e : modMarkers.entrySet()) {
                     JSArray arr = merged.get(e.getKey());
@@ -210,7 +219,7 @@ public class MapReaderPlugin extends Plugin {
                 title
             );
             if (entry == null) {
-                call.reject("Mapa não encontrado no módulo.");
+                call.reject("Entrada visual não encontrada no módulo.");
                 return;
             }
             call.resolve(entry);
@@ -221,6 +230,7 @@ public class MapReaderPlugin extends Plugin {
     public void searchMaps(PluginCall call) {
         String query = call.getString("query", "");
         String specificModule = call.getString("modulePath");
+        String kindFilter = call.getString("kind", "");
         int limit = call.getInt("limit", 15);
 
         if (query == null || query.trim().isEmpty()) {
@@ -241,8 +251,12 @@ public class MapReaderPlugin extends Plugin {
                 if (meta == null) {
                     continue;
                 }
+                String modKind = meta.optString("moduleKind", "map");
+                if (kindFilter != null && !kindFilter.trim().isEmpty() && !kindFilter.equalsIgnoreCase(modKind)) {
+                    continue;
+                }
                 String modTitle = meta.optString("title", f.getName());
-                JSArray hits = MapSqliteRepository.searchMaps(f, modTitle, query, limit);
+                JSArray hits = MapSqliteRepository.searchMaps(f, modTitle, modKind, query, limit);
                 for (int i = 0; i < hits.length(); i++) {
                     all.put(hits.opt(i));
                 }
