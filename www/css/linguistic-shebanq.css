@@ -192,6 +192,17 @@
   color: var(--shb-le-color);
 }
 
+.verse-text .shb-tf {
+  display: block;
+  min-height: 1.22em;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.69em;
+  line-height: 1.22;
+  color: var(--shb-twot-color);
+}
+
 .verse-text .shb-lemma {
   display: block;
   min-height: 1.3em;
@@ -199,6 +210,18 @@
   font-weight: 400;
   line-height: 1.28;
   color: var(--shb-lemma-color);
+}
+
+.verse-text .shb-lt {
+  display: block;
+  min-height: 1.2em;
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  font-size: 0.66em;
+  font-style: italic;
+  line-height: 1.2;
+  color: var(--shb-gram-color);
 }
 
 .verse-text .shb-gloss {
