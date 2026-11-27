@@ -5,7 +5,7 @@ import { appLogger } from '../core/logger.js';
 const bibleSchemaCache = new Map();
 
 export const BIBLE_SCOPE_GROUPS = Object.freeze({
-  all: { id: 'all', label: 'Bíblia inteira', minBook: 1, maxBook: 99 },
+  all: { id: 'all', label: 'Toda Bíblia', minBook: 1, maxBook: 66 },
   ot: { id: 'ot', label: 'Antigo Testamento', minBook: 1, maxBook: 39 },
   nt: { id: 'nt', label: 'Novo Testamento', minBook: 40, maxBook: 66 },
   currentBook: { id: 'currentBook', label: 'Livro atual', dynamic: true },
@@ -19,14 +19,34 @@ export const BIBLE_SCOPE_GROUPS = Object.freeze({
   acts: { id: 'acts', label: 'Atos', minBook: 44, maxBook: 44 },
   pauline: { id: 'pauline', label: 'Epístolas Paulinas (Rm–Fm)', minBook: 45, maxBook: 57 },
   general: { id: 'general', label: 'Epístolas Gerais (Hb–Jd)', minBook: 58, maxBook: 65 },
-  revelation: { id: 'revelation', label: 'Apocalipse', minBook: 66, maxBook: 66 }
+  revelation: { id: 'revelation', label: 'Apocalipse', minBook: 66, maxBook: 66 },
+  custom: { id: 'custom', label: 'Personalizado (De / Até)', dynamic: true }
+});
+
+export const BIBLE_SEARCH_TYPES = Object.freeze({
+  standard: { id: 'standard', label: 'Padrão', matchMode: 'contains', logic: 'and' },
+  exactWord: { id: 'exactWord', label: 'Palavra exata', matchMode: 'exact', logic: 'and' },
+  startsWith: { id: 'startsWith', label: 'Começa com', matchMode: 'startsWith', logic: 'and' },
+  phrase: { id: 'phrase', label: 'Frase exata', matchMode: 'contains', logic: 'phrase' },
+  anyWord: { id: 'anyWord', label: 'Qualquer palavra (OU)', matchMode: 'contains', logic: 'or' }
+});
+
+export const BIBLE_INTERVAL_TYPES = Object.freeze({
+  verse: { id: 'verse', label: 'Versículo' },
+  chapter: { id: 'chapter', label: 'Capítulo' },
+  book: { id: 'book', label: 'Livro' }
 });
 
 export const DEFAULT_BIBLE_SEARCH_OPTIONS = Object.freeze({
+  searchType: 'standard',  // 'standard' | 'exactWord' | 'startsWith' | 'phrase' | 'anyWord'
   matchMode: 'contains',   // 'contains' | 'startsWith' | 'exact'
   logic: 'and',            // 'and' | 'or' | 'phrase'
+  intervalType: 'verse',   // 'verse' | 'chapter' | 'book'
   targetField: 'text',     // 'text' | 'strong' | 'morph' | 'notes' | 'redLetter' | 'all'
   scope: 'all',            // chaves de BIBLE_SCOPE_GROUPS
+  fromBook: 1,
+  toBook: 66,
+  limit: 100000,
   accentSensitive: false,
   caseSensitive: false,
   useRegex: false,
@@ -35,23 +55,61 @@ export const DEFAULT_BIBLE_SEARCH_OPTIONS = Object.freeze({
 
 export function normalizeBibleSearchOptions(raw = {}) {
   const src = raw && typeof raw === 'object' ? raw : {};
-  const matchMode = src.matchMode === 'exact' || src.matchMode === 'startsWith'
+
+  let searchType = Object.prototype.hasOwnProperty.call(BIBLE_SEARCH_TYPES, src.searchType)
+    ? src.searchType
+    : '';
+
+  let matchMode = src.matchMode === 'exact' || src.matchMode === 'startsWith'
     ? src.matchMode
     : 'contains';
-  const logic = src.logic === 'or' || src.logic === 'phrase'
+  let logic = src.logic === 'or' || src.logic === 'phrase'
     ? src.logic
     : 'and';
+
+  if (searchType) {
+    const preset = BIBLE_SEARCH_TYPES[searchType];
+    matchMode = preset.matchMode;
+    logic = preset.logic;
+  } else {
+    if (logic === 'phrase') searchType = 'phrase';
+    else if (logic === 'or') searchType = 'anyWord';
+    else if (matchMode === 'exact') searchType = 'exactWord';
+    else if (matchMode === 'startsWith') searchType = 'startsWith';
+    else searchType = 'standard';
+  }
+
+  const intervalType = Object.prototype.hasOwnProperty.call(BIBLE_INTERVAL_TYPES, src.intervalType)
+    ? src.intervalType
+    : 'verse';
+
   const validTargets = new Set(['text', 'strong', 'morph', 'notes', 'redLetter', 'all']);
   const targetField = validTargets.has(src.targetField) ? src.targetField : 'text';
+
   const scope = Object.prototype.hasOwnProperty.call(BIBLE_SCOPE_GROUPS, src.scope)
     ? src.scope
     : 'all';
 
+  const rawFrom = Math.trunc(Number(src.fromBook));
+  const rawTo = Math.trunc(Number(src.toBook));
+  const fromBook = Number.isFinite(rawFrom) && rawFrom >= 1 && rawFrom <= 66 ? rawFrom : 1;
+  const toBook = Number.isFinite(rawTo) && rawTo >= 1 && rawTo <= 66 ? rawTo : 66;
+
+  const rawLimit = Math.trunc(Number(src.limit));
+  const limit = Number.isFinite(rawLimit) && rawLimit >= 1
+    ? Math.min(rawLimit, 100000)
+    : 100000;
+
   return {
+    searchType,
     matchMode,
     logic,
+    intervalType,
     targetField,
     scope,
+    fromBook,
+    toBook,
+    limit,
     accentSensitive: Boolean(src.accentSensitive),
     caseSensitive: Boolean(src.caseSensitive),
     useRegex: Boolean(src.useRegex),
@@ -89,6 +147,7 @@ const GREEK_VOWEL_BASE = new Set(['α', 'ε', 'η', 'ι', 'ο', 'υ', 'ω', 'ρ'
 const RE_COMBINING_MARKS = /[\u0300-\u036f\u0591-\u05C7\u0730-\u074A\u064B-\u065F\u0670]/g;
 const RE_RTL_SCRIPT = /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F]/;
 const RE_STRONG_CODE = /^([GH])\s*0*(\d+)([a-z]?)$/i;
+const RE_REGEX_META = /[.*+?^${}()|[\]\\]/;
 
 function quoteIdent(name) {
   return `"${String(name || '').replace(/"/g, '""')}"`;
@@ -198,17 +257,21 @@ export function parseBibleSearchQuery(rawQuery, opts) {
       include: [],
       exclude: [],
       autoStrong: false,
-      effectiveTarget: opts.targetField
+      effectiveTarget: opts.targetField,
+      regexLiteralOnly: false
     };
   }
 
   if (opts.useRegex) {
+    const isSimpleStrong = RE_STRONG_CODE.test(input);
+    const autoStrong = isSimpleStrong && opts.targetField === 'text';
     return {
       raw: input,
       include: [input],
       exclude: [],
-      autoStrong: false,
-      effectiveTarget: opts.targetField
+      autoStrong,
+      effectiveTarget: autoStrong ? 'strong' : opts.targetField,
+      regexLiteralOnly: !RE_REGEX_META.test(input)
     };
   }
 
@@ -220,11 +283,11 @@ export function parseBibleSearchQuery(rawQuery, opts) {
       include: cleanPhrase ? [cleanPhrase] : [],
       exclude: [],
       autoStrong: isAllStrong && opts.targetField === 'text',
-      effectiveTarget: isAllStrong && opts.targetField === 'text' ? 'strong' : opts.targetField
+      effectiveTarget: isAllStrong && opts.targetField === 'text' ? 'strong' : opts.targetField,
+      regexLiteralOnly: false
     };
   }
 
-  // Separa termos entre aspas ("frase exata"), exclusões (-termo ou !termo) e palavras comuns
   const include = [];
   const exclude = [];
   const tokenRe = /([-!])?(?:"([^"]+)"|'([^']+)'|(\S+))/g;
@@ -252,7 +315,8 @@ export function parseBibleSearchQuery(rawQuery, opts) {
     include,
     exclude,
     autoStrong,
-    effectiveTarget: autoStrong ? 'strong' : opts.targetField
+    effectiveTarget: autoStrong ? 'strong' : opts.targetField,
+    regexLiteralOnly: false
   };
 }
 
@@ -264,7 +328,6 @@ function foldChar(ch, opts) {
   if (!opts.caseSensitive) {
     piece = piece.toLowerCase();
   }
-  // Unifica sigma final grego (ς -> σ) para facilitar pesquisa em grego
   if (!opts.caseSensitive || !opts.accentSensitive) {
     piece = piece.replace(/ς/g, 'σ');
   }
@@ -285,7 +348,6 @@ function foldString(str, opts) {
   return out;
 }
 
-// Extrai apenas o texto visível do versículo (removendo tags MySword, Strong, Morf., notas e títulos)
 function extractCleanVerseText(rawScripture) {
   let s = decodeEntities(String(rawScripture || '').replace(/\r\n/g, '\n'));
   s = s
@@ -338,7 +400,6 @@ function extractStrongCodes(rawScripture) {
   const codes = new Set();
   let m;
 
-  // Tags MySword padrão: <WH430>, <WG0026>, <WH430+H1254>
   const wTagRe = /<W([GH])([^<>]+)>/gi;
   while ((m = wTagRe.exec(s)) !== null) {
     const lang = m[1].toUpperCase();
@@ -351,7 +412,6 @@ function extractStrongCodes(rawScripture) {
     }
   }
 
-  // Referências Strong soltas no conteúdo (ex.: UCRT "*S# H3173", interlineares, links sH430)
   const looseRe = /(?<![A-Za-z0-9])([GH])0*(\d{1,5}[a-z]?)(?![A-Za-z0-9])/gi;
   while ((m = looseRe.exec(s)) !== null) {
     const norm = normalizeStrongCode(`${m[1]}${m[2]}`);
@@ -387,7 +447,6 @@ function extractMorphText(rawScripture) {
 
 function extractAllRawReadableText(rawScripture) {
   const s = decodeEntities(String(rawScripture || '').replace(/\r\n/g, '\n'));
-  // Mantém conteúdo de tags especiais (<WH...>, <WG...>, <WT...>, <RX...>) legível na busca geral
   const expanded = s
     .replace(/<W([GH])([^<>]+)>/gi, ' $1$2 ')
     .replace(/<WT([^<>]+)>/gi, ' $1 ')
@@ -409,7 +468,6 @@ function buildSqlPatternsForToken(rawToken, effectiveTarget, opts) {
 
   const needsEscape = /[\\%_]/.test(token);
 
-  // Diferenciar acentos ATIVO
   if (opts.accentSensitive) {
     if (opts.caseSensitive) {
       return {
@@ -442,7 +500,6 @@ function buildSqlPatternsForToken(rawToken, effectiveTarget, opts) {
     return { patterns: vars, needsEscape };
   }
 
-  // Sem diferenciar acentos — Hebraico, Aramaico, Árabe ou Siríaco: intercala '%' para pular niqqud/vogais combinantes
   if (/[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F]/.test(token)) {
     const stripped = token.normalize('NFD').replace(RE_COMBINING_MARKS, '').trim();
     const chars = Array.from(stripped).filter((c) => !/\s/.test(c));
@@ -451,7 +508,6 @@ function buildSqlPatternsForToken(rawToken, effectiveTarget, opts) {
     return { patterns: [sample.join('%')], needsEscape };
   }
 
-  // Sem diferenciar acentos — Grego (clássico/koiné politônico): vogais/rho/sigma final viram '_' no LIKE
   if (/[\u0370-\u03FF\u1F00-\u1FFF]/.test(token)) {
     const stripped = token.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     const chars = Array.from(stripped);
@@ -474,7 +530,6 @@ function buildSqlPatternsForToken(rawToken, effectiveTarget, opts) {
     return { patterns: [], needsEscape: false };
   }
 
-  // Sem diferenciar acentos — Alfabeto latino (PT, ES, EN, etc.) sem replace() no SQL
   const stripped = token.normalize('NFD').replace(RE_COMBINING_MARKS, '');
   let solidOthers = 0;
   let nonInitC = 0;
@@ -540,7 +595,6 @@ function buildSqlPatternsForToken(rawToken, effectiveTarget, opts) {
     return { patterns: parts, needsEscape };
   }
 
-  // Palavras curtas só de vogais (ex.: "eu", "ai", "aí")
   const vowelForms = [];
   const pushForm = (v) => {
     const safe = needsEscape ? escapeLikeStr(v) : v;
@@ -558,7 +612,7 @@ function buildSqlPatternsForToken(rawToken, effectiveTarget, opts) {
   return { patterns: vowelForms, needsEscape };
 }
 
-function buildSqlWhereForQuery(schema, parsedQuery, opts) {
+function buildSqlWhereForQuery(schema, parsedQuery, opts, useBroadIntervalOr = false) {
   const clauses = [];
   const params = [];
 
@@ -573,18 +627,30 @@ function buildSqlWhereForQuery(schema, parsedQuery, opts) {
     params.push('%<RF%', '%<TS%');
   }
 
-  if (opts.useRegex || !parsedQuery.include.length) {
+  if (!parsedQuery.include.length) {
     return {
       sql: clauses.length ? clauses.join(' AND ') : '1=1',
       params
     };
   }
 
+  // Em modo Regex com metacaracteres, faz varredura do escopo sem pré-filtro LIKE;
+  // se for texto literal sem metacaracteres, aproveita o pré-filtro LIKE para velocidade.
+  if (opts.useRegex && !parsedQuery.regexLiteralOnly) {
+    return {
+      sql: clauses.length ? clauses.join(' AND ') : '1=1',
+      params
+    };
+  }
+
+  const termsToIndex = useBroadIntervalOr
+    ? [...parsedQuery.include, ...parsedQuery.exclude]
+    : parsedQuery.include;
+
   const tokenGroups = [];
   const tokenParams = [];
 
-  for (const rawTok of parsedQuery.include) {
-    // Em frases com espaço no texto (pode haver tags HTML/Strong entre palavras no Scripture), pré-filtra pelas palavras
+  for (const rawTok of termsToIndex) {
     const subWords = parsedQuery.effectiveTarget === 'strong'
       ? [rawTok]
       : rawTok.split(/\s+/).filter(Boolean);
@@ -613,7 +679,7 @@ function buildSqlWhereForQuery(schema, parsedQuery, opts) {
   }
 
   if (tokenGroups.length) {
-    const joiner = opts.logic === 'or' ? ' OR ' : ' AND ';
+    const joiner = (opts.logic === 'or' || useBroadIntervalOr) ? ' OR ' : ' AND ';
     clauses.push(tokenGroups.length === 1 ? tokenGroups[0] : `(${tokenGroups.join(joiner)})`);
     params.push(...tokenParams);
   }
@@ -624,21 +690,26 @@ function buildSqlWhereForQuery(schema, parsedQuery, opts) {
   };
 }
 
-function testTokenAgainstFoldedText(foldedText, rawToken, opts) {
-  if (!foldedText) return false;
+function testTokenAgainstText(targetText, foldedText, rawToken, opts) {
+  if (!targetText) return false;
 
   if (opts.useRegex) {
     try {
       const flags = opts.caseSensitive ? 'u' : 'iu';
       const re = new RegExp(rawToken, flags);
-      return re.test(foldedText);
+      if (re.test(targetText)) return true;
+      if (!opts.accentSensitive && foldedText && foldedText !== targetText) {
+        const foldedPat = RE_REGEX_META.test(rawToken) ? rawToken : foldString(rawToken, opts);
+        return new RegExp(foldedPat, flags).test(foldedText);
+      }
+      return false;
     } catch (err) {
       return false;
     }
   }
 
   const foldedToken = foldString(rawToken, opts);
-  if (!foldedToken) return false;
+  if (!foldedToken || !foldedText) return false;
 
   if (opts.matchMode === 'exact') {
     const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(foldedToken)}(?![\\p{L}\\p{N}])`, 'u');
@@ -673,10 +744,11 @@ function collectHighlightRanges(displayText, tokens, opts) {
     } catch (err) {
       return [];
     }
-    return ranges;
+    if (ranges.length || opts.accentSensitive) return ranges;
+    // Se regex literal sem acento não casou direto no texto acentuado, cai para destaque com mapa de acentos
+    if (RE_REGEX_META.test(tokens[0])) return [];
   }
 
-  // Constrói texto normalizado mantendo mapa exato de índices para o texto original (preserva acentos e niqqud)
   const normChars = [];
   const origIdxMap = [];
   for (let i = 0; i < displayText.length; i++) {
@@ -694,9 +766,9 @@ function collectHighlightRanges(displayText, tokens, opts) {
     if (!foldedTok) continue;
 
     let pattern = escapeRegExp(foldedTok);
-    if (opts.matchMode === 'exact') {
+    if (!opts.useRegex && opts.matchMode === 'exact') {
       pattern = `(?<![\\p{L}\\p{N}])${pattern}(?![\\p{L}\\p{N}])`;
-    } else if (opts.matchMode === 'startsWith') {
+    } else if (!opts.useRegex && opts.matchMode === 'startsWith') {
       pattern = `(?<![\\p{L}\\p{N}])${pattern}`;
     }
 
@@ -780,42 +852,36 @@ function buildHighlightedHtml(displayText, tokens, opts, maxChars = 280) {
   return { html, hitCount };
 }
 
-function evaluateVerseRow(rawScripture, parsedQuery, opts) {
+function inspectVerseTokens(rawScripture, parsedQuery, opts) {
   const target = parsedQuery.effectiveTarget;
 
   if (target === 'strong') {
     const verseStrongs = extractStrongCodes(rawScripture);
     if (!verseStrongs.length) return null;
 
-    const includeNorm = parsedQuery.include
-      .map((t) => normalizeStrongCode(t) || t.toUpperCase())
-      .filter(Boolean);
-    const excludeNorm = parsedQuery.exclude
-      .map((t) => normalizeStrongCode(t) || t.toUpperCase())
-      .filter(Boolean);
-
-    const hasCode = (wanted) => {
-      if (opts.matchMode === 'contains' && !RE_STRONG_CODE.test(wanted)) {
+    const hasCode = (wantedRaw) => {
+      const wanted = normalizeStrongCode(wantedRaw) || wantedRaw.toUpperCase();
+      if (opts.matchMode === 'contains' && !RE_STRONG_CODE.test(wantedRaw)) {
         return verseStrongs.some((c) => c.includes(wanted));
       }
       return verseStrongs.includes(wanted);
     };
 
-    const includeOk = opts.logic === 'or'
-      ? includeNorm.some(hasCode)
-      : includeNorm.every(hasCode);
-    if (!includeOk) return null;
-
-    if (excludeNorm.length && excludeNorm.some(hasCode)) {
-      return null;
+    const matchedIncIdx = [];
+    for (let i = 0; i < parsedQuery.include.length; i++) {
+      if (hasCode(parsedQuery.include[i])) matchedIncIdx.push(i);
     }
+    const matchedExc = parsedQuery.exclude.some(hasCode);
+    if (!matchedIncIdx.length && !matchedExc) return null;
 
-    const matchedCodes = includeNorm.filter(hasCode);
+    const matchedCodes = matchedIncIdx.map((i) => normalizeStrongCode(parsedQuery.include[i]) || parsedQuery.include[i].toUpperCase());
     const cleanText = extractCleanVerseText(rawScripture);
     const displayText = cleanText || extractAllRawReadableText(rawScripture);
     const preview = displayText.length > 260 ? `${displayText.slice(0, 260)}…` : displayText;
 
     return {
+      matchedIncIdx,
+      matchedExc,
       snippetHtml: escapeHtml(preview),
       plainText: cleanText || displayText,
       matchedBadges: matchedCodes,
@@ -844,26 +910,37 @@ function evaluateVerseRow(rawScripture, parsedQuery, opts) {
 
   if (!targetText) return null;
 
-  const foldedTarget = opts.useRegex ? targetText : foldString(targetText, opts);
+  const foldedTarget = foldString(targetText, opts);
+  const matchedIncIdx = [];
+  const matchedTokens = [];
 
-  const includeOk = opts.logic === 'or'
-    ? parsedQuery.include.some((tok) => testTokenAgainstFoldedText(foldedTarget, tok, opts))
-    : parsedQuery.include.every((tok) => testTokenAgainstFoldedText(foldedTarget, tok, opts));
-  if (!includeOk) return null;
-
-  if (parsedQuery.exclude.length) {
-    const excludedHit = parsedQuery.exclude.some((tok) => testTokenAgainstFoldedText(foldedTarget, tok, opts));
-    if (excludedHit) return null;
+  for (let i = 0; i < parsedQuery.include.length; i++) {
+    const tok = parsedQuery.include[i];
+    if (testTokenAgainstText(targetText, foldedTarget, tok, opts)) {
+      matchedIncIdx.push(i);
+      matchedTokens.push(tok);
+    }
   }
 
-  const hl = buildHighlightedHtml(targetText, parsedQuery.include, opts, 280);
+  const matchedExc = parsedQuery.exclude.some((tok) =>
+    testTokenAgainstText(targetText, foldedTarget, tok, opts)
+  );
+
+  if (!matchedIncIdx.length && !matchedExc) return null;
+
+  const hl = matchedTokens.length
+    ? buildHighlightedHtml(targetText, matchedTokens, opts, 280)
+    : { html: escapeHtml(targetText.slice(0, 260)), hitCount: 0 };
+
   const cleanVerse = target === 'text' ? targetText : extractCleanVerseText(rawScripture);
 
   return {
+    matchedIncIdx,
+    matchedExc,
     snippetHtml: hl.html,
     plainText: cleanVerse || targetText,
     matchedBadges: badgeContext ? [badgeContext] : [],
-    hitCount: hl.hitCount,
+    hitCount: hl.hitCount || 1,
     isRtl: RE_RTL_SCRIPT.test(targetText) && !/[A-Za-zÀ-ÿ]{10,}/.test(targetText)
   };
 }
@@ -944,13 +1021,21 @@ function resolveScopeBookRanges(opts, context = {}) {
     };
   }
 
-  const group = BIBLE_SCOPE_GROUPS[opts.scope] || BIBLE_SCOPE_GROUPS.all;
-  const minB = group.minBook || 1;
-  const maxB = group.maxBook || 99;
+  let minB = 1;
+  let maxB = 66;
 
-  // Divide em blocos de 12 livros para evitar estouro de CursorWindow e permitir progresso/cancelamento rápido
+  if (opts.scope === 'custom') {
+    minB = Math.min(opts.fromBook, opts.toBook);
+    maxB = Math.max(opts.fromBook, opts.toBook);
+  } else {
+    const group = BIBLE_SCOPE_GROUPS[opts.scope] || BIBLE_SCOPE_GROUPS.all;
+    minB = group.minBook || 1;
+    maxB = group.maxBook || 66;
+  }
+
+  // Blocos de 6 livros evitam sobrecarga do CursorWindow mesmo em limites altos (até 100000)
   const batches = [];
-  const step = 12;
+  const step = 6;
   for (let start = minB; start <= maxB; start += step) {
     batches.push([start, Math.min(maxB, start + step - 1)]);
   }
@@ -961,24 +1046,60 @@ function resolveScopeBookRanges(opts, context = {}) {
   };
 }
 
+function finalizeIntervalGroups(groupsMap, requiredCount, limit) {
+  const accepted = [];
+  let truncated = false;
+
+  for (const grp of groupsMap.values()) {
+    if (grp.excluded) continue;
+    if (grp.foundIndices.size < requiredCount) continue;
+
+    for (const item of grp.items) {
+      if (accepted.length >= limit) {
+        truncated = true;
+        break;
+      }
+      accepted.push(item);
+    }
+    if (truncated) break;
+  }
+
+  return { items: accepted, truncated };
+}
+
 export function clearBibleSearchCache() {
   bibleSchemaCache.clear();
 }
 
 export async function searchBibleModule(bibleMod, rawQuery, rawOptions = {}, context = {}) {
   if (!bibleMod || !bibleMod.path) {
-    return { items: [], totalOccurrences: 0, byBook: [], truncated: false, effectiveTarget: 'text' };
+    return {
+      items: [],
+      totalOccurrences: 0,
+      byBook: [],
+      chapterCount: 0,
+      truncated: false,
+      effectiveTarget: 'text',
+      intervalType: 'verse'
+    };
   }
 
   const opts = normalizeBibleSearchOptions(rawOptions);
   const parsedQuery = parseBibleSearchQuery(rawQuery, opts);
   if (!parsedQuery.include.length) {
-    return { items: [], totalOccurrences: 0, byBook: [], truncated: false, effectiveTarget: parsedQuery.effectiveTarget };
+    return {
+      items: [],
+      totalOccurrences: 0,
+      byBook: [],
+      chapterCount: 0,
+      truncated: false,
+      effectiveTarget: parsedQuery.effectiveTarget,
+      intervalType: opts.intervalType
+    };
   }
 
   if (opts.useRegex) {
     try {
-      // Valida a expressão regular antes de consultar o SQLite
       new RegExp(parsedQuery.include[0], opts.caseSensitive ? 'u' : 'iu');
     } catch (err) {
       throw new Error(`Expressão regular inválida: ${err.message || err}`);
@@ -987,20 +1108,36 @@ export async function searchBibleModule(bibleMod, rawQuery, rawOptions = {}, con
 
   const signal = context.signal || null;
   const onProgress = typeof context.onProgress === 'function' ? context.onProgress : null;
-  const maxResults = Math.max(20, Math.min(Number(context.maxResults) || 400, 1500));
+  const maxResults = context.maxResults !== undefined
+    ? Math.max(1, Math.min(Math.trunc(Number(context.maxResults)), 100000))
+    : opts.limit;
+
+  const isMultiIntervalMode =
+    !opts.useRegex &&
+    opts.logic === 'and' &&
+    (opts.intervalType === 'chapter' || opts.intervalType === 'book') &&
+    (parsedQuery.include.length > 1 || parsedQuery.exclude.length > 0);
 
   const schema = await resolveBibleSchema(bibleMod.path);
-  const whereObj = buildSqlWhereForQuery(schema, parsedQuery, opts);
+  const whereObj = buildSqlWhereForQuery(schema, parsedQuery, opts, isMultiIntervalMode);
   const scopeInfo = resolveScopeBookRanges(opts, context);
 
   const items = [];
-  const bookCounts = new Map();
-  let totalOccurrences = 0;
+  const intervalGroups = new Map();
   let truncated = false;
+  const PAGE_ROWS = 750;
 
   for (let i = 0; i < scopeInfo.batches.length; i++) {
     if (signal && signal.aborted) {
-      return { items: [], totalOccurrences: 0, byBook: [], truncated: false, effectiveTarget: parsedQuery.effectiveTarget };
+      return {
+        items: [],
+        totalOccurrences: 0,
+        byBook: [],
+        chapterCount: 0,
+        truncated: false,
+        effectiveTarget: parsedQuery.effectiveTarget,
+        intervalType: opts.intervalType
+      };
     }
 
     const [bStart, bEnd] = scopeInfo.batches[i];
@@ -1008,62 +1145,129 @@ export async function searchBibleModule(bibleMod, rawQuery, rawOptions = {}, con
       ? `${schema.qBook} = ${bStart} AND ${schema.qChapter} = ${scopeInfo.fixedChapter}`
       : `${schema.qBook} BETWEEN ${bStart} AND ${bEnd}`;
 
-    const remainingNeeded = maxResults - items.length;
-    const sqlLimit = Math.min(900, Math.max(remainingNeeded * 3, 250));
+    let batchOffset = 0;
+    let keepReadingBatch = true;
 
-    const res = await nativeBridge.queryModule(
-      bibleMod.path,
-      `SELECT ${schema.qBook} AS book, ${schema.qChapter} AS chapter, ${schema.qVerse} AS verse, ${schema.qScripture} AS scripture ` +
-        `FROM ${schema.qTable} ` +
-        `WHERE ${scopeSql} AND (${whereObj.sql}) ` +
-        `ORDER BY ${schema.qBook} ASC, ${schema.qChapter} ASC, ${schema.qVerse} ASC ` +
-        `LIMIT ${sqlLimit}`,
-      whereObj.params
-    );
+    while (keepReadingBatch) {
+      if (signal && signal.aborted) return { items: [], totalOccurrences: 0, byBook: [], chapterCount: 0, truncated: false, effectiveTarget: parsedQuery.effectiveTarget, intervalType: opts.intervalType };
 
-    if (signal && signal.aborted) {
-      return { items: [], totalOccurrences: 0, byBook: [], truncated: false, effectiveTarget: parsedQuery.effectiveTarget };
-    }
+      const res = await nativeBridge.queryModule(
+        bibleMod.path,
+        `SELECT ${schema.qBook} AS book, ${schema.qChapter} AS chapter, ${schema.qVerse} AS verse, ${schema.qScripture} AS scripture ` +
+          `FROM ${schema.qTable} ` +
+          `WHERE ${scopeSql} AND (${whereObj.sql}) ` +
+          `ORDER BY ${schema.qBook} ASC, ${schema.qChapter} ASC, ${schema.qVerse} ASC ` +
+          `LIMIT ${PAGE_ROWS} OFFSET ${batchOffset}`,
+        whereObj.params
+      );
 
-    const rows = Array.isArray(res && res.rows) ? res.rows : [];
-    for (const row of rows) {
-      const book = Number(getRowField(row, 'book')) || 0;
-      const chapter = Number(getRowField(row, 'chapter')) || 0;
-      const verse = Number(getRowField(row, 'verse')) || 0;
-      const scripture = String(getRowField(row, 'scripture') || '');
-      if (!book || !chapter || !verse) continue;
+      if (signal && signal.aborted) return { items: [], totalOccurrences: 0, byBook: [], chapterCount: 0, truncated: false, effectiveTarget: parsedQuery.effectiveTarget, intervalType: opts.intervalType };
 
-      const evalHit = evaluateVerseRow(scripture, parsedQuery, opts);
-      if (!evalHit) continue;
-
-      if (items.length >= maxResults) {
-        truncated = true;
-        break;
+      const rows = Array.isArray(res && res.rows) ? res.rows : [];
+      if (rows.length < PAGE_ROWS) {
+        keepReadingBatch = false;
+      } else {
+        batchOffset += rows.length;
       }
 
-      totalOccurrences += evalHit.hitCount;
-      bookCounts.set(book, (bookCounts.get(book) || 0) + 1);
+      for (const row of rows) {
+        const book = Number(getRowField(row, 'book')) || 0;
+        const chapter = Number(getRowField(row, 'chapter')) || 0;
+        const verse = Number(getRowField(row, 'verse')) || 0;
+        const scripture = String(getRowField(row, 'scripture') || '');
+        if (!book || !chapter || !verse) continue;
 
-      items.push({
-        module: bibleMod,
-        book,
-        chapter,
-        verse,
-        refLabel: formatReference(book, chapter, verse),
-        bookName: getBookName(book),
-        snippetHtml: evalHit.snippetHtml,
-        plainText: evalHit.plainText,
-        matchedBadges: evalHit.matchedBadges,
-        hitCount: evalHit.hitCount,
-        isRtl: evalHit.isRtl
-      });
+        const info = inspectVerseTokens(scripture, parsedQuery, opts);
+        if (!info) continue;
+
+        if (isMultiIntervalMode) {
+          const gKey = opts.intervalType === 'chapter' ? `${book}:${chapter}` : `${book}`;
+          let grp = intervalGroups.get(gKey);
+          if (!grp) {
+            grp = { foundIndices: new Set(), excluded: false, items: [] };
+            intervalGroups.set(gKey, grp);
+          }
+          if (info.matchedExc) {
+            grp.excluded = true;
+          }
+          for (const idx of info.matchedIncIdx) {
+            grp.foundIndices.add(idx);
+          }
+          if (info.matchedIncIdx.length > 0 && !grp.excluded) {
+            grp.items.push({
+              module: bibleMod,
+              book,
+              chapter,
+              verse,
+              refLabel: formatReference(book, chapter, verse),
+              bookName: getBookName(book),
+              snippetHtml: info.snippetHtml,
+              plainText: info.plainText,
+              matchedBadges: info.matchedBadges,
+              hitCount: info.hitCount,
+              isRtl: info.isRtl
+            });
+          }
+          continue;
+        }
+
+        // Modo Versículo (ou OU / Frase / Regex)
+        if (info.matchedExc) continue;
+        const includeOk = opts.logic === 'or'
+          ? info.matchedIncIdx.length > 0
+          : info.matchedIncIdx.length === parsedQuery.include.length;
+        if (!includeOk) continue;
+
+        if (items.length >= maxResults) {
+          truncated = true;
+          keepReadingBatch = false;
+          break;
+        }
+
+        items.push({
+          module: bibleMod,
+          book,
+          chapter,
+          verse,
+          refLabel: formatReference(book, chapter, verse),
+          bookName: getBookName(book),
+          snippetHtml: info.snippetHtml,
+          plainText: info.plainText,
+          matchedBadges: info.matchedBadges,
+          hitCount: info.hitCount,
+          isRtl: info.isRtl
+        });
+      }
     }
 
     if (onProgress && (!signal || !signal.aborted)) {
-      onProgress(i + 1, scopeInfo.batches.length, items.length);
+      const curCount = isMultiIntervalMode
+        ? Array.from(intervalGroups.values()).reduce(
+          (acc, g) => acc + (!g.excluded && g.foundIndices.size >= parsedQuery.include.length ? g.items.length : 0),
+          0
+        )
+        : items.length;
+      onProgress(i + 1, scopeInfo.batches.length, curCount);
     }
 
     if (truncated) break;
+  }
+
+  let finalItems = items;
+  if (isMultiIntervalMode) {
+    const resolved = finalizeIntervalGroups(intervalGroups, parsedQuery.include.length, maxResults);
+    finalItems = resolved.items;
+    truncated = resolved.truncated;
+  }
+
+  const bookCounts = new Map();
+  const chapterSet = new Set();
+  let totalOccurrences = 0;
+
+  for (const it of finalItems) {
+    totalOccurrences += it.hitCount || 1;
+    bookCounts.set(it.book, (bookCounts.get(it.book) || 0) + 1);
+    chapterSet.add(`${it.book}:${it.chapter}`);
   }
 
   const byBook = Array.from(bookCounts.entries())
@@ -1075,12 +1279,14 @@ export async function searchBibleModule(bibleMod, rawQuery, rawOptions = {}, con
     }));
 
   return {
-    items,
+    items: finalItems,
     totalOccurrences,
     byBook,
+    chapterCount: chapterSet.size,
     truncated,
     effectiveTarget: parsedQuery.effectiveTarget,
-    autoStrong: parsedQuery.autoStrong
+    autoStrong: parsedQuery.autoStrong,
+    intervalType: opts.intervalType
   };
 }
 
@@ -1111,16 +1317,26 @@ export async function searchAcrossBibles(bibles, rawQuery, rawOptions = {}, cont
     : allList;
 
   if (!targets.length) {
-    return { items: [], totalOccurrences: 0, byBook: [], truncated: false, effectiveTarget: opts.targetField, searchedCount: 0 };
+    return {
+      items: [],
+      totalOccurrences: 0,
+      byBook: [],
+      chapterCount: 0,
+      truncated: false,
+      effectiveTarget: opts.targetField,
+      intervalType: opts.intervalType,
+      searchedCount: 0
+    };
   }
 
   const signal = context.signal || null;
   const onProgress = typeof context.onProgress === 'function' ? context.onProgress : null;
-  const perBibleMax = Math.max(10, Math.min(Number(context.perBibleMax) || 35, 100));
-  const maxTotal = Math.max(40, Math.min(Number(context.maxTotal) || 350, 800));
+  const maxTotal = context.maxTotal !== undefined
+    ? Math.max(1, Math.min(Math.trunc(Number(context.maxTotal)), 100000))
+    : Math.min(opts.limit, 2000);
+  const perBibleMax = Math.max(10, Math.min(Number(context.perBibleMax) || 60, maxTotal));
   const concurrency = Math.max(1, Math.min(Number(context.concurrency) || 4, 4));
 
-  // Prioriza a Bíblia ativa e favoritas primeiro
   const activePath = context.activePath || '';
   const ordered = targets.slice().sort((a, b) => {
     const aAct = a.path === activePath ? 1 : 0;
@@ -1132,8 +1348,6 @@ export async function searchAcrossBibles(bibles, rawQuery, rawOptions = {}, cont
   });
 
   const collected = [];
-  const bookCounts = new Map();
-  let totalOccurrences = 0;
   let scanned = 0;
   let errorCount = 0;
   let firstError = null;
@@ -1178,7 +1392,16 @@ export async function searchAcrossBibles(bibles, rawQuery, rawOptions = {}, cont
   );
 
   if (signal && signal.aborted) {
-    return { items: [], totalOccurrences: 0, byBook: [], truncated: false, effectiveTarget, searchedCount: scanned };
+    return {
+      items: [],
+      totalOccurrences: 0,
+      byBook: [],
+      chapterCount: 0,
+      truncated: false,
+      effectiveTarget,
+      intervalType: opts.intervalType,
+      searchedCount: scanned
+    };
   }
 
   if (errorCount > 0) {
@@ -1199,9 +1422,14 @@ export async function searchAcrossBibles(bibles, rawQuery, rawOptions = {}, cont
   const truncated = collected.length > maxTotal;
   const finalItems = truncated ? collected.slice(0, maxTotal) : collected;
 
+  const bookCounts = new Map();
+  const chapterSet = new Set();
+  let totalOccurrences = 0;
+
   for (const it of finalItems) {
     totalOccurrences += it.hitCount || 1;
     bookCounts.set(it.book, (bookCounts.get(it.book) || 0) + 1);
+    chapterSet.add(`${it.book}:${it.chapter}`);
   }
 
   const byBook = Array.from(bookCounts.entries())
@@ -1216,9 +1444,11 @@ export async function searchAcrossBibles(bibles, rawQuery, rawOptions = {}, cont
     items: finalItems,
     totalOccurrences,
     byBook,
+    chapterCount: chapterSet.size,
     truncated,
     effectiveTarget,
     autoStrong,
+    intervalType: opts.intervalType,
     searchedCount: ordered.length
   };
 }
