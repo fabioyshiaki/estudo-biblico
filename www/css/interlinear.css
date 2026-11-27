@@ -58,7 +58,8 @@
   vertical-align: middle;
 }
 
-.verse-item.is-q-interlinear > .verse-num {
+.verse-item.is-q-interlinear > .verse-num,
+.verse-item:has(.il-vnum) > .verse-num {
   display: none;
 }
 
