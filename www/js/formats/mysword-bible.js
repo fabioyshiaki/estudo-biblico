@@ -160,6 +160,81 @@ function stripInlinePilcrow(str) {
     .replace(/¶/g, '');
 }
 
+function stripBareStrongPlaceholders(str) {
+  const isBareMarker = (inner) => {
+    const plain = String(inner || '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/\u00A0/g, ' ')
+      .trim();
+    if (!plain) return false;
+    return /^(?:[\[(]?\s*[HG]\s*[\])]?(?:[\s,;]+)?)+$/.test(plain);
+  };
+
+  const replaceWithSmartSpace = (fullStr, offset, matchLen) => {
+    const prevSlice = fullStr.slice(0, offset).replace(/(?:<[^>]*>)+$/, '');
+    const nextSlice = fullStr.slice(offset + matchLen).replace(/^(?:<[^>]*>)+/, '');
+    const prevChar = prevSlice.slice(-1);
+    const nextChar = nextSlice.charAt(0);
+    if (
+      prevChar &&
+      nextChar &&
+      /[\p{L}\p{N}\p{M}]/u.test(prevChar) &&
+      /[\p{L}\p{N}\p{M}]/u.test(nextChar)
+    ) {
+      return ' ';
+    }
+    return '';
+  };
+
+  let out = String(str || '');
+
+  // 1. Remove links Strong cujo texto visível é apenas H, G, [H] ou [G]
+  out = out.replace(
+    /(\[|\()?<a\b[^>]*\bhref\s*=\s*(?:"s[GH]\d[^"]*"|'s[GH]\d[^']*')[^>]*>([\s\S]*?)<\/a>(\]|\))?/gi,
+    (match, openBr, inner, closeBr, offset, fullStr) => {
+      if (!isBareMarker(inner)) return match;
+      const hasOuterBrackets = (openBr === '[' && closeBr === ']') || (openBr === '(' && closeBr === ')');
+      const keepOpen = openBr && !hasOuterBrackets ? openBr : '';
+      const keepClose = closeBr && !hasOuterBrackets ? closeBr : '';
+      const spacer = keepOpen || keepClose ? '' : replaceWithSmartSpace(fullStr, offset, match.length);
+      return `${keepOpen}${spacer}${keepClose}`;
+    }
+  );
+
+  // 2. Remove <sup> / <sub> vazios ou contendo apenas H, G, [H] ou [G]
+  out = out.replace(
+    /(\[|\()?\s*<(sup|sub)(?:\s+[^>]*)?>([\s\S]*?)<\/\2>\s*(\]|\))?/gi,
+    (match, openBr, _tag, inner, closeBr, offset, fullStr) => {
+      const strippedPlain = String(inner || '')
+        .replace(/<[^>]*>/g, '')
+        .replace(/\u00A0/g, ' ')
+        .trim();
+      const emptyTag = strippedPlain === '';
+      if (!emptyTag && !isBareMarker(inner)) return match;
+
+      const hasOuterBrackets = (openBr === '[' && closeBr === ']') || (openBr === '(' && closeBr === ')');
+      const keepOpen = openBr && !hasOuterBrackets ? openBr : '';
+      const keepClose = closeBr && !hasOuterBrackets ? closeBr : '';
+      const leadSpace = /^\s/.test(match) ? ' ' : '';
+      const trailSpace = /\s$/.test(match) ? ' ' : '';
+      const spacer = (keepOpen || keepClose || leadSpace || trailSpace)
+        ? ''
+        : replaceWithSmartSpace(fullStr, offset, match.length);
+      return `${leadSpace}${keepOpen}${spacer}${keepClose}${trailSpace}`;
+    }
+  );
+
+  // 3. Desembrulha tags <font> que ficaram vazias (ou só com espaço) após remover o <sup>
+  out = out.replace(/<font\b[^>]*>(\s*)<\/font>/gi, '$1');
+
+  // 4. Normaliza espaços múltiplos gerados pela remoção sem alterar quebras de linha
+  out = out
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([.,;:!?])/g, '$1');
+
+  return out;
+}
+
 function applyPilcrowInitialBold(html) {
   // Negrita a primeira letra apenas quando ¶ está no início do versículo/linha; no meio ou fim, apenas oculta ¶
   const withLeadingBold = String(html || '').replace(
@@ -363,7 +438,7 @@ export function formatMySwordScripture(rawText, options = {}) {
     };
   }
 
-  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS / Bizantino Espanhol / OGNT (TrsAIMS)
+  // Módulos BHS Enhanced / SHEBANQ / Interlinear Br / UnfoldingWord / VIMS / Bizantino Espanhol / OGNT / Siríaco
   if (isShebanqBhsText(text)) {
     const shebanqHtml = formatShebanqBhsHtml(decodeCommonEntities(text), options.verseNum, {
       footnotes,
@@ -437,6 +512,9 @@ export function formatMySwordScripture(rawText, options = {}) {
   } else {
     text = text.replace(/<WT[^<>]+>/gi, '');
   }
+
+  // Oculta marcadores Strong vazios (H, [H], G, [G]) sem informação adicional
+  text = stripBareStrongPlaceholders(text);
 
   let safe = '';
 
