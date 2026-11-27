@@ -62,18 +62,30 @@ function matchesModuleQuery(mod, terms) {
   return terms.every((t) => hay.includes(t));
 }
 
-function getModuleDisplayName(mod) {
+function getModuleSortBy() {
+  return store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+}
+
+function getModulePrimaryLabel(mod) {
   if (!mod) return '';
-  const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
-  if (sortBy === 'title') {
+  if (getModuleSortBy() === 'title') {
     return mod.title || mod.abbr || mod.fileName || '';
   }
   return mod.abbr || mod.title || mod.fileName || '';
 }
 
-function getModuleLongTitle(mod) {
+function getModuleSecondaryLabel(mod) {
   if (!mod) return '';
-  return mod.title || mod.abbr || mod.fileName || '';
+  const primary = getModulePrimaryLabel(mod);
+  const other = getModuleSortBy() === 'title' ? (mod.abbr || '') : (mod.title || '');
+  return other && other !== primary ? other : '';
+}
+
+function getModuleTooltip(mod) {
+  if (!mod) return '';
+  const primary = getModulePrimaryLabel(mod);
+  const secondary = getModuleSecondaryLabel(mod);
+  return secondary ? `${primary} — ${secondary}` : primary;
 }
 
 export function recordRecentModule(kind, modulePath) {
@@ -130,11 +142,9 @@ export function renderQuickTabs(containerEl, kind, modules, activePath, onSelect
   }
 
   containerEl.innerHTML = quick.map((m) => {
-    const label = kind === 'dictionary'
-      ? (m.abbr || m.title || m.fileName)
-      : (m.title || m.abbr || m.fileName);
+    const label = getModulePrimaryLabel(m);
     return (
-      `<button type="button" class="ms-quick-tab" data-quick-path="${escapeHtml(m.path)}" title="${escapeHtml(getModuleLongTitle(m))}">` +
+      `<button type="button" class="ms-quick-tab" data-quick-path="${escapeHtml(m.path)}" title="${escapeHtml(getModuleTooltip(m))}">` +
         escapeHtml(label) +
       '</button>'
     );
@@ -258,12 +268,14 @@ export function openViewsDropdown({
 
   const quickRowsHtml = quickList.map((m) => {
     const isAct = m.path === quickActivePath;
-    const label = m.title || m.abbr || m.fileName;
+    const primary = getModulePrimaryLabel(m);
+    const secondary = getModuleSecondaryLabel(m);
     return `
       <div class="ms-dropdown-row${isAct ? ' is-active' : ''}">
         <button type="button" class="ms-dropdown-btn" data-drawer-mod="${escapeHtml(m.path)}">
           <span class="ms-dropdown-text">
-            <span class="ms-dropdown-title">${escapeHtml(label)}</span>
+            <span class="ms-dropdown-title">${escapeHtml(primary)}</span>
+            ${secondary ? `<span class="ms-dropdown-sub">${escapeHtml(secondary)}</span>` : ''}
           </span>
         </button>
       </div>
@@ -460,6 +472,7 @@ export function openModuleDropdown({
   function renderRows() {
     const all = getAll();
     const active = getActive();
+    const sortLabel = getModuleSortBy() === 'title' ? 'Descrição' : 'Abreviação';
     const freshMatches = filterEnabled ? getFreshMatches() : [];
     const matchByPath = new Map(freshMatches.map((it) => [it.module.path, it]));
     const baseItems = filterEnabled ? freshMatches.map((it) => it.module) : all;
@@ -486,8 +499,8 @@ export function openModuleDropdown({
         }
       } else {
         metaEl.textContent = terms.length
-          ? `${filtered.length} de ${all.length} módulo(s)`
-          : `${all.length} ${isDict ? 'dicionário(s)' : 'Bíblia(s)'}`;
+          ? `${filtered.length} de ${all.length} • Ordem: ${sortLabel}`
+          : `${all.length} ${isDict ? 'dicionário(s)' : 'Bíblia(s)'} • Ordem: ${sortLabel}`;
       }
     }
 
@@ -518,10 +531,10 @@ export function openModuleDropdown({
 
     listEl.innerHTML = filtered.map((m) => {
       const isAct = active && active.path === m.path;
-      const primary = getModuleLongTitle(m);
-      const abbr = m.abbr && m.abbr !== primary ? m.abbr : '';
+      const primary = getModulePrimaryLabel(m);
+      const secondary = getModuleSecondaryLabel(m);
       const hitInfo = filterEnabled ? matchByPath.get(m.path) : null;
-      const subParts = [abbr, m.language, m.hasStrongs ? 'Strong' : ''].filter(Boolean).join(' • ');
+      const extraMeta = [m.language, m.hasStrongs ? 'Strong' : ''].filter(Boolean).join(' • ');
 
       return `
         <div class="ms-dropdown-row${isAct ? ' is-active' : ''}">
@@ -529,7 +542,8 @@ export function openModuleDropdown({
             <span class="ms-dropdown-text">
               <span class="ms-dropdown-title">${escapeHtml(primary)}</span>
               ${hitInfo ? `<span class="ms-dropdown-hit">Verbete: ${escapeHtml(hitInfo.word)}</span>` : ''}
-              ${subParts ? `<span class="ms-dropdown-sub">${escapeHtml(subParts)}</span>` : ''}
+              ${secondary ? `<span class="ms-dropdown-sub">${escapeHtml(secondary)}</span>` : ''}
+              ${extraMeta ? `<span class="ms-dropdown-sub" style="opacity:0.78;">${escapeHtml(extraMeta)}</span>` : ''}
             </span>
           </button>
           <button
@@ -651,10 +665,11 @@ export function openModuleDropdown({
 }
 
 export function openOverflowDropdown({ anchorEl, onOpenSettings, onOpenLogs } = {}) {
-  const pop = createAnchoredPopover({ anchorEl, align: 'right', width: 255 });
+  const pop = createAnchoredPopover({ anchorEl, align: 'right', width: 260 });
 
   function render() {
     const prefs = store.getPrefs();
+    const sortBy = prefs.bibleSortBy === 'title' ? 'title' : 'abbr';
     const themes = [
       { id: 'paper', label: 'Papel' },
       { id: 'light', label: 'Claro' },
@@ -669,6 +684,13 @@ export function openOverflowDropdown({ anchorEl, onOpenSettings, onOpenLogs } = 
           ${themes.map((t) => (
             `<button type="button" class="ms-popover-toggle-btn" data-ov-theme="${t.id}" style="${prefs.theme === t.id ? 'background:var(--accent);color:#fff;border-color:var(--accent);' : ''}">${t.label}</button>`
           )).join('')}
+        </div>
+
+        <div class="ms-drawer-sep"></div>
+        <div class="ms-drawer-section-label">Exibir módulos por</div>
+        <div style="display:flex;gap:6px;padding:4px 12px 10px;">
+          <button type="button" class="ms-popover-toggle-btn" data-ov-sort="abbr" style="${sortBy === 'abbr' ? 'background:var(--accent);color:#fff;border-color:var(--accent);' : ''}">Abreviação</button>
+          <button type="button" class="ms-popover-toggle-btn" data-ov-sort="title" style="${sortBy === 'title' ? 'background:var(--accent);color:#fff;border-color:var(--accent);' : ''}">Descrição</button>
         </div>
 
         <div class="ms-drawer-sep"></div>
@@ -715,6 +737,13 @@ export function openOverflowDropdown({ anchorEl, onOpenSettings, onOpenLogs } = 
     pop.panel.querySelectorAll('[data-ov-theme]').forEach((btn) => {
       btn.addEventListener('click', () => {
         store.updatePrefs({ theme: btn.getAttribute('data-ov-theme') });
+        render();
+      });
+    });
+
+    pop.panel.querySelectorAll('[data-ov-sort]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        store.updatePrefs({ bibleSortBy: btn.getAttribute('data-ov-sort') });
         render();
       });
     });
