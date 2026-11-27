@@ -18,8 +18,30 @@ function formatBytes(bytes) {
   return `${(num / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function openSettingsModal({ initialTab = 'sources' } = {}) {
+function getKindMeta(kind) {
+  if (kind === 'dictionary') {
+    return {
+      resourceKind: 'dictionary',
+      formatId: 'mysword_dct',
+      extLabel: '.dct.mybible',
+      pluralLabel: 'Dicionário(s)',
+      browserTitle: 'Navegador manual (Dicionários MySword .dct.mybible)'
+    };
+  }
+  return {
+    resourceKind: 'bible',
+    formatId: 'mysword_bbl',
+    extLabel: '.bbl.mybible',
+    pluralLabel: 'Bíblia(s)',
+    browserTitle: 'Navegador manual (Bíblias MySword .bbl.mybible)'
+  };
+}
+
+export function openSettingsModal({ initialTab = 'sources', initialKind = null } = {}) {
   let activeTab = initialTab;
+  let browserKind = initialKind === 'dictionary'
+    ? 'dictionary'
+    : (initialKind === 'bible' ? 'bible' : (store.getActiveMode() === 'dictionary' ? 'dictionary' : 'bible'));
   let browserOpen = false;
   let browserRoots = [];
   let browserDir = null;
@@ -41,7 +63,11 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
     });
   }
 
-  async function openBrowserAt(path) {
+  async function openBrowserAt(path, forcedKind = null) {
+    if (forcedKind) {
+      browserKind = forcedKind;
+    }
+    const meta = getKindMeta(browserKind);
     busy = true;
     renderCurrentTab();
     try {
@@ -50,7 +76,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
         browserRoots = Array.isArray(resRoots && resRoots.roots) ? resRoots.roots : [];
       }
       const targetPath = path || (browserRoots[0] && browserRoots[0].path) || '/storage/emulated/0';
-      browserDir = await nativeBridge.listDirectory(targetPath, 'mysword_bbl');
+      browserDir = await nativeBridge.listDirectory(targetPath, meta.formatId);
       browserOpen = true;
     } catch (err) {
       eventBus.emit(EVENTS.TOAST, err.message || 'Não foi possível abrir a pasta.');
@@ -61,6 +87,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
   }
 
   async function authorizeSource(path, mode) {
+    const meta = getKindMeta(browserKind);
     busy = true;
     renderCurrentTab();
     try {
@@ -68,15 +95,15 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
         path,
         mode,
         recursive: mode === 'folder' ? recursiveFlag : false,
-        resourceKind: 'bible',
-        formatId: 'mysword_bbl'
+        resourceKind: meta.resourceKind,
+        formatId: meta.formatId
       });
       store.clearStructureCache();
       store.setSourcesAndModules(res.sources, res.modules);
       const count = Number(res.addedCount) || 0;
       eventBus.emit(EVENTS.TOAST, count > 0
-        ? `${count} Bíblia(s) autorizada(s) em modo somente leitura.`
-        : 'Fonte salva, mas nenhum .bbl.mybible válido foi encontrado nela.');
+        ? `${count} ${meta.pluralLabel} autorizado(s) em modo somente leitura.`
+        : `Fonte salva, mas nenhum ${meta.extLabel} válido foi encontrado nela.`);
       browserOpen = false;
     } catch (err) {
       eventBus.emit(EVENTS.TOAST, err.message || 'Falha ao adicionar fonte.');
@@ -89,6 +116,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
   function renderSourcesTab() {
     const state = store.getState();
     const isNative = nativeBridge.isNative();
+    const meta = getKindMeta(browserKind);
     const parts = [];
 
     if (isNative && !state.hasStoragePermission) {
@@ -96,7 +124,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
         <div class="settings-card">
           <div class="row-title">Permissão de acesso aos arquivos</div>
           <p class="row-sub" style="margin: 6px 0 12px;">
-            Necessária apenas para abrir suas Bíblias diretamente em modo somente leitura, sem duplicar arquivos.
+            Necessária apenas para abrir suas Bíblias e Dicionários diretamente em modo somente leitura, sem duplicar arquivos.
           </p>
           <div class="browser-actions">
             <button type="button" class="primary-btn" id="btn-req-perm">Conceder permissão</button>
@@ -113,9 +141,13 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
           O aplicativo lê apenas arquivos e pastas listados abaixo. Nenhum arquivo original é alterado.
         </p>
         <div class="browser-actions">
-          <button type="button" class="primary-btn" id="btn-toggle-browser" ${busy ? 'disabled' : ''}>
-            ${browserOpen ? 'Fechar navegador' : '+ Adicionar arquivo ou pasta'}
+          <button type="button" class="${browserOpen && browserKind === 'bible' ? 'primary-btn' : 'secondary-btn'}" id="btn-browse-bibles" ${busy ? 'disabled' : ''}>
+            + Bíblias (.bbl)
           </button>
+          <button type="button" class="${browserOpen && browserKind === 'dictionary' ? 'primary-btn' : 'secondary-btn'}" id="btn-browse-dicts" ${busy ? 'disabled' : ''}>
+            + Dicionários (.dct)
+          </button>
+          ${browserOpen ? `<button type="button" class="secondary-btn" id="btn-close-browser" ${busy ? 'disabled' : ''}>Fechar</button>` : ''}
           ${state.sources.length ? `<button type="button" class="secondary-btn" id="btn-refresh-sources" ${busy ? 'disabled' : ''}>Reverificar</button>` : ''}
         </div>
       </div>
@@ -137,10 +169,11 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
         </button>
       `).join('');
 
+      const iconChar = browserKind === 'dictionary' ? '&#128213;' : '&#128214;';
       const filesHtml = (browserDir && browserDir.files || []).map((f) => `
         <div class="browser-item">
           <div class="row-main">
-            <div class="row-title">&#128214; ${escapeHtml(f.name)}</div>
+            <div class="row-title">${iconChar} ${escapeHtml(f.name)}</div>
             <div class="row-sub">${formatBytes(f.sizeBytes)} • Somente leitura</div>
           </div>
           <button type="button" class="primary-btn" data-add-file="${escapeHtml(f.path)}" ${busy ? 'disabled' : ''}>
@@ -154,7 +187,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
 
       parts.push(`
         <div class="settings-card">
-          <div class="section-label">Navegador manual (Bíblias MySword .bbl.mybible)</div>
+          <div class="section-label">${escapeHtml(meta.browserTitle)}</div>
           <div class="browser-roots">${rootBtns}</div>
           <div class="browser-path">${escapeHtml(curPath)}</div>
           <label class="browser-check">
@@ -171,28 +204,33 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
           <div class="browser-list">
             ${dirsHtml}
             ${filesHtml}
-            ${!dirsHtml && !filesHtml && !busy ? '<p class="row-sub">Nenhuma subpasta ou arquivo .bbl.mybible neste diretório.</p>' : ''}
+            ${!dirsHtml && !filesHtml && !busy ? `<p class="row-sub">Nenhuma subpasta ou arquivo ${escapeHtml(meta.extLabel)} neste diretório.</p>` : ''}
           </div>
         </div>
       `);
     }
 
     if (state.sources.length) {
-      const listHtml = state.sources.map((s) => `
-        <div class="source-card">
-          <div class="row-main">
-            <div class="row-title">${escapeHtml(s.label)}</div>
-            <div class="row-sub">
-              ${s.sourceMode === 'folder' ? (s.recursive ? 'Pasta (+ subpastas)' : 'Pasta única') : 'Arquivo único'}
-              • ${s.moduleCount} Bíblia(s)
+      const listHtml = state.sources.map((s) => {
+        const unitLabel = s.resourceKind === 'dictionary'
+          ? 'Dicionário(s)'
+          : (s.resourceKind === 'mixed' ? 'Módulo(s)' : 'Bíblia(s)');
+        return `
+          <div class="source-card">
+            <div class="row-main">
+              <div class="row-title">${escapeHtml(s.label)}</div>
+              <div class="row-sub">
+                ${s.sourceMode === 'folder' ? (s.recursive ? 'Pasta (+ subpastas)' : 'Pasta única') : 'Arquivo único'}
+                • ${s.moduleCount} ${unitLabel}
+              </div>
+              <div class="row-sub">${escapeHtml(s.path)}</div>
             </div>
-            <div class="row-sub">${escapeHtml(s.path)}</div>
+            <button type="button" class="danger-btn" data-remove-source="${s.id}" ${busy ? 'disabled' : ''}>
+              Remover
+            </button>
           </div>
-          <button type="button" class="danger-btn" data-remove-source="${s.id}" ${busy ? 'disabled' : ''}>
-            Remover
-          </button>
-        </div>
-      `).join('');
+        `;
+      }).join('');
       parts.push(`<div class="section-label">Fontes ativas (${state.sources.length})</div><div class="source-list">${listHtml}</div>`);
     } else {
       parts.push('<p class="row-sub">Nenhuma fonte adicionada ainda.</p>');
@@ -215,13 +253,17 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
       renderSourcesTab();
     });
 
-    modal.body.querySelector('#btn-toggle-browser')?.addEventListener('click', () => {
-      if (browserOpen) {
-        browserOpen = false;
-        renderSourcesTab();
-      } else {
-        openBrowserAt(browserDir ? browserDir.currentPath : '');
-      }
+    modal.body.querySelector('#btn-browse-bibles')?.addEventListener('click', () => {
+      openBrowserAt(browserDir ? browserDir.currentPath : '', 'bible');
+    });
+
+    modal.body.querySelector('#btn-browse-dicts')?.addEventListener('click', () => {
+      openBrowserAt(browserDir ? browserDir.currentPath : '', 'dictionary');
+    });
+
+    modal.body.querySelector('#btn-close-browser')?.addEventListener('click', () => {
+      browserOpen = false;
+      renderSourcesTab();
     });
 
     modal.body.querySelector('#btn-refresh-sources')?.addEventListener('click', async () => {
@@ -309,7 +351,7 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
 
       <div class="settings-card">
         <div class="setting-row">
-          <span>Organizar Bíblias por</span>
+          <span>Organizar módulos por</span>
           <div class="browser-actions" style="margin: 0;">
             <button type="button" class="${sortBy === 'abbr' ? 'primary-btn' : 'secondary-btn'}" data-set-bible-sort="abbr">Abreviação</button>
             <button type="button" class="${sortBy === 'title' ? 'primary-btn' : 'secondary-btn'}" data-set-bible-sort="title">Descrição</button>
@@ -336,6 +378,10 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
         <div class="setting-row">
           <label for="chk-strongs">Exibir códigos Strong (se o módulo possuir)</label>
           <input type="checkbox" id="chk-strongs" ${prefs.showStrongs ? 'checked' : ''} />
+        </div>
+        <div class="setting-row">
+          <label for="chk-morph">Exibir morfologia (se o módulo possuir)</label>
+          <input type="checkbox" id="chk-morph" ${prefs.showMorph ? 'checked' : ''} />
         </div>
       </div>
     `;
@@ -377,6 +423,10 @@ export function openSettingsModal({ initialTab = 'sources' } = {}) {
 
     modal.body.querySelector('#chk-strongs')?.addEventListener('change', (ev) => {
       store.updatePrefs({ showStrongs: Boolean(ev.target.checked) });
+    });
+
+    modal.body.querySelector('#chk-morph')?.addEventListener('change', (ev) => {
+      store.updatePrefs({ showMorph: Boolean(ev.target.checked) });
     });
   }
 
