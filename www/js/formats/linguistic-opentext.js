@@ -246,7 +246,8 @@ const OPENTEXT_CSS = `
 }
 
 .verse-text .ot-word-top .v-fn-btn,
-.verse-text .ot-word-top .v-fn-btn.v-fn-chip {
+.verse-text .ot-word-top .v-fn-btn.v-fn-chip,
+.verse-text .ot-word-top .ot-word-id {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -295,7 +296,7 @@ const OPENTEXT_CSS = `
 `;
 
 const RE_OPENTEXT_CL = /<cl\b[^>]*>\s*<div\b[^>]*class=['"][^'"]*\bc\b[^'"]*['"]/i;
-const RE_OPENTEXT_WG = /(?:<wg\b[^>]*>\s*)?<div\b[^>]*class=['"][^'"]*\bd\b[^'"]*['"][\s\S]*?(?:<w\b[^>]*>\s*)?<div\b[^>]*class=['"][^'"]*\bw\b[^'"]*['"]/i;
+const RE_OPENTEXT_WG = /(?:<wg\b[^>]*>\s*)?<div\b[^>]*class=['"][^'"]*\b(?:d|p)\b[^'"]*['"][\s\S]*?(?:<w\b[^>]*>\s*)?<div\b[^>]*class=['"][^'"]*\bw\b[^'"]*['"]/i;
 const RE_GREEK = /[\u0370-\u03FF\u1F00-\u1FFF]/;
 
 function ensureOpenTextStyles() {
@@ -338,11 +339,11 @@ export function isOpenTextLinguisticHtml(rawText) {
 function classifyRole(roleText) {
   const norm = normalizeAscii(roleText);
   if (!norm) return '';
-  if (/^(?:subject|sujeit)/.test(norm)) return 'subj';
+  if (/^(?:subject|sujeit|sujet)/.test(norm)) return 'subj';
   if (/^(?:predicat|predicad)/.test(norm)) return 'pred';
   if (/^(?:complement|object|objet)/.test(norm)) return 'comp';
-  if (/^(?:adjun|conjun|address|vocat)/.test(norm)) return 'conj';
-  if (/^(?:qualif|defin|specif|especif|relat)/.test(norm)) return 'mod';
+  if (/^(?:adjun|conjun|conec|address|vocat)/.test(norm)) return 'conj';
+  if (/^(?:qualif|calif|defin|specif|especif|relat)/.test(norm)) return 'mod';
   return '';
 }
 
@@ -353,17 +354,18 @@ function getOtNodeType(el) {
   if (el.tagName === 'DIV') {
     if (el.classList.contains('c')) return 'cl';
     if (el.classList.contains('w')) return 'w';
-    if (el.classList.contains('d')) return 'wg';
+    if (el.classList.contains('d') || el.classList.contains('p')) return 'wg';
   }
   return '';
 }
 
-function getDirectOtContainer(el, className) {
-  if (el.tagName === 'DIV' && el.classList.contains(className)) {
+function getDirectOtContainer(el, classNames) {
+  const names = Array.isArray(classNames) ? classNames : [classNames];
+  if (el.tagName === 'DIV' && names.some((c) => el.classList.contains(c))) {
     return el;
   }
   for (const child of el.children) {
-    if (child.tagName === 'DIV' && child.classList.contains(className)) {
+    if (child.tagName === 'DIV' && names.some((c) => child.classList.contains(c))) {
       return child;
     }
   }
@@ -382,10 +384,25 @@ function extractLinesFromNode(node) {
     .filter(Boolean);
 }
 
-function parseWordNode(wordEl) {
+function parseWwMetadata(wwRaw, langPrefix = 'G') {
+  const parts = String(wwRaw || '')
+    .split(',')
+    .map(cleanText);
+  const strongNum = parts[3] || '';
+  const strongCode = /^\d+[a-z]?$/i.test(strongNum) && strongNum !== '0'
+    ? `${langPrefix}${strongNum}`
+    : '';
+  const morphCode = parts[4] || '';
+  return { strongCode, morphCode };
+}
+
+function parseWordNode(wordEl, ctx) {
   const inner = getDirectOtContainer(wordEl, 'w');
   const rawFull = String(inner.textContent || '');
   const fnTokens = rawFull.match(/\u0001\d+\u0001/g) || [];
+
+  const hlEl = inner.querySelector('hl');
+  let wordLabel = hlEl ? cleanText(hlEl.textContent) : '';
 
   const funcEl = inner.querySelector('n');
   const func = funcEl ? cleanText(funcEl.textContent) : '';
@@ -396,12 +413,29 @@ function parseWordNode(wordEl) {
   const trEl = inner.querySelector('[data-ot="tr"]');
   let translit = trEl ? cleanText(trEl.textContent) : '';
 
+  const grkEl = inner.querySelector('[data-ot="grk"]');
+  let strongCode = '';
+  let morphCode = '';
+  if (grkEl) {
+    const grkText = cleanText(grkEl.textContent);
+    const wwMeta = parseWwMetadata(grkEl.getAttribute('data-ww'), 'G');
+    strongCode = wwMeta.strongCode;
+    morphCode = wwMeta.morphCode;
+    if (grkText) {
+      if (!greek) {
+        greek = grkText;
+      } else if (!translit) {
+        translit = grkText;
+      }
+    }
+  }
+
   const glossEl = inner.querySelector('pt, t');
   let gloss = glossEl ? cleanText(glossEl.textContent) : '';
 
   // Extrai eventuais linhas soltas restantes (compatível com variações do módulo)
   const clone = inner.cloneNode(true);
-  clone.querySelectorAll('n, a, t, pt, [data-ot="tr"]').forEach((n) => n.remove());
+  clone.querySelectorAll('hl, n, a, t, pt, [data-ot="tr"], [data-ot="grk"]').forEach((n) => n.remove());
   const extraLines = extractLinesFromNode(clone);
 
   for (const line of extraLines) {
@@ -416,9 +450,28 @@ function parseWordNode(wordEl) {
     }
   }
 
+  // Converte <hl>w1</hl> + metadados WW(...) em botão clicável de nota com Strong e Morfologia
+  if (!fnTokens.length && wordLabel && (strongCode || morphCode) && ctx.footnotes && ctx.footnoteLabels) {
+    const noteLines = [];
+    const headerLex = [strongCode, morphCode].filter(Boolean).join(' · ');
+    if (headerLex) noteLines.push(`[ ${headerLex} ]`);
+    if (greek) noteLines.push(`Palavra: ${greek}`);
+    if (func) noteLines.push(`Função: ${func}`);
+    if (gloss) noteLines.push(`Tradução: ${gloss}`);
+
+    const idx = ctx.footnotes.length;
+    ctx.footnotes.push(noteLines.join('\n'));
+    ctx.footnoteLabels.push(wordLabel);
+    fnTokens.push(`\u0001${idx}\u0001`);
+    wordLabel = '';
+  }
+
   return {
     kind: 'word',
     fnTokens,
+    wordLabel,
+    strongCode,
+    morphCode,
     func,
     greek,
     translit,
@@ -443,8 +496,8 @@ function parseLabelHeader(container) {
   };
 }
 
-function parseGroupNode(wgEl) {
-  const container = getDirectOtContainer(wgEl, 'd');
+function parseGroupNode(wgEl, ctx) {
+  const container = getDirectOtContainer(wgEl, ['d', 'p']);
   const otChildren = Array.from(container.children).filter((ch) =>
     Boolean(getOtNodeType(ch))
   );
@@ -464,9 +517,9 @@ function parseGroupNode(wgEl) {
   for (const ch of otChildren) {
     const otType = getOtNodeType(ch);
     if (otType === 'w') {
-      items.push(parseWordNode(ch));
+      items.push(parseWordNode(ch, ctx));
     } else if (otType === 'wg') {
-      const parsed = parseGroupNode(ch);
+      const parsed = parseGroupNode(ch, ctx);
       if (parsed.kind === 'label' && !spanId && !role) {
         spanId = parsed.spanId;
         role = parsed.role;
@@ -474,7 +527,7 @@ function parseGroupNode(wgEl) {
         items.push(parsed);
       }
     } else if (otType === 'cl') {
-      items.push(parseClauseNode(ch));
+      items.push(parseClauseNode(ch, ctx));
     }
   }
 
@@ -486,35 +539,46 @@ function parseGroupNode(wgEl) {
   };
 }
 
-function parseClauseNode(clEl) {
+function parseClauseNode(clEl, ctx) {
   const container = getDirectOtContainer(clEl, 'c');
   let mark = '';
   let clauseId = '';
   let relation = '';
+  let seenContent = false;
   const items = [];
 
   for (const ch of container.children) {
     const otType = getOtNodeType(ch);
     if (otType === 'wg') {
-      const parsed = parseGroupNode(ch);
+      seenContent = true;
+      const parsed = parseGroupNode(ch, ctx);
       if (parsed.kind !== 'label') items.push(parsed);
     } else if (otType === 'w') {
-      items.push(parseWordNode(ch));
+      seenContent = true;
+      items.push(parseWordNode(ch, ctx));
     } else if (otType === 'cl') {
-      items.push(parseClauseNode(ch));
-    } else if (ch.tagName === 'SUP' && !clauseId && !mark) {
-      const nEl = ch.querySelector('n');
-      const eEl = ch.querySelector('e');
-      mark = nEl ? cleanText(nEl.textContent) : '';
-      clauseId = eEl ? cleanText(eEl.textContent) : '';
+      seenContent = true;
+      items.push(parseClauseNode(ch, ctx));
+    } else if (!seenContent && ch.tagName !== 'BR') {
+      if (!clauseId && !mark) {
+        const nEl = ch.querySelector('n');
+        const eEl = ch.querySelector('e');
+        mark = nEl ? cleanText(nEl.textContent) : '';
+        clauseId = eEl ? cleanText(eEl.textContent) : '';
 
-      const clone = ch.cloneNode(true);
-      clone.querySelectorAll('n, e').forEach((x) => x.remove());
-      const rest = cleanText(clone.textContent);
-      if (rest) relation = rest;
-      if (!clauseId && rest) {
-        clauseId = rest;
-        relation = '';
+        const clone = ch.cloneNode(true);
+        clone.querySelectorAll('n, e').forEach((x) => x.remove());
+        const rest = cleanText(clone.textContent);
+        if (rest) relation = rest;
+        if (!clauseId && rest) {
+          clauseId = rest;
+          relation = '';
+        }
+      } else {
+        const extra = cleanText(ch.textContent);
+        if (extra) {
+          relation = relation ? `${relation} ${extra}` : extra;
+        }
       }
     }
   }
@@ -532,6 +596,8 @@ function renderWord(node) {
   const topParts = [];
   if (node.fnTokens.length) {
     topParts.push(node.fnTokens.join(''));
+  } else if (node.wordLabel) {
+    topParts.push(`<span class="ot-word-id">${escapeHtml(node.wordLabel)}</span>`);
   }
   if (node.func) {
     topParts.push(`<span class="ot-word-func">${escapeHtml(node.func)}</span>`);
@@ -550,7 +616,12 @@ function renderWord(node) {
     ? `<span class="ot-gloss">${escapeHtml(node.gloss)}</span>`
     : '';
 
-  return `<div class="ot-word">${topHtml}${greekHtml}${translitHtml}${glossHtml}</div>`;
+  const attrs = [
+    node.strongCode ? `data-strong="${escapeHtml(node.strongCode)}"` : '',
+    node.morphCode ? `data-morph="${escapeHtml(node.morphCode)}"` : ''
+  ].filter(Boolean).join(' ');
+
+  return `<div class="ot-word"${attrs ? ` ${attrs}` : ''}>${topHtml}${greekHtml}${translitHtml}${glossHtml}</div>`;
 }
 
 function renderGroup(node, depth = 0) {
@@ -614,19 +685,30 @@ function renderClause(node) {
   return `<div class="ot-clause">${headHtml}<div class="ot-clause-body">${bodyHtml}</div></div>`;
 }
 
-export function formatOpenTextHtml(rawHtml) {
+export function formatOpenTextHtml(rawHtml, options = {}) {
   if (typeof document === 'undefined') return '';
   const source = String(rawHtml || '').trim();
   if (!source) return '';
 
   ensureOpenTextStyles();
 
-  // Normaliza tags customizadas (inclusive <Tr>, que o navegador descartaria como <tr> fora de <table>)
+  const ctx = {
+    footnotes: Array.isArray(options.footnotes) ? options.footnotes : null,
+    footnoteLabels: Array.isArray(options.footnoteLabels) ? options.footnoteLabels : null
+  };
+
+  // Normaliza tags customizadas (inclusive <Tr> e <grk WW(...)>) antes de montar a árvore DOM
   const normalized = source
     .replace(/<(\/?)cl\b([^>]*)>/gi, (_, sl, a) => (sl ? '</div>' : `<div data-ot="cl"${a}>`))
     .replace(/<(\/?)wg\b([^>]*)>/gi, (_, sl, a) => (sl ? '</div>' : `<div data-ot="wg"${a}>`))
     .replace(/<(\/?)w\b([^>]*)>/gi, (_, sl, a) => (sl ? '</div>' : `<div data-ot="w"${a}>`))
-    .replace(/<(\/?)tr\b([^>]*)>/gi, (_, sl, a) => (sl ? '</span>' : `<span data-ot="tr"${a}>`));
+    .replace(/<(\/?)tr\b([^>]*)>/gi, (_, sl, a) => (sl ? '</span>' : `<span data-ot="tr"${a}>`))
+    .replace(/<grk\b([^>]*)>/gi, (_, attrs) => {
+      const ww = /WW\(\s*([^)]+)\s*\)/i.exec(attrs || '');
+      const dataWw = ww ? ` data-ww="${escapeHtml(ww[1])}"` : '';
+      return `<span data-ot="grk"${dataWw}>`;
+    })
+    .replace(/<\/grk>/gi, '</span>');
 
   const tpl = document.createElement('template');
   tpl.innerHTML = normalized;
@@ -637,12 +719,12 @@ export function formatOpenTextHtml(rawHtml) {
   for (const ch of tpl.content.children) {
     const otType = getOtNodeType(ch);
     if (otType === 'cl') {
-      rendered.push(renderClause(parseClauseNode(ch)));
+      rendered.push(renderClause(parseClauseNode(ch, ctx)));
     } else if (otType === 'wg') {
-      const parsed = parseGroupNode(ch);
+      const parsed = parseGroupNode(ch, ctx);
       if (parsed.kind !== 'label') looseItems.push(parsed);
     } else if (otType === 'w') {
-      looseItems.push(parseWordNode(ch));
+      looseItems.push(parseWordNode(ch, ctx));
     }
   }
 
