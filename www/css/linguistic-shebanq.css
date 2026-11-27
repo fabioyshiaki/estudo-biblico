@@ -94,8 +94,8 @@
   align-items: center;
   justify-content: flex-start;
   gap: 2px;
-  min-width: 56px;
-  padding: 6px 8px 7px;
+  min-width: 52px;
+  padding: 5px 8px 6px;
   text-align: center;
 }
 
@@ -105,11 +105,15 @@
 
 .verse-text .shb-orig {
   display: block;
-  min-height: 1.4em;
-  font-size: 1.18em;
-  font-weight: 600;
-  line-height: 1.35;
+  min-height: 1.35em;
+  font-size: 1.02em;
+  font-weight: 500;
+  line-height: 1.32;
   color: var(--text-main);
+}
+
+.verse-text .shb-orig[dir="rtl"] {
+  font-size: 1.12em;
 }
 
 .verse-text .shb-orig.is-elided {
