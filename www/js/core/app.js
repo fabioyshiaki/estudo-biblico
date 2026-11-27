@@ -203,7 +203,8 @@ function syncDictionariesFromStore() {
   const dicts = store.getDictionaries();
   syncDictionaryModules(dicts);
   const activeDict = store.getActiveDictionary();
-  if (activeDict) {
+  const dState = getDictionaryViewState();
+  if (activeDict && dState.activeModulePath !== activeDict.path) {
     setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
   }
   updateDictionaryChrome({ activeModule: activeDict });
@@ -225,7 +226,8 @@ async function openCompanionEntryInDictionary(modulePath, entryWord, originVerse
   await openDictionaryEntry(entryWord, {
     modulePath,
     pushHistory: true,
-    fallbackAll: false
+    fallbackAll: false,
+    directWord: true
   });
   syncJumpBackButton();
 }
@@ -422,7 +424,8 @@ async function goBackFromBibleJump() {
       await openDictionaryEntry(prev.word, {
         modulePath: prev.modulePath,
         pushHistory: false,
-        fallbackAll: false
+        fallbackAll: false,
+        directWord: true
       });
     } else {
       await loadFirstOrCurrentEntry();
@@ -488,7 +491,7 @@ async function openTermInDictionary(term, { searchAll = false, moduleHint = '' }
   }
 
   if (searchAll) {
-    await searchDictionaryTerm(term, { scope: 'all', searchBody: false });
+    await searchDictionaryTerm(term, { scope: 'all' });
   } else {
     await openDictionaryEntry(term, {
       moduleHint,
@@ -571,6 +574,7 @@ function bindShellEvents() {
     openDictionaryPickerModal({
       filterTerm: dState.filterTerm || '',
       searchBody: Boolean(dState.searchBody),
+      searchOptions: dState.searchOptions || null,
       onSelectDictionary: (modulePath, { matchedWord = '', keepFilterTerm = false } = {}) => {
         store.setActiveDictionary(modulePath, { silent: true });
         if (matchedWord) {
@@ -644,7 +648,12 @@ function bindStateEvents() {
     clearDictionaryLookupCache();
     syncDictionariesFromStore();
     if (store.getActiveMode() === 'dictionary') {
-      loadFirstOrCurrentEntry();
+      const dState = getDictionaryViewState();
+      if (dState.currentEntry) {
+        renderDictionaryView({ resetScroll: false });
+      } else {
+        loadFirstOrCurrentEntry();
+      }
     } else {
       renderReader({ resetScroll: false });
     }
