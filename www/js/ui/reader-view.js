@@ -7,7 +7,8 @@ import { nativeBridge } from '../bridge/native-bridge.js';
 let callbacks = {
   onOpenSources: () => {},
   onOpenFootnote: () => {},
-  onRequestPermission: () => {}
+  onRequestPermission: () => {},
+  onLookupDictionary: () => {}
 };
 
 let currentVerses = [];
@@ -53,6 +54,8 @@ export function initReaderView(opts = {}) {
   if (!container) return;
 
   container.addEventListener('click', (ev) => {
+    if (store.getActiveMode() !== 'bible') return;
+
     const fnBtn = ev.target.closest('.v-fn-btn');
     if (fnBtn) {
       ev.stopPropagation();
@@ -67,11 +70,66 @@ export function initReaderView(opts = {}) {
       return;
     }
 
+    // Busca direta Bíblia -> Dicionário com 1 toque em tags léxicas
+    const strongEl = ev.target.closest('[data-strong]');
+    if (strongEl && strongEl.dataset.strong) {
+      ev.stopPropagation();
+      callbacks.onLookupDictionary(strongEl.dataset.strong, { moduleHint: 'strong' });
+      return;
+    }
+
+    const morphEl = ev.target.closest('[data-morph]');
+    if (morphEl && morphEl.dataset.morph) {
+      ev.stopPropagation();
+      callbacks.onLookupDictionary(morphEl.dataset.morph, { moduleHint: 'morph' });
+      return;
+    }
+
+    const lnEl = ev.target.closest('[data-ln]');
+    if (lnEl && lnEl.dataset.ln) {
+      ev.stopPropagation();
+      const firstDomain = String(lnEl.dataset.ln).split(',')[0].trim();
+      if (firstDomain) {
+        callbacks.onLookupDictionary(firstDomain, { moduleHint: 'louw' });
+      }
+      return;
+    }
+
+    const bdbEl = ev.target.closest('[data-bdb]');
+    if (bdbEl && bdbEl.dataset.bdb) {
+      ev.stopPropagation();
+      callbacks.onLookupDictionary(bdbEl.dataset.bdb, { moduleHint: 'bdb' });
+      return;
+    }
+
+    const twotEl = ev.target.closest('[data-twot]');
+    if (twotEl && twotEl.dataset.twot) {
+      ev.stopPropagation();
+      callbacks.onLookupDictionary(twotEl.dataset.twot, { moduleHint: 'twot' });
+      return;
+    }
+
+    const gkEl = ev.target.closest('[data-gk], [data-hgk]');
+    if (gkEl) {
+      const code = gkEl.dataset.gk || gkEl.dataset.hgk || '';
+      if (code) {
+        ev.stopPropagation();
+        callbacks.onLookupDictionary(code, { moduleHint: 'gk' });
+        return;
+      }
+    }
+
     const actionBtn = ev.target.closest('[data-empty-action]');
     if (actionBtn) {
       const action = actionBtn.dataset.emptyAction;
       if (action === 'sources') callbacks.onOpenSources();
       if (action === 'permission') callbacks.onRequestPermission();
+      return;
+    }
+
+    // Evita alternar seleção do versículo quando o usuário está selecionando uma palavra para buscar
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (sel && !sel.isCollapsed && sel.toString().trim()) {
       return;
     }
 
@@ -116,7 +174,7 @@ function updateChrome(bible, bookId, chapter, navLimits = {}) {
   if (refLabel) {
     refLabel.textContent = bible ? formatReference(bookId, chapter) : 'Selecionar';
   }
-  if (metaLabel) {
+  if (metaLabel && store.getActiveMode() === 'bible') {
     metaLabel.textContent = bible
       ? `${bible.abbr || bible.title} • ${formatReference(bookId, chapter)}`
       : 'Nenhuma fonte configurada';
@@ -126,8 +184,10 @@ function updateChrome(bible, bookId, chapter, navLimits = {}) {
   if (nextBibleBtn) nextBibleBtn.disabled = bibleIdx < 0 || bibleIdx >= bibles.length - 1;
   if (prevBookBtn) prevBookBtn.disabled = !bible || Boolean(navLimits.isFirstBook);
   if (nextBookBtn) nextBookBtn.disabled = !bible || Boolean(navLimits.isLastBook);
-  if (prevBtn) prevBtn.disabled = !bible || Boolean(navLimits.isFirst);
-  if (nextBtn) nextBtn.disabled = !bible || Boolean(navLimits.isLast);
+  if (store.getActiveMode() === 'bible') {
+    if (prevBtn) prevBtn.disabled = !bible || Boolean(navLimits.isFirst);
+    if (nextBtn) nextBtn.disabled = !bible || Boolean(navLimits.isLast);
+  }
 }
 
 function renderEmptyState({ title, message, primaryLabel, primaryAction, secondaryLabel, secondaryAction }) {
@@ -149,7 +209,9 @@ function renderEmptyState({ title, message, primaryLabel, primaryAction, seconda
   `;
 }
 
-export async function renderReader({ resetScroll = true } = {}) {
+export async function renderReader({ resetScroll = true, restoreScrollTop = null, scrollToVerse = null } = {}) {
+  if (store.getActiveMode() !== 'bible') return;
+
   const seq = ++renderSeq;
   const state = store.getState();
   const bible = store.getActiveBible();
@@ -193,7 +255,7 @@ export async function renderReader({ resetScroll = true } = {}) {
 
   try {
     const books = await loadBooksForBible(bible);
-    if (seq !== renderSeq) return;
+    if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
 
     if (!books.length) {
       updateChrome(bible, state.book, state.chapter, lockedLimits);
@@ -208,7 +270,7 @@ export async function renderReader({ resetScroll = true } = {}) {
 
     let targetBook = books.includes(state.book) ? state.book : books[0];
     const chapters = await loadChaptersForBible(bible, targetBook);
-    if (seq !== renderSeq) return;
+    if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
 
     let targetChapter = chapters.includes(state.chapter)
       ? state.chapter
@@ -224,7 +286,7 @@ export async function renderReader({ resetScroll = true } = {}) {
       showStrongs: prefs.showStrongs,
       showMorph: prefs.showMorph
     });
-    if (seq !== renderSeq) return;
+    if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
 
     const bookIdx = books.indexOf(targetBook);
     const chapIdx = chapters.indexOf(targetChapter);
@@ -277,14 +339,24 @@ export async function renderReader({ resetScroll = true } = {}) {
       container.innerHTML = parts.join('');
     }
 
-    if (resetScroll) {
-      const scrollBox = document.getElementById('reader-scroll');
-      if (scrollBox) {
-        scrollBox.scrollTo({ top: 0, behavior: 'auto' });
+    const scrollBox = document.getElementById('reader-scroll');
+    if (scrollToVerse && container) {
+      const targetVerseEl = container.querySelector(`.verse-item[data-verse="${Number(scrollToVerse)}"]`);
+      if (targetVerseEl) {
+        selectedVerseNum = Number(scrollToVerse);
+        targetVerseEl.classList.add('is-selected');
+        targetVerseEl.scrollIntoView({ behavior: 'auto', block: 'center' });
+        return;
       }
     }
+
+    if (typeof restoreScrollTop === 'number' && scrollBox) {
+      scrollBox.scrollTop = Math.max(0, restoreScrollTop);
+    } else if (resetScroll && scrollBox) {
+      scrollBox.scrollTo({ top: 0, behavior: 'auto' });
+    }
   } catch (err) {
-    if (seq !== renderSeq) return;
+    if (seq !== renderSeq || store.getActiveMode() !== 'bible') return;
     updateChrome(bible, state.book, state.chapter, lockedLimits);
     renderEmptyState({
       title: 'Erro ao ler capítulo',
@@ -371,5 +443,3 @@ export async function stepChapter(delta) {
     }
   }
 }
-
-// FIM reader-view.js
