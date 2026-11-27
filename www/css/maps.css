@@ -1,0 +1,569 @@
+/* Estilos do Leitor de Mapas e Marcador de Localização nos Versículos (4 temas) */
+
+:root,
+:root[data-theme="paper"] {
+  --map-pin-fg: #1d6fd6;
+  --map-pin-bg: rgba(29, 111, 214, 0.11);
+  --map-pin-border: rgba(29, 111, 214, 0.28);
+  --map-bg: #f6f2e8;
+  --map-bar-bg: #ebe4d4;
+  --map-panel-bg: #efe9dc;
+  --map-card-bg: #ffffff;
+  --map-stage-bg: #e4ddce;
+  --map-border: #d6cdbc;
+  --map-text: #221f1a;
+  --map-muted: #6c655a;
+  --map-accent: #1c7ed6;
+  --map-accent-soft: rgba(28, 126, 214, 0.14);
+  --ms-badge-map-bg: #1c7ed6;
+  --ms-badge-map-fg: #ffffff;
+}
+
+:root[data-theme="light"] {
+  --map-pin-fg: #2563eb;
+  --map-pin-bg: rgba(37, 99, 235, 0.10);
+  --map-pin-border: rgba(37, 99, 235, 0.26);
+  --map-bg: #f8fafc;
+  --map-bar-bg: #eef2f7;
+  --map-panel-bg: #f1f5f9;
+  --map-card-bg: #ffffff;
+  --map-stage-bg: #e2e8f0;
+  --map-border: #d5dde7;
+  --map-text: #0f172a;
+  --map-muted: #64748b;
+  --map-accent: #1d6fd6;
+  --map-accent-soft: rgba(29, 111, 214, 0.12);
+  --ms-badge-map-bg: #2563eb;
+  --ms-badge-map-fg: #ffffff;
+}
+
+:root[data-theme="sepia"] {
+  --map-pin-fg: #2266a8;
+  --map-pin-bg: rgba(34, 102, 168, 0.12);
+  --map-pin-border: rgba(34, 102, 168, 0.30);
+  --map-bg: #f3ead7;
+  --map-bar-bg: #e5d8bd;
+  --map-panel-bg: #eae0c9;
+  --map-card-bg: #faf4e8;
+  --map-stage-bg: #dfd2b8;
+  --map-border: #cbbba0;
+  --map-text: #382a1a;
+  --map-muted: #76644c;
+  --map-accent: #2271b3;
+  --map-accent-soft: rgba(34, 113, 179, 0.14);
+  --ms-badge-map-bg: #2266a8;
+  --ms-badge-map-fg: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  --map-pin-fg: #58a6ff;
+  --map-pin-bg: rgba(88, 166, 255, 0.16);
+  --map-pin-border: rgba(88, 166, 255, 0.36);
+  --map-bg: #000000;
+  --map-bar-bg: #07090c;
+  --map-panel-bg: #0f1217;
+  --map-card-bg: #151921;
+  --map-stage-bg: #050608;
+  --map-border: #232832;
+  --map-text: #f1f5f9;
+  --map-muted: #9aa3ae;
+  --map-accent: #33b5e5;
+  --map-accent-soft: rgba(51, 181, 229, 0.18);
+  --ms-badge-map-bg: #2677c9;
+  --ms-badge-map-fg: #ffffff;
+}
+
+/* Selo quadrado "M" para o menu lateral e dock */
+.ms-res-badge--map {
+  background: var(--ms-badge-map-bg);
+  color: var(--ms-badge-map-fg);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+/* Marcador (pino de localização) exibido no final do versículo */
+.v-map-pin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  vertical-align: middle;
+  margin-left: 5px;
+  padding: 2px 5px;
+  min-height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--map-pin-border);
+  background: var(--map-pin-bg);
+  color: var(--map-pin-fg);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease, background-color 0.12s ease;
+}
+
+.v-map-pin-btn:active {
+  transform: scale(0.92);
+  background: var(--map-accent-soft);
+}
+
+.v-map-pin-btn svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.v-map-pin-count {
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+/* Container tela cheia do Leitor de Mapas */
+.map-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  background: var(--map-bg);
+  color: var(--map-text);
+  font-family: var(--font-ui);
+}
+
+.map-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 50px;
+  padding: env(safe-area-inset-top, 0px) 8px 0 4px;
+  background: var(--map-bar-bg);
+  border-bottom: 2px solid var(--map-accent);
+  flex: 0 0 auto;
+}
+
+.map-hdr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--map-text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.map-hdr-btn:active,
+.map-hdr-btn.is-active {
+  background: var(--map-accent-soft);
+  color: var(--map-accent);
+}
+
+.map-hdr-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-hdr-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--map-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-hdr-sub {
+  font-size: 11.5px;
+  color: var(--map-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Faixa de contexto do versículo (localizações detectadas + mapas sugeridos) */
+.map-verse-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 10px;
+  background: var(--map-panel-bg);
+  border-bottom: 1px solid var(--map-border);
+  flex: 0 0 auto;
+}
+
+.map-verse-strip.hidden {
+  display: none;
+}
+
+.map-verse-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.map-verse-row::-webkit-scrollbar {
+  display: none;
+}
+
+.map-verse-tag {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--map-muted);
+  white-space: nowrap;
+}
+
+.map-loc-pill {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--map-pin-border);
+  background: var(--map-pin-bg);
+  color: var(--map-pin-fg);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.map-rec-chip {
+  flex: 0 0 auto;
+  height: 28px;
+  max-width: 240px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--map-border);
+  background: var(--map-card-bg);
+  color: var(--map-text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.map-rec-chip.is-active {
+  background: var(--map-accent);
+  border-color: var(--map-accent);
+  color: #ffffff;
+}
+
+/* Gavetas expansíveis (Pasta de Mapas / Índice e Busca) */
+.map-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--map-panel-bg);
+  border-bottom: 1px solid var(--map-border);
+  flex: 0 0 auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.map-drawer.hidden {
+  display: none;
+}
+
+.map-drawer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-path-box {
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--map-border);
+  background: var(--map-card-bg);
+  color: var(--map-text);
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.map-text-input {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--map-border);
+  background: var(--map-card-bg);
+  color: var(--map-text);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.map-text-input:focus {
+  border-color: var(--map-accent);
+}
+
+.map-select {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--map-border);
+  background: var(--map-card-bg);
+  color: var(--map-text);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  outline: none;
+}
+
+.map-index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.map-index-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--map-border);
+  background: var(--map-card-bg);
+  color: var(--map-text);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-sizing: border-box;
+}
+
+.map-index-item.is-active {
+  border-color: var(--map-accent);
+  background: var(--map-accent-soft);
+  color: var(--map-accent);
+  font-weight: 700;
+}
+
+.map-index-sub {
+  font-size: 11px;
+  color: var(--map-muted);
+  flex: 0 0 auto;
+}
+
+/* Área central de visualização do mapa (com suporte a zoom/pinça/arraste) */
+.map-main-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--map-stage-bg);
+  overflow: hidden;
+}
+
+.map-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.map-stage-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.map-img-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--map-panel-bg);
+  border-bottom: 1px solid var(--map-border);
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+
+.map-zoom-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.58);
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* Páginas de índice HTML dentro dos módulos (ex.: Índice dos Mapas / Table of Contents) */
+.map-html-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+  background: var(--map-bg);
+  -webkit-overflow-scrolling: touch;
+}
+
+.map-html-content {
+  max-width: 720px;
+  margin: 0 auto;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--map-text);
+}
+
+.map-html-content ol,
+.map-html-content ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.map-html-content li {
+  margin: 6px 0;
+}
+
+.map-html-content a {
+  display: block;
+  margin: 6px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--map-border);
+  background: var(--map-card-bg);
+  color: var(--map-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.map-html-content a:active {
+  background: var(--map-accent-soft);
+}
+
+.map-empty-box {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 24px 18px;
+  background: var(--map-bg);
+  color: var(--map-text);
+}
+
+.map-empty-box h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.map-empty-box p {
+  margin: 0;
+  max-width: 460px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--map-muted);
+}
+
+/* Barra inferior de controles do mapa */
+.map-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 48px;
+  padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px));
+  background: var(--map-bar-bg);
+  border-top: 1px solid var(--map-border);
+  overflow-x: auto;
+  flex: 0 0 auto;
+  scrollbar-width: none;
+}
+
+.map-bottom-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.map-bar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.map-ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--map-border);
+  border-radius: 7px;
+  background: var(--map-card-bg);
+  color: var(--map-text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.map-ctrl-btn:active,
+.map-ctrl-btn.is-active {
+  border-color: var(--map-accent);
+  background: var(--map-accent-soft);
+  color: var(--map-accent);
+}
+
+.map-ctrl-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
