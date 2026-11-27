@@ -13,6 +13,7 @@ import { clearDictionaryLookupCache } from '../formats/dictionary-lookup.js';
 import { clearBibleSearchCache } from '../formats/bible-search.js';
 import { clearUnifiedDictSearchCache } from '../formats/dictionary-search.js';
 import { clearCommentarySearchCache } from '../formats/commentary-search.js';
+import { clearMapServiceCache } from '../formats/map-service.js';
 import {
   myswordCommentaryAdapter,
   clearCommentaryLookupCache
@@ -36,7 +37,6 @@ import {
   setActiveDictionaryModule,
   loadFirstOrCurrentEntry,
   openDictionaryEntry,
-  searchDictionaryTerm,
   stepDictionaryEntry,
   renderDictionaryView,
   initSelectionLookupBar,
@@ -48,6 +48,7 @@ import {
   clearBibleSearchSession,
   attachBibleSearchToLookupFab
 } from '../ui/bible-search-modal.js';
+import { openMapViewerModal } from '../ui/map-viewer-modal.js';
 import {
   openLocationPickerModal,
   openFootnoteModal,
@@ -378,6 +379,18 @@ function syncDictionariesFromStore() {
     setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
   }
   updateDictionaryChrome({ activeModule: activeDict });
+}
+
+function openMapsDialog(markerInfo = null) {
+  closeShellPopover();
+  openMapViewerModal({
+    markerInfo,
+    onMapsDirectoryChanged: () => {
+      if (store.getActiveMode() === 'bible') {
+        renderReader({ resetScroll: false });
+      }
+    }
+  });
 }
 
 function openCommentaryPickerFrom(anchorEl = null) {
@@ -917,6 +930,7 @@ function bindShellEvents() {
         if (mode !== 'bible') rememberBibleScrollIfActive();
         store.setActiveMode(mode);
       },
+      onOpenMaps: () => openMapsDialog(),
       onOpenUnifiedSearch: (kind) => openUnifiedSearchDialog({ kind }),
       onOpenBibleSearch: () => openUnifiedSearchDialog({ kind: 'bible' }),
       onOpenDictTerms: () => {
@@ -1110,6 +1124,10 @@ function bindShellEvents() {
     rememberBibleScrollIfActive();
     store.setActiveMode('dictionary');
   });
+
+  document.getElementById('btn-open-maps')?.addEventListener('click', () => {
+    openMapsDialog();
+  });
 }
 
 function bindStateEvents() {
@@ -1140,6 +1158,7 @@ function bindStateEvents() {
     clearBibleSearchCache();
     clearUnifiedDictSearchCache();
     clearCommentarySearchCache();
+    clearMapServiceCache();
     clearBibleSearchSession();
     myswordCommentaryAdapter.clearCache();
     clearCommentaryLookupCache();
@@ -1272,6 +1291,7 @@ async function bootstrap() {
     },
     onLookupDictionary: (term, opts) => openTermInDictionary(term, opts),
     onOpenCompanionGroup: (payload) => handleOpenCompanionGroup(payload),
+    onOpenVerseMap: (markerInfo) => openMapsDialog(markerInfo),
     onBibleChromeUpdated: () => refreshQuickBibleTabs()
   });
 
