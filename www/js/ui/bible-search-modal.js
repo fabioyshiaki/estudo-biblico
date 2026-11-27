@@ -108,6 +108,25 @@ function normalizeAscii(str) {
     .toLowerCase();
 }
 
+function getPreferredBibleLabel(mod, fallback = 'Bíblia') {
+  if (!mod) return fallback;
+  const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+  return sortBy === 'title'
+    ? (mod.title || mod.abbr || mod.fileName || fallback)
+    : (mod.abbr || mod.title || mod.fileName || fallback);
+}
+
+function getBibleOptionLabel(mod) {
+  if (!mod) return 'Bíblia';
+  const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
+  const primary = getPreferredBibleLabel(mod, 'Bíblia');
+  const secondary = sortBy === 'title' ? (mod.abbr || '') : (mod.title || '');
+  if (secondary && secondary !== primary) {
+    return `${primary} — ${secondary}`;
+  }
+  return primary;
+}
+
 async function copyTextSafe(text) {
   try {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -286,7 +305,7 @@ export function openBibleSearchModal({
     if (targetBibleVal === ALL_BIBLES_VALUE) return 'Pesquisar Todas as Bíblias';
     if (targetBibleVal === FAV_BIBLES_VALUE) return 'Pesquisar Bíblias Favoritas';
     const b = getSelectedBibleObj();
-    return b ? `Pesquisar ${b.title || b.abbr}` : 'Pesquisar Bíblia';
+    return b ? `Pesquisar ${getPreferredBibleLabel(b, 'Bíblia')}` : 'Pesquisar Bíblia';
   }
 
   function getItemKey(item) {
@@ -459,9 +478,7 @@ export function openBibleSearchModal({
     const favCount = allBibles.filter((b) => b.isFavorite).length;
     const bibleOptionsHtml = [
       ...allBibles.map((b) => {
-        const label = b.title && b.abbr && b.title !== b.abbr
-          ? `${b.title} (${b.abbr})`
-          : (b.title || b.abbr || b.fileName);
+        const label = getBibleOptionLabel(b);
         return `<option value="${escapeHtml(b.path)}"${targetBibleVal === b.path ? ' selected' : ''}>${escapeHtml(label)}</option>`;
       }),
       `<option value="${ALL_BIBLES_VALUE}"${targetBibleVal === ALL_BIBLES_VALUE ? ' selected' : ''}>Todas as Bíblias (${allBibles.length})</option>`,
@@ -768,7 +785,7 @@ export function openBibleSearchModal({
     const isMultiBible = targetBibleVal === ALL_BIBLES_VALUE || targetBibleVal === FAV_BIBLES_VALUE;
 
     const modBadge = isMultiBible && item.module
-      ? `<span class="bsearch-badge">${escapeHtml(item.module.abbr || item.module.title)}</span>`
+      ? `<span class="bsearch-badge">${escapeHtml(getPreferredBibleLabel(item.module, 'Bíblia'))}</span>`
       : '';
 
     const extraBadges = (Array.isArray(item.matchedBadges) ? item.matchedBadges : []).map((b) => {
@@ -939,7 +956,6 @@ export function openBibleSearchModal({
     if (next === focusedIdx) return;
     focusedIdx = next;
 
-    // Garante que o item focado já foi renderizado no DOM
     while (renderedCount <= focusedIdx && renderedCount < filtered.length) {
       renderResults({ resetList: false });
     }
@@ -1117,7 +1133,6 @@ export function openBibleSearchModal({
       runSearch();
     });
 
-    // Barra inferior
     document.getElementById('ms-foot-compact')?.addEventListener('click', () => {
       compactView = !compactView;
       persistSessionSnapshot();
@@ -1154,7 +1169,7 @@ export function openBibleSearchModal({
 
       const isMulti = targetBibleVal === ALL_BIBLES_VALUE || targetBibleVal === FAV_BIBLES_VALUE;
       const text = selectedList.map((it) => {
-        const modTag = isMulti && it.module ? ` (${it.module.abbr || it.module.title})` : '';
+        const modTag = isMulti && it.module ? ` (${getPreferredBibleLabel(it.module, 'Bíblia')})` : '';
         return `${it.refLabel}${modTag} — ${it.plainText || ''}`;
       }).join('\n');
 
@@ -1208,7 +1223,6 @@ export function openBibleSearchModal({
       renderResults({ resetList: true });
     });
 
-    // Rolagem infinita dos resultados
     const scrollEl = document.getElementById('ms-results-scroll');
     scrollEl?.addEventListener('scroll', () => {
       if (isSearching || !searchResult) return;
@@ -1228,7 +1242,6 @@ export function openBibleSearchModal({
       return;
     }
 
-    // Lê valor atualizado do campo Limitar caso usuário não tenha saído do input
     const limInput = document.getElementById('ms-input-limit');
     if (limInput) {
       const v = Math.trunc(Number(limInput.value));
@@ -1254,6 +1267,7 @@ export function openBibleSearchModal({
     const isAll = targetBibleVal === ALL_BIBLES_VALUE;
     const isFav = targetBibleVal === FAV_BIBLES_VALUE;
     const chosenBible = getSelectedBibleObj();
+    const chosenLabel = getPreferredBibleLabel(chosenBible, 'Bíblia');
 
     if (isFav && !allBibles.some((b) => b.isFavorite)) {
       isSearching = false;
@@ -1268,7 +1282,7 @@ export function openBibleSearchModal({
       ? `Pesquisando "${clean}" em todas as Bíblias...`
       : isFav
         ? `Pesquisando "${clean}" nas Bíblias favoritas...`
-        : `Pesquisando "${clean}" em ${chosenBible ? (chosenBible.title || chosenBible.abbr) : 'Bíblia'}...`;
+        : `Pesquisando "${clean}" em ${chosenLabel}...`;
 
     renderBookBar();
     renderResults({ resetList: true });
@@ -1308,7 +1322,7 @@ export function openBibleSearchModal({
             const pct = Math.round((done / Math.max(1, total)) * 100);
             const p = document.getElementById('ms-progress-text');
             if (p) {
-              p.textContent = `Pesquisando "${clean}" em ${chosenBible.abbr || chosenBible.title} (${pct}% · ${found} versículo(s))...`;
+              p.textContent = `Pesquisando "${clean}" em ${chosenLabel} (${pct}% · ${found} versículo(s))...`;
             }
           }
         });
@@ -1323,7 +1337,6 @@ export function openBibleSearchModal({
         ? ''
         : `Nenhum versículo encontrado para "${clean}" com os filtros selecionados.`;
 
-      // Se encontrou resultados, recolhe automaticamente o painel de filtros em telas menores para mostrar mais versículos
       if (res.items.length > 0 && window.innerHeight < 760) {
         filtersCollapsed = true;
       }
