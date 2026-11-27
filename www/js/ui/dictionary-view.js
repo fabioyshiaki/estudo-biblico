@@ -7,6 +7,8 @@ import {
   searchAcrossDictionaries,
   parseBibleReference
 } from '../formats/dictionary-lookup.js';
+import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
+import { ensureCompanionStyles } from '../formats/companion-dicts.js';
 
 const viewState = {
   dictionaries: [],
@@ -21,6 +23,8 @@ const viewState = {
   history: [],            // [{ modulePath, word }]
   activeAbort: null
 };
+
+let imageRenderSeq = 0;
 
 let callbacks = {
   onOpenSources: () => {},
@@ -89,8 +93,85 @@ function pushHistorySnapshot() {
   }
 }
 
+function openImageLightbox(src, altText) {
+  if (typeof document === 'undefined' || !src) return;
+
+  const existing = document.getElementById('dct-lightbox');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'dct-lightbox';
+  overlay.className = 'dct-lightbox';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', altText || 'Imagem ampliada');
+
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = altText || '';
+  overlay.appendChild(img);
+
+  const close = () => {
+    overlay.remove();
+    window.removeEventListener('keydown', onKey);
+  };
+
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') close();
+  };
+
+  overlay.addEventListener('click', close);
+  window.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
+}
+
+async function hydrateDictionaryImages(rootEl, modulePath, rawContext, seq) {
+  if (!rootEl || !modulePath) return;
+  const imgs = Array.from(rootEl.querySelectorAll('img[data-dct-img-src]'));
+  if (!imgs.length) return;
+
+  // Carrega sequencialmente para exibir a primeira foto rápido sem sobrecarregar o WebView
+  for (const img of imgs) {
+    if (seq !== imageRenderSeq) return;
+    const rawSrc = img.getAttribute('data-dct-img-src') || '';
+    const fallbackUrl = img.getAttribute('data-dct-img-fallback') || '';
+    const picEl = img.closest('.dct-pic');
+
+    try {
+      const resolvedUrl = await resolveDictionaryImageUrl(modulePath, rawSrc, {
+        contextRaw: rawContext || '',
+        fallbackUrl
+      });
+      if (seq !== imageRenderSeq) return;
+
+      if (!resolvedUrl) {
+        img.classList.remove('is-loading');
+        if (picEl) picEl.classList.add('is-failed');
+        continue;
+      }
+
+      img.onload = () => {
+        img.classList.remove('is-loading');
+      };
+      img.onerror = () => {
+        img.classList.remove('is-loading');
+        if (picEl) picEl.classList.add('is-failed');
+      };
+      img.src = resolvedUrl;
+      if (img.complete && img.naturalWidth > 0) {
+        img.classList.remove('is-loading');
+      }
+    } catch (err) {
+      if (seq !== imageRenderSeq) return;
+      img.classList.remove('is-loading');
+      if (picEl) picEl.classList.add('is-failed');
+    }
+  }
+}
+
 export function initDictionaryView(userCallbacks = {}) {
   callbacks = { ...callbacks, ...userCallbacks };
+  ensureCompanionStyles();
 }
 
 export function syncDictionaryModules(modules = []) {
@@ -427,7 +508,7 @@ function buildResultsHtml() {
       : '';
     return (
       '<div class="empty-state">' +
-        `<h2>Sem resultados</h2>` +
+        '<h2>Sem resultados</h2>' +
         `<p>${escapeHtml(viewState.statusText || 'Nenhum verbete encontrado.')}</p>` +
         retryAllBtn +
       '</div>'
@@ -547,7 +628,15 @@ function bindRenderedEvents(rootEl) {
   });
 
   rootEl.addEventListener('click', (ev) => {
-    // 1. Clique em item da lista de resultados
+    // 1. Clique em imagem carregada -> amplia em tela cheia
+    const imgEl = ev.target.closest('img.dct-img');
+    if (imgEl && !imgEl.classList.contains('is-loading') && (imgEl.currentSrc || imgEl.src)) {
+      ev.stopPropagation();
+      openImageLightbox(imgEl.currentSrc || imgEl.src, imgEl.alt || (viewState.currentEntry && viewState.currentEntry.word) || '');
+      return;
+    }
+
+    // 2. Clique em item da lista de resultados
     const resBtn = ev.target.closest('[data-dct-res-idx]');
     if (resBtn) {
       const idx = Number(resBtn.getAttribute('data-dct-res-idx'));
@@ -562,7 +651,7 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 2. Link interno de dicionário → busca recursiva no dicionário
+    // 3. Link interno de dicionário -> busca recursiva no dicionário
     const dctLink = ev.target.closest('[data-dct-lookup]');
     if (dctLink) {
       const term = dctLink.getAttribute('data-dct-lookup') || '';
@@ -577,7 +666,7 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 3. Link de referência bíblica dentro da definição → salta para a Bíblia
+    // 4. Link de referência bíblica dentro da definição -> salta para a Bíblia
     const bibleLink = ev.target.closest('[data-bible-ref]');
     if (bibleLink) {
       const rawRef = bibleLink.getAttribute('data-bible-ref') || bibleLink.textContent || '';
@@ -590,7 +679,7 @@ function bindRenderedEvents(rootEl) {
       return;
     }
 
-    // 4. Nota de rodapé dentro da definição
+    // 5. Nota de rodapé dentro da definição
     const fnBtn = ev.target.closest('.v-fn-btn');
     if (fnBtn && viewState.currentEntry && Array.isArray(viewState.currentEntry.footnotes)) {
       const idx = Number(fnBtn.getAttribute('data-fn-idx'));
@@ -607,6 +696,8 @@ export function renderDictionaryView(options = {}) {
   const scrollBox = document.getElementById('reader-scroll');
   if (!container) return;
 
+  ensureCompanionStyles();
+  const imgSeq = ++imageRenderSeq;
   container.classList.remove('has-interlinear');
 
   if (!viewState.dictionaries.length) {
@@ -641,6 +732,13 @@ export function renderDictionaryView(options = {}) {
   const rootEl = container.querySelector('.dct-reader');
   if (rootEl) {
     bindRenderedEvents(rootEl);
+
+    if (viewState.mode === 'entry' && viewState.currentEntry && viewState.currentEntry.hasImages) {
+      const mod = getActiveModule();
+      if (mod) {
+        hydrateDictionaryImages(rootEl, mod.path, viewState.currentEntry.raw || '', imgSeq);
+      }
+    }
   }
 
   if (options.resetScroll && scrollBox) {
