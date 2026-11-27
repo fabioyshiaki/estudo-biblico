@@ -2,7 +2,9 @@ const RE_HEBREW = /[\u0590-\u05FF\u0700-\u074F\uFB1D-\uFB4F]/;
 const RE_SHEBANQ = /\u300C(?:\s*\u300E[^\u300E\u300F]*\u300F)?\s*<w>[\s\S]*?<w>[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_MN = /\u300C\s*<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>[\s\S]*?\u300D/i;
 const RE_INTERLINEAR_UW = /\u300C[\s\S]*?<(G|H)(?:\s+[^>]*)?>[\s\S]*?<\/\1>[\s\S]*?(?:<X(?:\s+[^>]*)?>|<Wn(?:\s+[^>]*)?>|<W[GH]\d|<WT)[\s\S]*?\u300D/i;
+const RE_INTERLINEAR_VIMS = /\u300C[\s\S]*?<wt>[\s\S]*?(?:<X>|<E1>|<E2>)[\s\S]*?\u300D/i;
 const RE_RECORD = /\u300C([\s\S]*?)\u300D/g;
+const RE_TOKEN_OR_VARIANT = /<V(\d+)>([\s\S]*?)(?:<\/V\1>|<\/v\1>|<v\1>)(?:\s*<NB\d*>([\s\S]*?)(?:<\/NB\d*>|<\/Nb\d*>|<Nb\d*>|<nb\d*>))?|\u300C([\s\S]*?)\u300D/g;
 const RE_BRACKET_MARKER = /^<([^<>]+)>$/;
 const RE_BHSE_LEX = /<(S1H|S2H|BDB|TWOT|GES)\.?([^<>]+)>/gi;
 const RE_STRONG_TAG = /<W([GH])(\d+[a-z]?)>/gi;
@@ -27,9 +29,25 @@ function extractTagContent(str, tagName) {
   return cleanText(String(m[1] || '').replace(/<[^>]*>/g, ''));
 }
 
+function extractFlexTagContent(str, tagName) {
+  const upper = tagName.toUpperCase();
+  const lower = tagName.toLowerCase();
+  const re = new RegExp(
+    `<(?:${tagName}|${upper})(?:\\s+[^>]*)?>([\\s\\S]*?)(?:<\\/(?:${tagName}|${upper}|${lower})>|<${lower}>)`
+  );
+  const m = re.exec(String(str || ''));
+  if (!m) return '';
+  return cleanText(String(m[1] || '').replace(/<[^>]*>/g, ''));
+}
+
 export function isShebanqBhsText(str) {
   const s = String(str || '');
-  return RE_SHEBANQ.test(s) || RE_INTERLINEAR_MN.test(s) || RE_INTERLINEAR_UW.test(s);
+  return (
+    RE_SHEBANQ.test(s) ||
+    RE_INTERLINEAR_MN.test(s) ||
+    RE_INTERLINEAR_UW.test(s) ||
+    RE_INTERLINEAR_VIMS.test(s)
+  );
 }
 
 function parseFreqAndLex(rawField) {
@@ -115,6 +133,10 @@ function parseInterlinearMnRecord(inner) {
     wordId: '',
     wordNum: '',
     twCat: '',
+    variantLevel: 0,
+    variantStart: false,
+    variantEnd: false,
+    variantSigla: '',
     surfaceDisplay: surface,
     strongs,
     morphs,
@@ -170,6 +192,10 @@ function parseInterlinearUwRecord(inner) {
     wordId: wordNum,
     wordNum,
     twCat,
+    variantLevel: 0,
+    variantStart: false,
+    variantEnd: false,
+    variantSigla: '',
     surfaceDisplay,
     strongs,
     morphs,
@@ -188,9 +214,75 @@ function parseInterlinearUwRecord(inner) {
   };
 }
 
-function parseShebanqRecord(inner) {
+function parseInterlinearVimsRecord(inner, variantMeta = null) {
+  const wtMatch = /<wt(?:\s+[^>]*)?>([^<]*)/.exec(inner);
+  const surface = wtMatch ? cleanText(wtMatch[1]) : '';
+  const lemma = extractFlexTagContent(inner, 'X');
+  const e2Raw = extractFlexTagContent(inner, 'E2');
+  const e1Raw = extractFlexTagContent(inner, 'E1');
+
+  let translit = '';
+  let e2Gloss = '';
+  if (e2Raw) {
+    const [left, ...rest] = e2Raw.split(/[\uFF5C|]/);
+    translit = cleanText(left || '');
+    e2Gloss = cleanText(rest.join(' | '));
+  }
+
+  const gloss = e1Raw || e2Gloss;
+
+  const strongs = [];
+  RE_STRONG_TAG.lastIndex = 0;
+  let sm;
+  while ((sm = RE_STRONG_TAG.exec(inner)) !== null) {
+    const code = `${sm[1].toUpperCase()}${sm[2]}`;
+    if (code !== 'H0' && code !== 'G0') pushUnique(strongs, code);
+  }
+
+  const morphs = [];
+  RE_MORPH_TAG.lastIndex = 0;
+  let mm;
+  while ((mm = RE_MORPH_TAG.exec(inner)) !== null) {
+    const cleanMorph = cleanText(String(mm[1] || '').replace(/\s+l="[^"]*"/gi, ''));
+    if (cleanMorph) pushUnique(morphs, cleanMorph);
+  }
+
+  if (!surface && !lemma && !translit && !gloss) return null;
+
+  return {
+    mode: 'interlinear_vims',
+    wordId: '',
+    wordNum: '',
+    twCat: '',
+    variantLevel: variantMeta ? variantMeta.level : 0,
+    variantStart: Boolean(variantMeta && variantMeta.start),
+    variantEnd: Boolean(variantMeta && variantMeta.end),
+    variantSigla: variantMeta ? variantMeta.sigla : '',
+    surfaceDisplay: surface || lemma,
+    strongs,
+    morphs,
+    translit,
+    phonetic: '',
+    hgkList: [],
+    gloss,
+    lemma,
+    extra: '',
+    freq: '',
+    sheCode: '',
+    bdbs: [],
+    twots: [],
+    ges: [],
+    endsWord: true
+  };
+}
+
+function parseShebanqRecord(inner, variantMeta = null) {
   if (/<Mn(?:\s+[^>]*)?>[\s\S]*?<\/Mn>/i.test(inner)) {
     return parseInterlinearMnRecord(inner);
+  }
+
+  if (/<wt>[\s\S]*?(?:<X>|<E1>|<E2>)/i.test(inner) && !/<w>/i.test(inner)) {
+    return parseInterlinearVimsRecord(inner, variantMeta);
   }
 
   if (/<(G|H)(?:\s+[^>]*)?>[\s\S]*?<\/\1>/i.test(inner) && !/<w>/i.test(inner)) {
@@ -233,6 +325,10 @@ function parseShebanqRecord(inner) {
       wordId,
       wordNum: '',
       twCat: '',
+      variantLevel: 0,
+      variantStart: false,
+      variantEnd: false,
+      variantSigla: '',
       translit,
       phonetic: '',
       gloss,
@@ -277,6 +373,10 @@ function parseShebanqRecord(inner) {
     wordId,
     wordNum: '',
     twCat: '',
+    variantLevel: 0,
+    variantStart: false,
+    variantEnd: false,
+    variantSigla: '',
     translit,
     phonetic: '',
     gloss,
@@ -329,19 +429,30 @@ function renderMorpheme(item, mnCols, uwCols) {
   const wnHtml = item.wordNum
     ? `<sub class="shb-wn">${escapeHtml(item.wordNum)}</sub>`
     : '';
+  const openBracket = (item.variantLevel >= 2 && item.variantStart)
+    ? '<span class="shb-var-bracket">[</span>'
+    : '';
+  const closeBracket = (item.variantLevel >= 2 && item.variantEnd)
+    ? '<span class="shb-var-bracket">]</span>'
+    : '';
+  const siglaHtml = (item.variantEnd && item.variantSigla)
+    ? `<sup class="shb-var-sigla">${escapeHtml(item.variantSigla)}</sup>`
+    : '';
+
   const origHtml = item.surfaceDisplay
-    ? `<span class="shb-orig" dir="${origDir}">${escapeHtml(item.surfaceDisplay)}${wnHtml}</span>`
+    ? `<span class="shb-orig" dir="${origDir}">${openBracket}${escapeHtml(item.surfaceDisplay)}${closeBracket}${wnHtml}${siglaHtml}</span>`
     : '<span class="shb-orig is-elided" dir="ltr" title="Morfema elidido">&middot;</span>';
 
   const attrs = [
     item.wordId ? `data-word-id="${escapeHtml(item.wordId)}"` : '',
     item.lemma ? `data-lemma="${escapeHtml(item.lemma)}"` : '',
     item.sheCode ? `data-she="${escapeHtml(item.sheCode)}"` : '',
-    item.twCat ? `data-tw-cat="${escapeHtml(item.twCat)}"` : ''
+    item.twCat ? `data-tw-cat="${escapeHtml(item.twCat)}"` : '',
+    item.variantLevel ? `data-variant="${item.variantLevel}"` : ''
   ].filter(Boolean).join(' ');
 
-  // Layout alinhado para UnfoldingWord Greek NT (「<T><G><Wn><X><WG><WT><TW><PF>」)
-  if (item.mode === 'interlinear_uw') {
+  // Layout alinhado para UnfoldingWord Greek NT e Greek NT with Variants (VIMS)
+  if (item.mode === 'interlinear_uw' || item.mode === 'interlinear_vims') {
     const parts = [origHtml];
 
     if (uwCols.hasTranslit) {
@@ -376,7 +487,8 @@ function renderMorpheme(item, mnCols, uwCols) {
       parts.push(renderGloss(item.gloss, 'shb-uw-tw'));
     }
 
-    return `<div class="shb-morph is-uw"${attrs ? ` ${attrs}` : ''}>${parts.join('')}</div>`;
+    const modeCls = item.mode === 'interlinear_vims' ? 'is-vims' : 'is-uw';
+    return `<div class="shb-morph ${modeCls}"${attrs ? ` ${attrs}` : ''}>${parts.join('')}</div>`;
   }
 
   // Layout alinhado para Interlinear Br 2023+ e f35 (renderiza apenas camadas presentes no versículo)
@@ -476,21 +588,52 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
   let currentGroup = [];
   let isRtlVerse = false;
 
-  RE_RECORD.lastIndex = 0;
-  let m;
-  while ((m = RE_RECORD.exec(source)) !== null) {
-    const parsed = parseShebanqRecord(m[1] || '');
-    if (!parsed) continue;
-
+  const pushParsed = (parsed) => {
+    if (!parsed) return;
     if (RE_HEBREW.test(parsed.surfaceDisplay) || RE_HEBREW.test(parsed.lemma)) {
       isRtlVerse = true;
     }
-
     currentGroup.push(parsed);
-
     if (parsed.endsWord) {
       groups.push(currentGroup);
       currentGroup = [];
+    }
+  };
+
+  if (/<V\d+>/i.test(source)) {
+    RE_TOKEN_OR_VARIANT.lastIndex = 0;
+    let m;
+    while ((m = RE_TOKEN_OR_VARIANT.exec(source)) !== null) {
+      if (m[1] !== undefined) {
+        const level = Number(m[1]) || 1;
+        const innerBlock = m[2] || '';
+        const sigla = cleanText(String(m[3] || '').replace(/<[^>]*>/g, ''));
+
+        const innerRecords = [];
+        const localRe = /\u300C([\s\S]*?)\u300D/g;
+        let rm;
+        while ((rm = localRe.exec(innerBlock)) !== null) {
+          innerRecords.push(rm[1] || '');
+        }
+
+        for (let i = 0; i < innerRecords.length; i++) {
+          const parsed = parseShebanqRecord(innerRecords[i], {
+            level,
+            start: i === 0,
+            end: i === innerRecords.length - 1,
+            sigla
+          });
+          pushParsed(parsed);
+        }
+      } else if (m[4] !== undefined) {
+        pushParsed(parseShebanqRecord(m[4], null));
+      }
+    }
+  } else {
+    RE_RECORD.lastIndex = 0;
+    let m;
+    while ((m = RE_RECORD.exec(source)) !== null) {
+      pushParsed(parseShebanqRecord(m[1] || '', null));
     }
   }
 
@@ -526,7 +669,7 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
         if (it.phonetic) mnCols.hasLe = true;
         if (it.hgkList && it.hgkList.length) mnCols.hasHgk = true;
         if (it.gloss) mnCols.hasPt = true;
-      } else if (it.mode === 'interlinear_uw') {
+      } else if (it.mode === 'interlinear_uw' || it.mode === 'interlinear_vims') {
         if (it.translit) uwCols.hasTranslit = true;
         if (it.lemma) uwCols.hasLemma = true;
         if (it.strongs && it.strongs.length) uwCols.hasStrong = true;
@@ -543,8 +686,10 @@ export function formatShebanqBhsHtml(rawHtml, verseNum = null) {
 
   for (const grp of groups) {
     const multiClass = grp.length > 1 ? ' is-compound' : '';
+    const isAltVariant = grp.some((it) => it.variantLevel >= 2);
+    const variantClass = isAltVariant ? ' is-variant' : '';
     cards.push(
-      `<div class="shb-word${multiClass}" dir="${isRtlVerse ? 'rtl' : 'ltr'}">` +
+      `<div class="shb-word${multiClass}${variantClass}" dir="${isRtlVerse ? 'rtl' : 'ltr'}">` +
         grp.map((it) => renderMorpheme(it, mnCols, uwCols)).join('') +
       '</div>'
     );
