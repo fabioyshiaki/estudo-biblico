@@ -19,6 +19,14 @@ const RE_ANCIENT_RUN = /([\u0590-\u05FF\u0700-\u074F\u0370-\u03FF\u1F00-\u1FFF][
 const RE_STRONG_TAG = /<W([GH])(\d[^<>]*)>/gi;
 const RE_MORPH_TAG = /<WT([^<>]+)>/gi;
 
+const RESERVED_MULTI_TAGS = new Set([
+  'BR', 'HR', 'TR', 'TD', 'TH', 'LI', 'UL', 'OL', 'EM', 'SUP', 'SUB',
+  'DIV', 'SPAN', 'FONT', 'FR', 'FI', 'FO', 'FU', 'RF', 'TS', 'TS1',
+  'TS2', 'TS3', 'CM', 'CL', 'CI', 'PI', 'PF', 'RX', 'VT', 'NT', 'OT',
+  'WG', 'WH', 'WT', 'WL', 'KQ', 'TW', 'CN', 'E1', 'E2', 'V1', 'V2',
+  'NB1', 'NB2', 'BOX', 'WORD'
+]);
+
 function escapeHtml(str) {
   return String(str || '')
     .replace(/&/g, '&amp;')
@@ -42,6 +50,10 @@ function pushUnique(arr, val) {
 function formatClauseInlineHtml(raw) {
   let safe = escapeHtml(String(raw || ''));
   safe = safe
+    .replace(/&lt;FR&gt;/g, '<span class="v-red">')
+    .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
+    .replace(/&lt;FI&gt;/g, '<em class="v-italic">')
+    .replace(/&lt;\/?Fi&gt;|&lt;\/FI&gt;/g, '</em>')
     .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
     .replace(/&lt;(?:i|em)&gt;/gi, '<em>')
     .replace(/&lt;\/(?:i|em)&gt;/gi, '</em>')
@@ -49,7 +61,7 @@ function formatClauseInlineHtml(raw) {
     .replace(/&lt;\/(?:b|strong)&gt;/gi, '</strong>')
     .replace(/&lt;u&gt;/gi, '<u>')
     .replace(/&lt;\/u&gt;/gi, '</u>')
-    .replace(/&lt;\/?[a-zA-Z][a-zA-Z0-9_:-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g, '');
+    .replace(/&lt;\/?[a-zA-Z][a-zA-Z0-9_:*.-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g, '');
 
   return safe
     .replace(/\u00A0/g, ' ')
@@ -256,6 +268,212 @@ function renderFlow(cards, isRtl) {
   return `<div class="il-flow" dir="${isRtl ? 'rtl' : 'ltr'}">${cards.join('')}</div>`;
 }
 
+function appendGapTextToQItems(items, gapRaw) {
+  const gap = stripAllTagsKeepSpaces(gapRaw);
+  if (!gap) return;
+
+  let rest = gap;
+  if (items.length) {
+    const leadPunct = /^([,.;:!?»”’)\]]+)(.*)$/.exec(rest);
+    if (leadPunct) {
+      const last = items[items.length - 1];
+      if (last.orig.length) {
+        last.orig[last.orig.length - 1] = `${last.orig[last.orig.length - 1]}${leadPunct[1]}`;
+      } else {
+        last.orig.push(leadPunct[1]);
+      }
+      rest = cleanText(leadPunct[2]);
+    }
+  }
+
+  if (rest) {
+    items.push({ orig: [rest], translit: [], gloss: [], isLoose: true });
+  }
+}
+
+function renderMultiSectionQFlow(sectionRaw, badgeLabel, verseNum) {
+  const cleanedRaw = String(sectionRaw || '')
+    .replace(/^(?:\s*<br\s*\/?>\s*)+/i, '')
+    .replace(/(?:\s*<br\s*\/?>\s*)+$/i, '');
+
+  const blockRegex = /<Q(?:\s+[^>]*)?>([\s\S]*?)(?:<\/Q>|<q>)/g;
+  const fieldRegex = /<H(?:\s+[^>]*)?>([\s\S]*?)(?:<\/H>|<h>)|<G(?:\s+[^>]*)?>([\s\S]*?)(?:<\/G>|<g>)|<X(?:\s+[^>]*)?>([\s\S]*?)(?:<\/X>|<x>)|<E(?:\s+[^>]*)?>([\s\S]*?)(?:<\/E>|<e>)|<T(?:\s+[^>]*)?>([\s\S]*?)(?:<\/T>|<t>)/g;
+
+  const items = [];
+  let hasH = false;
+  let lastIndex = 0;
+  let blockMatch;
+
+  while ((blockMatch = blockRegex.exec(cleanedRaw)) !== null) {
+    if (blockMatch.index > lastIndex) {
+      appendGapTextToQItems(items, cleanedRaw.slice(lastIndex, blockMatch.index));
+    }
+
+    const inner = blockMatch[1] || '';
+    const orig = [];
+    const translit = [];
+    const gloss = [];
+    fieldRegex.lastIndex = 0;
+    let fm;
+
+    while ((fm = fieldRegex.exec(inner)) !== null) {
+      if (fm[1] !== undefined) {
+        hasH = true;
+        orig.push(stripAllTagsKeepSpaces(fm[1]));
+      } else if (fm[2] !== undefined) {
+        orig.push(stripAllTagsKeepSpaces(fm[2]));
+      } else if (fm[3] !== undefined) {
+        translit.push(stripAllTagsKeepSpaces(fm[3]));
+      } else if (fm[4] !== undefined) {
+        gloss.push(stripAllTagsKeepSpaces(fm[4]));
+      } else if (fm[5] !== undefined) {
+        gloss.push(stripAllTagsKeepSpaces(fm[5]));
+      }
+    }
+
+    if (!orig.length) {
+      fieldRegex.lastIndex = 0;
+      const leftover = inner.replace(fieldRegex, '');
+      const plainOrig = stripAllTagsKeepSpaces(leftover);
+      if (plainOrig) {
+        if (hasHebrewScript(plainOrig)) hasH = true;
+        orig.push(plainOrig);
+      }
+    }
+
+    if (orig.length || translit.length || gloss.length) {
+      items.push({ orig, translit, gloss, isLoose: false });
+    }
+
+    lastIndex = blockRegex.lastIndex;
+  }
+
+  if (lastIndex < cleanedRaw.length) {
+    appendGapTextToQItems(items, cleanedRaw.slice(lastIndex));
+  }
+
+  if (!items.length) return '';
+
+  // Somente o hebraico no texto principal recebe direção RTL
+  const isRtl = hasH || items.some((it) => hasHebrewScript(it.orig.join(' ')));
+  const maxX = Math.max(0, ...items.map((it) => it.translit.length));
+  const maxE = Math.max(0, ...items.map((it) => it.gloss.length));
+  const stacks = [];
+
+  if (verseNum) {
+    stacks.push(`<span class="il-vnum">${verseNum}</span>`);
+  }
+  if (badgeLabel) {
+    stacks.push(`<span class="il-multi-badge" dir="ltr">${escapeHtml(badgeLabel)}</span>`);
+  }
+
+  for (const it of items) {
+    const lines = [];
+    const origText = it.orig.filter(Boolean).join(' ');
+    const origDir = hasHebrewScript(origText) ? ' dir="rtl"' : '';
+    lines.push(
+      origText
+        ? `<span class="il-orig"${origDir}>${escapeHtml(origText)}</span>`
+        : '<span class="il-orig il-orig-empty">&middot;</span>'
+    );
+
+    for (let i = 0; i < maxX; i++) {
+      const val = it.translit[i] || '';
+      const ancientCls = RE_ANCIENT.test(val) ? ' is-ancient' : '';
+      const dirVal = hasHebrewScript(val) ? 'rtl' : 'ltr';
+      const cls = i === 0 ? `il-translit${ancientCls}` : `il-translit il-translit-2${ancientCls}`;
+      lines.push(`<span class="${cls}" dir="${dirVal}">${val ? escapeHtml(val) : '&nbsp;'}</span>`);
+    }
+
+    for (let i = 0; i < maxE; i++) {
+      const val = it.gloss[i] || '';
+      const dirVal = hasHebrewScript(val) ? 'rtl' : 'ltr';
+      const cls = i === 0 ? 'il-gloss-lit' : 'il-gloss-ctx';
+      lines.push(`<span class="${cls}" dir="${dirVal}">${val ? escapeHtml(val) : '&nbsp;'}</span>`);
+    }
+
+    stacks.push(`<span class="il-stack">${lines.join('')}</span>`);
+  }
+
+  const dirStr = isRtl ? 'rtl' : 'ltr';
+  const alignCls = isRtl ? 'is-rtl' : 'is-ltr';
+  return (
+    `<div class="il-multi-sec ${alignCls}" dir="${dirStr}">` +
+      `<div class="il-flow il-q-flow il-multi-q-flow" dir="${dirStr}">${stacks.join('')}</div>` +
+    '</div>'
+  );
+}
+
+function parseMultiSectionInterlinear(rawHtml, verseNum) {
+  const source = String(rawHtml || '');
+
+  // Mapeia intervalos de <Q>...<q> para não confundir nada interno com etiqueta de seção
+  const qRanges = [];
+  const qRe = /<Q(?:\s+[^>]*)?>[\s\S]*?(?:<\/Q>|<q>)/g;
+  let qm;
+  while ((qm = qRe.exec(source)) !== null) {
+    qRanges.push([qm.index, qRe.lastIndex]);
+  }
+  const insideQ = (pos) => qRanges.some(([s, e]) => pos >= s && pos < e);
+
+  const badgeRe = /<([A-Z][A-Z0-9]{1,7})>\s*([^<>]{1,20}?)\s*<\/([A-Za-z][A-Za-z0-9]{1,7})>/g;
+  const matches = [];
+  let bm;
+
+  while ((bm = badgeRe.exec(source)) !== null) {
+    const tag = bm[1];
+    const closeTag = bm[3].toUpperCase();
+    if (closeTag !== tag) continue;
+    if (RESERVED_MULTI_TAGS.has(tag)) continue;
+    if (insideQ(bm.index)) continue;
+
+    const label = cleanText(bm[2]);
+    if (!label || !label.toUpperCase().startsWith(tag)) continue;
+
+    matches.push({
+      start: bm.index,
+      end: badgeRe.lastIndex,
+      label
+    });
+  }
+
+  if (matches.length < 2) return '';
+
+  const sections = [];
+  for (let i = 0; i < matches.length; i++) {
+    const cur = matches[i];
+    const nextStart = i + 1 < matches.length ? matches[i + 1].start : source.length;
+    const bodyRaw = source.slice(cur.end, nextStart);
+    const showVnum = i === 0 ? verseNum : null;
+
+    if (RE_INTERLINEAR_Q.test(bodyRaw)) {
+      const qSec = renderMultiSectionQFlow(bodyRaw, cur.label, showVnum);
+      if (qSec) sections.push(qSec);
+      continue;
+    }
+
+    const bodyHtml = formatClauseInlineHtml(bodyRaw);
+    if (!bodyHtml) continue;
+
+    // Somente o texto em hebraico fica alinhado à direita (RTL)
+    const isRtl = hasHebrewScript(bodyHtml);
+    const dirStr = isRtl ? 'rtl' : 'ltr';
+    const alignCls = isRtl ? 'is-rtl' : 'is-ltr';
+    const hebrewCls = isRtl ? ' is-hebrew' : '';
+    const vnumHtml = showVnum ? `<span class="il-vnum">${showVnum}</span> ` : '';
+    const badgeHtml = `<span class="il-multi-badge" dir="ltr">${escapeHtml(cur.label)}</span>`;
+
+    sections.push(
+      `<div class="il-multi-sec ${alignCls}" dir="${dirStr}">` +
+        `${vnumHtml}${badgeHtml}<span class="il-multi-text${hebrewCls}" dir="${dirStr}">${bodyHtml}</span>` +
+      '</div>'
+    );
+  }
+
+  if (!sections.length) return '';
+  return `<div class="il-block il-q-block il-multi-block">${sections.join('')}</div>`;
+}
+
 function parseInterlinearQBlocks(rawHtml, verseNum) {
   const blockRegex = /<Q(?:\s+[^>]*)?>([\s\S]*?)(?:<\/Q>|<q>)/g;
   const fieldRegex = /<H(?:\s+[^>]*)?>([\s\S]*?)(?:<\/H>|<h>)|<G(?:\s+[^>]*)?>([\s\S]*?)(?:<\/G>|<g>)|<X(?:\s+[^>]*)?>([\s\S]*?)(?:<\/X>|<x>)|<E(?:\s+[^>]*)?>([\s\S]*?)(?:<\/E>|<e>)|<T(?:\s+[^>]*)?>([\s\S]*?)(?:<\/T>|<t>)/g;
@@ -327,7 +545,7 @@ function parseInterlinearQBlocks(rawHtml, verseNum) {
     }
   }
 
-  const isRtl = hasH || hasHebrewScript(rawHtml);
+  const isRtl = hasH || items.some((it) => hasHebrewScript(it.orig.join(' ')));
   const maxX = Math.max(0, ...items.map((it) => it.translit.length));
   const maxE = Math.max(0, ...items.map((it) => it.gloss.length));
   const stacks = [];
@@ -545,6 +763,9 @@ export function formatInterlinearHtml(rawHtml, verseNum = null) {
     const revHtml = formatReverseInterlinearQHtml(rawHtml, verseNum);
     if (revHtml) return revHtml;
   }
+
+  const multiHtml = parseMultiSectionInterlinear(rawHtml, verseNum);
+  if (multiHtml) return multiHtml;
 
   if (RE_INTERLINEAR_Q.test(rawHtml)) {
     const qHtml = parseInterlinearQBlocks(rawHtml, verseNum);
