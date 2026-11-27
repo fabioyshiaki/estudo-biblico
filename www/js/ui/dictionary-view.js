@@ -1,6 +1,8 @@
 import {
   myswordDictionaryAdapter,
-  normalizeLookupTerm
+  normalizeLookupTerm,
+  DEFAULT_DICT_SEARCH_OPTIONS,
+  normalizeDictSearchOptions
 } from '../formats/mysword-dictionary.js';
 import {
   lookupExactAcrossDictionaries,
@@ -13,13 +15,34 @@ import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
 import { ensureCompanionStyles } from '../formats/companion-dicts.js';
 import { openDictionaryTermsModal } from './dictionary-terms-modal.js';
 
+const SEARCH_OPTS_STORAGE_KEY = 'estudo_biblico_dct_search_opts_v1';
+
+function loadSavedSearchOptions() {
+  try {
+    const raw = window.localStorage.getItem(SEARCH_OPTS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_DICT_SEARCH_OPTIONS };
+    return normalizeDictSearchOptions(JSON.parse(raw));
+  } catch (err) {
+    return { ...DEFAULT_DICT_SEARCH_OPTIONS };
+  }
+}
+
+function saveSearchOptions(opts) {
+  try {
+    window.localStorage.setItem(SEARCH_OPTS_STORAGE_KEY, JSON.stringify(opts));
+  } catch (err) {
+    // Ignora caso localStorage esteja indisponível
+  }
+}
+
 const viewState = {
   dictionaries: [],
   activeModulePath: '',
   currentEntry: null,
   query: '',
   filterTerm: '',
-  searchBody: false,
+  searchOptions: loadSavedSearchOptions(),
+  optionsOpen: false,
   searchScope: 'current', // 'current' | 'all'
   mode: 'entry',          // 'entry' | 'results' | 'loading' | 'empty'
   statusText: '',
@@ -60,6 +83,19 @@ function getModuleLabel(mod) {
   return mod.abbr || mod.title || mod.fileName || 'Dicionário';
 }
 
+function getActiveOptionLabels(opts) {
+  const tags = [];
+  if (opts.matchMode === 'exact') tags.push('Palavra exata');
+  else if (opts.matchMode === 'startsWith') tags.push('Começa com');
+  if (opts.accentSensitive) tags.push('Com acento');
+  if (opts.caseSensitive) tags.push('Maiúsculas (Aa)');
+  if (opts.searchBody) tags.push('No texto');
+  if (!opts.searchAltWords) tags.push('Sem sinônimos');
+  if (opts.exactPhrase) tags.push('Frase exata');
+  if (opts.favoritesOnly) tags.push('Só favoritos ★');
+  return tags;
+}
+
 function cancelOngoingSearch() {
   if (viewState.activeAbort) {
     viewState.activeAbort.abort();
@@ -74,6 +110,7 @@ function notifyMeta() {
     entryWord: viewState.currentEntry ? viewState.currentEntry.word : '',
     query: viewState.query,
     filterTerm: viewState.filterTerm,
+    searchOptions: { ...viewState.searchOptions },
     historyLength: viewState.history.length
   });
 }
@@ -209,7 +246,8 @@ export function getDictionaryViewState() {
     currentEntry: viewState.currentEntry,
     query: viewState.query,
     filterTerm: viewState.filterTerm,
-    searchBody: viewState.searchBody,
+    searchBody: viewState.searchOptions.searchBody,
+    searchOptions: { ...viewState.searchOptions },
     historyLength: viewState.history.length
   };
 }
@@ -228,7 +266,8 @@ export function openActiveDictionaryTerms() {
       openDictionaryEntry(chosenWord, {
         modulePath: mod.path,
         pushHistory: true,
-        fallbackAll: false
+        fallbackAll: false,
+        directWord: true
       });
     }
   });
@@ -247,6 +286,7 @@ export async function setActiveDictionaryModule(modulePath, options = {}) {
       pushHistory: options.pushHistory !== false,
       fallbackAll: false,
       keepFilterTerm: Boolean(options.keepFilterTerm),
+      directWord: true,
       render: options.render !== false
     });
     return true;
@@ -288,20 +328,24 @@ export async function stepDictionaryModule(delta) {
   if (activeFilter) {
     isSteppingDict = true;
     try {
-      let matches = getCachedDictionariesWithTerm(list, activeFilter, {
-        searchBody: viewState.searchBody
-      });
+      const searchOpts = { ...viewState.searchOptions };
+      if (searchOpts.favoritesOnly && !list.some((m) => m.isFavorite)) {
+        callbacks.onToast('Nenhum dicionário marcado como favorito.');
+        return;
+      }
+
+      let matches = getCachedDictionariesWithTerm(list, activeFilter, searchOpts);
       if (!matches) {
         callbacks.onToast(`Verificando dicionários com "${activeFilter}"...`);
         matches = await findDictionariesWithTerm(list, activeFilter, {
-          searchBody: viewState.searchBody,
+          ...searchOpts,
           activePath: viewState.activeModulePath,
           concurrency: 4
         });
       }
 
       if (!matches.length) {
-        callbacks.onToast(`Nenhum dicionário contém "${activeFilter}".`);
+        callbacks.onToast(`Nenhum dicionário contém "${activeFilter}" com os filtros atuais.`);
         return;
       }
 
@@ -315,7 +359,8 @@ export async function stepDictionaryModule(delta) {
           modulePath: only.module.path,
           pushHistory: false,
           fallbackAll: false,
-          keepFilterTerm: true
+          keepFilterTerm: true,
+          directWord: true
         });
         return;
       }
@@ -330,7 +375,8 @@ export async function stepDictionaryModule(delta) {
         modulePath: nextMatch.module.path,
         pushHistory: false,
         fallbackAll: false,
-        keepFilterTerm: true
+        keepFilterTerm: true,
+        directWord: true
       });
     } finally {
       isSteppingDict = false;
@@ -338,9 +384,19 @@ export async function stepDictionaryModule(delta) {
     return;
   }
 
-  const idx = Math.max(0, list.findIndex((m) => m.path === viewState.activeModulePath));
-  const nextIdx = (idx + delta + list.length) % list.length;
-  await setActiveDictionaryModule(list[nextIdx].path, { keepTerm: true, render: true });
+  const pool = viewState.searchOptions.favoritesOnly
+    ? list.filter((m) => m.isFavorite)
+    : list;
+  if (pool.length < 2) {
+    if (viewState.searchOptions.favoritesOnly) {
+      callbacks.onToast('Menos de 2 dicionários marcados como favoritos.');
+    }
+    return;
+  }
+
+  const idx = Math.max(0, pool.findIndex((m) => m.path === viewState.activeModulePath));
+  const nextIdx = (idx + delta + pool.length) % pool.length;
+  await setActiveDictionaryModule(pool[nextIdx].path, { keepTerm: true, render: true });
 }
 
 export async function loadFirstOrCurrentEntry() {
@@ -413,9 +469,15 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     ? viewState.dictionaries.find((m) => m.path === options.modulePath)
     : getActiveModule();
 
+  // Ao abrir um verbete já selecionado de uma lista/histórico, ignora restrições rígidas para garantir abertura
+  const lookupOpts = options.directWord
+    ? { accentSensitive: false, caseSensitive: false, searchAltWords: true, favoritesOnly: false }
+    : { ...viewState.searchOptions };
+
   try {
     if (options.moduleHint) {
       const exactHinted = await lookupExactAcrossDictionaries(viewState.dictionaries, clean, {
+        ...lookupOpts,
         activePath: preferredMod ? preferredMod.path : '',
         moduleHint: options.moduleHint,
         signal: controller.signal
@@ -433,7 +495,7 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     }
 
     if (preferredMod) {
-      const exactHere = await myswordDictionaryAdapter.getEntry(preferredMod.path, clean);
+      const exactHere = await myswordDictionaryAdapter.getEntry(preferredMod.path, clean, lookupOpts);
       if (controller.signal.aborted) return false;
       if (exactHere) {
         viewState.activeModulePath = preferredMod.path;
@@ -448,6 +510,7 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
 
     if (options.fallbackAll !== false) {
       const exactAny = await lookupExactAcrossDictionaries(viewState.dictionaries, clean, {
+        ...lookupOpts,
         activePath: preferredMod ? preferredMod.path : '',
         moduleHint: options.moduleHint || '',
         signal: controller.signal
@@ -465,8 +528,7 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     }
 
     await searchDictionaryTerm(clean, {
-      scope: options.fallbackAll !== false ? 'all' : 'current',
-      searchBody: Boolean(options.searchBody)
+      scope: options.fallbackAll !== false ? 'all' : 'current'
     });
     return false;
   } catch (err) {
@@ -499,24 +561,44 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
   viewState.activeAbort = controller;
 
   const scope = options.scope || viewState.searchScope || 'current';
-  const searchBody = options.searchBody !== undefined ? Boolean(options.searchBody) : viewState.searchBody;
+  const mergedOpts = normalizeDictSearchOptions({
+    ...viewState.searchOptions,
+    ...(options.searchBody !== undefined ? { searchBody: Boolean(options.searchBody) } : {})
+  });
 
   viewState.query = clean;
   viewState.filterTerm = clean;
   viewState.searchScope = scope;
-  viewState.searchBody = searchBody;
+  viewState.searchOptions = mergedOpts;
+  saveSearchOptions(mergedOpts);
+
+  const targetCount = scope === 'all'
+    ? (mergedOpts.favoritesOnly
+      ? viewState.dictionaries.filter((m) => m.isFavorite).length
+      : viewState.dictionaries.length)
+    : 1;
+
+  if (scope === 'all' && mergedOpts.favoritesOnly && targetCount === 0) {
+    viewState.results = [];
+    viewState.mode = 'results';
+    viewState.statusText = 'Nenhum dicionário marcado como favorito. Desative "Só favoritos ★" ou favorite dicionários no seletor.';
+    notifyMeta();
+    renderDictionaryView({ resetScroll: true });
+    return;
+  }
+
   viewState.mode = 'loading';
   viewState.results = [];
   viewState.statusText = scope === 'all'
-    ? `Buscando "${clean}" em ${viewState.dictionaries.length} dicionário(s)...`
+    ? `Buscando "${clean}" em ${targetCount} dicionário(s)...`
     : `Buscando "${clean}"...`;
   renderDictionaryView();
 
   try {
     if (scope === 'all') {
       const hits = await searchAcrossDictionaries(viewState.dictionaries, clean, {
+        ...mergedOpts,
         activePath: viewState.activeModulePath,
-        searchBody,
         perDictLimit: 3,
         maxTotal: 60,
         concurrency: 4,
@@ -533,14 +615,15 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
 
       viewState.results = hits;
       viewState.mode = 'results';
+      const scopeLabel = mergedOpts.favoritesOnly ? 'nos favoritos' : 'em todos os dicionários';
       viewState.statusText = hits.length
-        ? `${hits.length} resultado(s) para "${clean}" em todos os dicionários`
-        : `Nenhum resultado para "${clean}" nos dicionários instalados.`;
+        ? `${hits.length} resultado(s) para "${clean}" ${scopeLabel}`
+        : `Nenhum resultado para "${clean}" ${scopeLabel} com os filtros ativos.`;
     } else {
       const mod = getActiveModule();
       const hits = await myswordDictionaryAdapter.searchEntries(mod.path, clean, {
-        limit: 50,
-        searchBody
+        ...mergedOpts,
+        limit: 50
       });
       if (controller.signal.aborted) return;
 
@@ -548,12 +631,13 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
         module: mod,
         word: h.word,
         matchType: h.matchType,
-        snippet: h.snippet
+        snippet: h.snippet,
+        snippetHtml: h.snippetHtml || ''
       }));
       viewState.mode = 'results';
       viewState.statusText = hits.length
         ? `${hits.length} resultado(s) para "${clean}" em ${getModuleLabel(mod)}`
-        : `Nenhum resultado para "${clean}" em ${getModuleLabel(mod)}.`;
+        : `Nenhum resultado para "${clean}" em ${getModuleLabel(mod)} com os filtros ativos.`;
     }
 
     notifyMeta();
@@ -598,7 +682,8 @@ export async function goBackDictionaryHistory() {
     modulePath: prev.modulePath,
     pushHistory: false,
     fallbackAll: false,
-    keepFilterTerm: Boolean(prev.filterTerm)
+    keepFilterTerm: Boolean(prev.filterTerm),
+    directWord: true
   });
   return true;
 }
@@ -607,9 +692,34 @@ export function canGoBackDictionaryHistory() {
   return viewState.history.length > 0;
 }
 
+function updateSearchOptionsAndRefresh(nextPartial, rootEl) {
+  const input = rootEl ? rootEl.querySelector('#dct-search-input') : null;
+  if (input) {
+    viewState.query = input.value || '';
+  }
+
+  viewState.searchOptions = normalizeDictSearchOptions({
+    ...viewState.searchOptions,
+    ...nextPartial
+  });
+  saveSearchOptions(viewState.searchOptions);
+  notifyMeta();
+
+  if (viewState.mode === 'results' && normalizeLookupTerm(viewState.query)) {
+    searchDictionaryTerm(viewState.query, { scope: viewState.searchScope });
+  } else {
+    renderDictionaryView({ resetScroll: false });
+  }
+}
+
 function buildToolbarHtml() {
   const backDisabled = viewState.history.length ? '' : ' disabled';
-  const bodyChecked = viewState.searchBody ? ' checked' : '';
+  const activeTags = getActiveOptionLabels(viewState.searchOptions);
+  const optsBtnCls = viewState.optionsOpen || activeTags.length ? ' is-active' : '';
+  const badgeHtml = activeTags.length
+    ? `<span class="dct-opts-badge">${activeTags.length}</span>`
+    : '';
+
   return (
     '<form class="dct-toolbar" id="dct-search-form">' +
       `<button type="button" class="dct-action-btn" id="dct-btn-back"${backDisabled} aria-label="Voltar ao verbete anterior">&larr; Voltar</button>` +
@@ -617,21 +727,93 @@ function buildToolbarHtml() {
       `<input type="search" class="dct-search-input" id="dct-search-input" value="${escapeHtml(viewState.query)}" placeholder="Buscar verbete, Strong (H430, G976) ou palavra..." autocomplete="off" />` +
       '<button type="submit" class="dct-action-btn is-primary" id="dct-btn-search-one">Buscar</button>' +
       '<button type="button" class="dct-action-btn" id="dct-btn-search-all">Em todos</button>' +
-      `<label class="dct-action-btn" style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox" id="dct-chk-body"${bodyChecked} /> No texto</label>` +
+      `<button type="button" class="dct-action-btn${optsBtnCls}" id="dct-btn-opts" aria-expanded="${viewState.optionsOpen ? 'true' : 'false'}">&#9881; Opções${badgeHtml}</button>` +
     '</form>'
+  );
+}
+
+function buildOptionsSectionHtml() {
+  const opts = viewState.searchOptions;
+  const activeTags = getActiveOptionLabels(opts);
+
+  if (!viewState.optionsOpen) {
+    if (!activeTags.length) return '';
+    return (
+      '<div class="dct-active-filters" id="dct-active-filters">' +
+        activeTags.map((label) => `<button type="button" class="dct-filter-pill" data-open-opts="1">${escapeHtml(label)}</button>`).join('') +
+      '</div>'
+    );
+  }
+
+  const modes = [
+    { id: 'contains', label: 'Parte da palavra' },
+    { id: 'startsWith', label: 'Começa com' },
+    { id: 'exact', label: 'Palavra exata' }
+  ];
+
+  const toggles = [
+    { key: 'accentSensitive', label: 'Diferenciar acentos' },
+    { key: 'caseSensitive', label: 'Maiúsculas (Aa)' },
+    { key: 'searchBody', label: 'No texto' },
+    { key: 'searchAltWords', label: 'Sinônimos' },
+    { key: 'exactPhrase', label: 'Frase exata' },
+    { key: 'favoritesOnly', label: 'Só favoritos ★' }
+  ];
+
+  const resetHtml = activeTags.length
+    ? '<button type="button" class="dct-opts-reset" id="dct-btn-reset-opts">Restaurar padrão</button>'
+    : '';
+
+  return (
+    '<section class="dct-opts-panel" id="dct-opts-panel" aria-label="Opções de busca no dicionário">' +
+      '<div class="dct-opts-section">' +
+        '<div class="dct-opts-label-row">' +
+          '<span class="dct-opts-label">Correspondência</span>' +
+          resetHtml +
+        '</div>' +
+        '<div class="dct-seg-group">' +
+          modes.map((m) => (
+            `<button type="button" class="dct-seg-btn${opts.matchMode === m.id ? ' is-active' : ''}" data-opt-mode="${m.id}">` +
+              escapeHtml(m.label) +
+            '</button>'
+          )).join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="dct-opts-section">' +
+        '<span class="dct-opts-label">Refinamentos</span>' +
+        '<div class="dct-opts-chips">' +
+          toggles.map((t) => {
+            const on = Boolean(opts[t.key]);
+            return (
+              `<button type="button" class="dct-opt-chip${on ? ' is-active' : ''}" data-opt-toggle="${t.key}" aria-pressed="${on ? 'true' : 'false'}">` +
+                `${on ? '&#10003; ' : ''}${escapeHtml(t.label)}` +
+              '</button>'
+            );
+          }).join('') +
+        '</div>' +
+      '</div>' +
+    '</section>'
   );
 }
 
 function buildResultsHtml() {
   if (!viewState.results.length) {
-    const retryAllBtn = viewState.searchScope !== 'all'
-      ? '<div class="empty-state-actions"><button type="button" class="dct-action-btn is-primary" id="dct-btn-retry-all">Procurar em todos os dicionários</button></div>'
+    const actions = [];
+    if (viewState.searchScope !== 'all') {
+      actions.push('<button type="button" class="dct-action-btn is-primary" id="dct-btn-retry-all">Procurar em todos os dicionários</button>');
+    }
+    if (!viewState.searchOptions.searchBody) {
+      actions.push('<button type="button" class="dct-action-btn" id="dct-btn-retry-body">Buscar também no texto</button>');
+    }
+    const actionsHtml = actions.length
+      ? `<div class="empty-state-actions">${actions.join('')}</div>`
       : '';
+
     return (
       '<div class="empty-state">' +
         '<h2>Sem resultados</h2>' +
         `<p>${escapeHtml(viewState.statusText || 'Nenhum verbete encontrado.')}</p>` +
-        retryAllBtn +
+        actionsHtml +
       '</div>'
     );
   }
@@ -646,13 +828,14 @@ function buildResultsHtml() {
   const itemsHtml = viewState.results.map((item, idx) => {
     const modLabel = getModuleLabel(item.module);
     const kindLabel = badgeLabels[item.matchType] || 'Verbete';
+    const snipHtml = item.snippetHtml || (item.snippet ? escapeHtml(item.snippet) : '');
     return (
       `<button type="button" class="dct-result-item" data-dct-res-idx="${idx}">` +
         '<div class="dct-result-head">' +
           `<span class="dct-result-word">${escapeHtml(item.word)}</span>` +
           `<span class="dct-result-badge">${escapeHtml(modLabel)} · ${escapeHtml(kindLabel)}</span>` +
         '</div>' +
-        (item.snippet ? `<div class="dct-result-snippet">${escapeHtml(item.snippet)}</div>` : '') +
+        (snipHtml ? `<div class="dct-result-snippet">${snipHtml}</div>` : '') +
       '</button>'
     );
   }).join('');
@@ -697,22 +880,15 @@ function buildEntryHtml() {
 function bindRenderedEvents(rootEl) {
   const form = rootEl.querySelector('#dct-search-form');
   const input = rootEl.querySelector('#dct-search-input');
-  const bodyChk = rootEl.querySelector('#dct-chk-body');
 
   if (input) {
     input.addEventListener('input', () => {
       const val = (input.value || '').trim();
+      viewState.query = input.value || '';
       if (!val) {
-        viewState.query = '';
         viewState.filterTerm = '';
         notifyMeta();
       }
-    });
-  }
-
-  if (bodyChk) {
-    bodyChk.addEventListener('change', () => {
-      viewState.searchBody = Boolean(bodyChk.checked);
     });
   }
 
@@ -720,10 +896,7 @@ function bindRenderedEvents(rootEl) {
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
       const term = input ? input.value : '';
-      searchDictionaryTerm(term, {
-        scope: 'current',
-        searchBody: Boolean(bodyChk && bodyChk.checked)
-      });
+      searchDictionaryTerm(term, { scope: 'current' });
     });
   }
 
@@ -733,15 +906,50 @@ function bindRenderedEvents(rootEl) {
 
   rootEl.querySelector('#dct-btn-search-all')?.addEventListener('click', () => {
     const term = input ? input.value : viewState.query;
-    searchDictionaryTerm(term, {
-      scope: 'all',
-      searchBody: Boolean(bodyChk && bodyChk.checked)
+    searchDictionaryTerm(term, { scope: 'all' });
+  });
+
+  rootEl.querySelector('#dct-btn-opts')?.addEventListener('click', () => {
+    if (input) viewState.query = input.value || '';
+    viewState.optionsOpen = !viewState.optionsOpen;
+    renderDictionaryView({ resetScroll: false });
+  });
+
+  rootEl.querySelectorAll('[data-open-opts]').forEach((pill) => {
+    pill.addEventListener('click', () => {
+      if (input) viewState.query = input.value || '';
+      viewState.optionsOpen = true;
+      renderDictionaryView({ resetScroll: false });
     });
   });
 
+  rootEl.querySelectorAll('[data-opt-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.getAttribute('data-opt-mode') || 'contains';
+      if (mode === viewState.searchOptions.matchMode) return;
+      updateSearchOptionsAndRefresh({ matchMode: mode }, rootEl);
+    });
+  });
+
+  rootEl.querySelectorAll('[data-opt-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-opt-toggle') || '';
+      if (!key || !Object.prototype.hasOwnProperty.call(viewState.searchOptions, key)) return;
+      updateSearchOptionsAndRefresh({ [key]: !viewState.searchOptions[key] }, rootEl);
+    });
+  });
+
+  rootEl.querySelector('#dct-btn-reset-opts')?.addEventListener('click', () => {
+    updateSearchOptionsAndRefresh({ ...DEFAULT_DICT_SEARCH_OPTIONS }, rootEl);
+  });
+
   rootEl.querySelector('#dct-btn-retry-all')?.addEventListener('click', () => {
+    searchDictionaryTerm(viewState.query, { scope: 'all' });
+  });
+
+  rootEl.querySelector('#dct-btn-retry-body')?.addEventListener('click', () => {
     searchDictionaryTerm(viewState.query, {
-      scope: 'all',
+      scope: viewState.searchScope,
       searchBody: true
     });
   });
@@ -752,10 +960,7 @@ function bindRenderedEvents(rootEl) {
 
   rootEl.querySelector('#dct-btn-compare-all')?.addEventListener('click', () => {
     if (viewState.currentEntry && viewState.currentEntry.word) {
-      searchDictionaryTerm(viewState.currentEntry.word, {
-        scope: 'all',
-        searchBody: false
-      });
+      searchDictionaryTerm(viewState.currentEntry.word, { scope: 'all' });
     }
   });
 
@@ -780,7 +985,8 @@ function bindRenderedEvents(rootEl) {
           modulePath: hit.module.path,
           pushHistory: true,
           fallbackAll: false,
-          keepFilterTerm: Boolean(viewState.filterTerm)
+          keepFilterTerm: Boolean(viewState.filterTerm),
+          directWord: true
         });
       }
       return;
@@ -880,7 +1086,8 @@ export function renderDictionaryView(options = {}) {
     bodyHtml = buildEntryHtml();
   }
 
-  container.innerHTML = `<div class="dct-reader">${buildToolbarHtml()}${bodyHtml}</div>`;
+  container.innerHTML =
+    `<div class="dct-reader">${buildToolbarHtml()}${buildOptionsSectionHtml()}${bodyHtml}</div>`;
   const rootEl = container.querySelector('.dct-reader');
   if (rootEl) {
     bindRenderedEvents(rootEl);
