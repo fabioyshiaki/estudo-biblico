@@ -48,6 +48,36 @@ jobs:
       - name: 7. Sincronizar pasta www com o Android
         run: npx cap sync android
 
+      - name: 7.5. Restaurar chave fixa de assinatura Debug
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p "$HOME/.android"
+            printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 --decode > "$HOME/.android/debug.keystore"
+            echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
+            keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
+          else
+            echo "::warning::Secret ANDROID_DEBUG_KEYSTORE_B64 não configurado. O APK será assinado com uma chave temporária."
+          fi
+
+      - name: 7.6. Atualizar versionCode e versionName automaticamente
+        run: |
+          node -e '
+            const fs = require("fs");
+            const file = "android/app/build.gradle";
+            let content = fs.readFileSync(file, "utf8");
+            const code = Number(process.env.GITHUB_RUN_NUMBER) || 1;
+            const name = "1.0." + code;
+            if (!/versionCode\s+\d+/.test(content)) {
+              throw new Error("versionCode não encontrado em " + file);
+            }
+            content = content.replace(/versionCode\s+\d+/, "versionCode " + code);
+            content = content.replace(/versionName\s+["\x27][^"\x27]+["\x27]/, "versionName \"" + name + "\"");
+            fs.writeFileSync(file, content, "utf8");
+            console.log("Versão aplicada: versionCode=" + code + " | versionName=" + name);
+          '
+
       - name: 8. Compilar APK Debug instalável
         run: |
           cd android
