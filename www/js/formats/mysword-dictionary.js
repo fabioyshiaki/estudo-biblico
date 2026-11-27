@@ -190,23 +190,19 @@ function classifyHrefLink(hrefRaw, labelText) {
   ).trim();
   const label = cleanLabel(labelText) || decoded;
 
-  // Links externos da web (Wikipedia/Wikimedia/etc.) ficam como texto simples
   if (/^(?:https?:|mailto:|wiki\/)/i.test(decoded)) {
     return null;
   }
 
-  // 1. Links de Bíblia em formato URI (tw://bible.*?id=40.1.1, bible://40.1.1, bible:Gn 1:1)
   if (/^(?:tw:\/\/bible|bible:)/i.test(decoded)) {
     const parsedUri = parseBibleReference(decoded, { allowChapterOnly: true });
     if (parsedUri) return makeBibleLink(parsedUri, label);
   }
 
-  // Remove '#' inicial padrão do MySword (#b40.1.1, #sH430, #mN-NSF, #dPalavra, #Mt 1:1)
   const hadHash = decoded.startsWith('#');
   const core = hadHash ? decoded.slice(1).trim() : decoded;
   if (!core) return null;
 
-  // 2. Referência bíblica explícita com prefixo b / v / rx (b40.1.1, #b40.1.1, b 1.1.1-5, #bMt 1:1, v40.1.1)
   const explicitPrefix = /^(?:rx|b|v)[\s.:_-]*(.+)$/i.exec(core);
   if (explicitPrefix && explicitPrefix[1]) {
     const parsedExplicit = parseBibleReference(explicitPrefix[1].trim(), { allowChapterOnly: true });
@@ -215,13 +211,11 @@ function classifyHrefLink(hrefRaw, labelText) {
     }
   }
 
-  // 3. Referência numérica de 3 partes após '#' (ex.: #40.1.1 ou #1.49.17)
   if (hadHash && /^\d{1,2}[.:_-]\d{1,3}[.:_-]\d{1,3}/.test(core)) {
     const parsedNum = parseBibleReference(core, { allowChapterOnly: true });
     if (parsedNum) return makeBibleLink(parsedNum, label);
   }
 
-  // 4. Código Strong: sH430, #sH430, sG976
   const strongMatch = /^s\s*([GH]\d+[a-z]?)$/i.exec(core);
   if (strongMatch) {
     return {
@@ -232,7 +226,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // 5. Morfologia: mN-NSF, #mN-NSF
   const morphMatch = /^m\s*(.+)$/i.exec(core);
   if (morphMatch) {
     return {
@@ -243,7 +236,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // 6. Link para outro dicionário específico: d-ISBE Badger, #d-LouwNida 33.38
   const modDictMatch = /^d-([^\s]+)\s+(.+)$/i.exec(core);
   if (modDictMatch) {
     const target = modDictMatch[2].trim();
@@ -258,13 +250,11 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // 7. Passagem bíblica textual direta em #Mt 1:1 ou #Deuteronômio 14:5 (antes de remover eventual 'd')
   const directTextBible = parseBibleReference(core, { allowChapterOnly: false, allowNumeric: false });
   if (directTextBible) {
     return makeBibleLink(directTextBible, label);
   }
 
-  // 8. Link para verbete de dicionário: dPalavra, #dPalavra ou #Palavra
   let dictTarget = '';
   if (!hadHash && /^d(?:\s+|(?=[^\s-]))/i.test(core)) {
     dictTarget = core.replace(/^d\s*/i, '').trim();
@@ -289,7 +279,6 @@ function classifyHrefLink(hrefRaw, labelText) {
     };
   }
 
-  // 9. Fallback: qualquer outro link cujo texto visível seja claramente uma passagem bíblica (Livro Cap:Vers)
   const fallbackLabelBible = parseBibleReference(label, { allowChapterOnly: false, allowNumeric: false });
   if (fallbackLabelBible) {
     return makeBibleLink(fallbackLabelBible, label);
@@ -593,6 +582,128 @@ export const myswordDictionaryAdapter = {
     const res = await nativeBridge.queryModule(modulePath, sql, params);
     const rows = Array.isArray(res && res.rows) ? res.rows : [];
     return rows.map((r) => String(getRowField(r, 'word') || '')).filter(Boolean);
+  },
+
+  // Consulta rápida (LIMIT 1 sem ler coluna data) para filtrar quais dicionários possuem o termo
+  async findQuickMatch(modulePath, rawQuery, options = {}) {
+    const s = await resolveSchema(modulePath);
+    const clean = normalizeLookupTerm(rawQuery);
+    if (!clean) return null;
+
+    const searchBody = Boolean(options.searchBody);
+    const candidates = buildLookupCandidates(clean);
+    const isStrongCode = /^[GH]\s*0*\d+[a-z]?$/i.test(clean);
+    const isLouwNida = /^\d{1,2}\.\d{1,3}$/.test(clean);
+
+    // 1. Correspondência exata em word (cobre variações de Strong e sem acentos)
+    const placeholders = candidates.map(() => '?').join(', ');
+    const exactRes = await nativeBridge.queryModule(
+      modulePath,
+      `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
+        `WHERE ${s.qWord} IN (${placeholders}) COLLATE NOCASE LIMIT 1`,
+      candidates
+    );
+    const exactRow = exactRes && Array.isArray(exactRes.rows) ? exactRes.rows[0] : null;
+    if (exactRow) {
+      const w = String(getRowField(exactRow, 'word') || '').trim();
+      if (w) return { word: w, matchType: 'exact' };
+    }
+
+    // 2. Correspondência exata em sinônimos (alt_words, quando o dicionário possuir)
+    if (s.qAlt) {
+      const altRes = await nativeBridge.queryModule(
+        modulePath,
+        `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
+          `WHERE ${s.qAlt} = ? COLLATE NOCASE ` +
+          `OR ${s.qAlt} LIKE ? COLLATE NOCASE ` +
+          `OR ${s.qAlt} LIKE ? COLLATE NOCASE ` +
+          `OR ${s.qAlt} LIKE ? COLLATE NOCASE LIMIT 1`,
+        [clean, `${clean},%`, `%, ${clean}`, `%, ${clean},%`]
+      );
+      const altRow = altRes && Array.isArray(altRes.rows) ? altRes.rows[0] : null;
+      if (altRow) {
+        const w = String(getRowField(altRow, 'word') || '').trim();
+        if (w) return { word: w, matchType: 'exact' };
+      }
+    }
+
+    // 3. Para Strong ou Louw-Nida, evita falso positivo em títulos parciais (ex.: H430 casando H4300)
+    if (!isStrongCode && !isLouwNida) {
+      const noAccents = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const hasAltSpell = Boolean(noAccents && noAccents.toLowerCase() !== clean.toLowerCase());
+
+      if (clean.length <= 2) {
+        // Termos curtos (ex.: Jó, fé): apenas início de verbete delimitado
+        const shortRes = await nativeBridge.queryModule(
+          modulePath,
+          `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
+            `WHERE ${s.qWord} LIKE ? COLLATE NOCASE ` +
+            `OR ${s.qWord} LIKE ? COLLATE NOCASE ` +
+            `OR ${s.qWord} LIKE ? COLLATE NOCASE ` +
+            `ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`,
+          [`${clean} %`, `${clean},%`, `${clean};%`]
+        );
+        const shortRow = shortRes && Array.isArray(shortRes.rows) ? shortRes.rows[0] : null;
+        if (shortRow) {
+          const w = String(getRowField(shortRow, 'word') || '').trim();
+          if (w) return { word: w, matchType: 'prefix' };
+        }
+      } else {
+        // Prefixo em word
+        const prefSql = hasAltSpell
+          ? `SELECT ${s.qWord} AS word FROM ${s.qTable} WHERE ${s.qWord} LIKE ? COLLATE NOCASE OR ${s.qWord} LIKE ? COLLATE NOCASE ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`
+          : `SELECT ${s.qWord} AS word FROM ${s.qTable} WHERE ${s.qWord} LIKE ? COLLATE NOCASE ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`;
+        const prefParams = hasAltSpell ? [`${clean}%`, `${noAccents}%`] : [`${clean}%`];
+        const prefRes = await nativeBridge.queryModule(modulePath, prefSql, prefParams);
+        const prefRow = prefRes && Array.isArray(prefRes.rows) ? prefRes.rows[0] : null;
+        if (prefRow) {
+          const w = String(getRowField(prefRow, 'word') || '').trim();
+          if (w) return { word: w, matchType: 'prefix' };
+        }
+
+        // Contém no título (ou em alt_words)
+        const titleClauses = [`${s.qWord} LIKE ? COLLATE NOCASE`];
+        const titleParams = [`%${clean}%`];
+        if (hasAltSpell) {
+          titleClauses.push(`${s.qWord} LIKE ? COLLATE NOCASE`);
+          titleParams.push(`%${noAccents}%`);
+        }
+        if (s.qAlt) {
+          titleClauses.push(`${s.qAlt} LIKE ? COLLATE NOCASE`);
+          titleParams.push(`%${clean}%`);
+        }
+        const titleRes = await nativeBridge.queryModule(
+          modulePath,
+          `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
+            `WHERE ${titleClauses.join(' OR ')} ` +
+            `ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`,
+          titleParams
+        );
+        const titleRow = titleRes && Array.isArray(titleRes.rows) ? titleRes.rows[0] : null;
+        if (titleRow) {
+          const w = String(getRowField(titleRow, 'word') || '').trim();
+          if (w) return { word: w, matchType: 'title' };
+        }
+      }
+    }
+
+    // 4. Opcional: busca no corpo da definição somente quando "No texto" estiver ativo
+    if (searchBody && clean.length >= 2) {
+      const bodyTerm = isStrongCode ? candidates[0] : clean;
+      const bodyRes = await nativeBridge.queryModule(
+        modulePath,
+        `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
+          `WHERE ${s.qData} LIKE ? COLLATE NOCASE LIMIT 1`,
+        [`%${bodyTerm}%`]
+      );
+      const bodyRow = bodyRes && Array.isArray(bodyRes.rows) ? bodyRes.rows[0] : null;
+      if (bodyRow) {
+        const w = String(getRowField(bodyRow, 'word') || '').trim();
+        if (w) return { word: w, matchType: 'body' };
+      }
+    }
+
+    return null;
   },
 
   async getEntry(modulePath, rawTerm) {
