@@ -31,8 +31,11 @@ public final class StorageBrowser {
         if ("mysword_dct".equals(formatId)) {
             return Collections.singletonList(".dct.mybible");
         }
+        if ("mysword_cmt".equals(formatId)) {
+            return Collections.singletonList(".cmt.mybible");
+        }
         if ("mysword_all".equals(formatId)) {
-            return Arrays.asList(".bbl.mybible", ".dct.mybible");
+            return Arrays.asList(".bbl.mybible", ".dct.mybible", ".cmt.mybible");
         }
         return Collections.singletonList(".bbl.mybible");
     }
@@ -211,12 +214,34 @@ public final class StorageBrowser {
     ) {
         String lowerName = file.getName().toLowerCase(Locale.ROOT);
         boolean isDict = lowerName.endsWith(".dct.mybible") || "mysword_dct".equals(formatId);
-        String actualKind = isDict ? "dictionary" : "bible";
-        String actualFormatId = isDict ? "mysword_dct" : "mysword_bbl";
+        boolean isComment = !isDict && (lowerName.endsWith(".cmt.mybible") || "mysword_cmt".equals(formatId));
+
+        String actualKind;
+        String actualFormatId;
+        String ext;
+        String fallbackTag;
+
+        if (isDict) {
+            actualKind = "dictionary";
+            actualFormatId = "mysword_dct";
+            ext = ".dct.mybible";
+            fallbackTag = "DCT";
+        } else if (isComment) {
+            actualKind = "commentary";
+            actualFormatId = "mysword_cmt";
+            ext = ".cmt.mybible";
+            fallbackTag = "CMT";
+        } else {
+            actualKind = "bible";
+            actualFormatId = "mysword_bbl";
+            ext = ".bbl.mybible";
+            fallbackTag = "BIB";
+        }
+
         String path = file.getAbsolutePath();
 
         try {
-            String checkSql = isDict
+            String checkSql = (isDict || isComment)
                     ? "SELECT name FROM sqlite_master WHERE type='table' "
                     + "AND lower(name) NOT IN ('details', 'info', 'android_metadata', 'bible') "
                     + "AND lower(name) NOT LIKE 'sqlite_%' LIMIT 1"
@@ -229,10 +254,9 @@ public final class StorageBrowser {
             return null;
         }
 
-        String ext = isDict ? ".dct.mybible" : ".bbl.mybible";
         String baseName = stripExtension(file.getName(), ext);
         String title = baseName;
-        String abbr = buildFallbackAbbr(baseName, isDict ? "DCT" : "BIB");
+        String abbr = buildFallbackAbbr(baseName, fallbackTag);
         String description = "";
         String language = "";
         int hasStrongs = 0;
