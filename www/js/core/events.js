@@ -1,6 +1,8 @@
 export const EVENTS = Object.freeze({
   SOURCES_UPDATED: 'sources:updated',
   MODULE_CHANGED: 'module:changed',
+  DICT_CHANGED: 'dict:changed',
+  MODE_CHANGED: 'ui:mode-changed',
   LOCATION_CHANGED: 'location:changed',
   PREFS_CHANGED: 'prefs:changed',
   VERSE_TAPPED: 'verse:tapped',
