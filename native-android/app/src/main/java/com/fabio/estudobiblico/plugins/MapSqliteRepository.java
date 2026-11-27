@@ -27,6 +27,10 @@ public final class MapSqliteRepository {
     private static final int BLOB_CHUNK_SIZE = 512 * 1024;
     private static final Pattern IMG_SRC_PATTERN =
         Pattern.compile("(?i)<img[^>]+src\\s*=\\s*['\"]([^'\"]+)['\"]");
+    private static final Pattern MAP_KEYWORD_PATTERN =
+        Pattern.compile("(?i)(?:^|[^a-z])(map|maps|mapa|mapas|atlas|rumsey|mcnally|geograf|cartograf|terra\\s*santa|holy\\s*land|palestin)");
+    private static final Pattern DOUBLE_PATTERN =
+        Pattern.compile("-?\\d+(?:\\.\\d+)?");
 
     private enum VerseEncoding {
         DECIMAL_1M,
@@ -59,6 +63,24 @@ public final class MapSqliteRepository {
         }
     }
 
+    private static int countRows(SQLiteDatabase db, String sql) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery(sql, null);
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        } catch (Exception ignored) {
+            return 0;
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+        }
+    }
+
+    /**
+     * Valida rigorosamente se o arquivo SQLite é um módulo de mapa/atlas real.
+     * Rejeita livros comuns (.bok.mybible) sem imagens ou sem metadados/tabelas de mapa.
+     */
     public static JSObject inspectMapModule(File file) {
         SQLiteDatabase db = null;
         Cursor c = null;
@@ -68,13 +90,15 @@ public final class MapSqliteRepository {
                 return null;
             }
 
-            JSObject meta = new JSObject();
-            meta.put("path", file.getAbsolutePath());
-            meta.put("fileName", file.getName());
-            meta.put("sizeBytes", file.length());
-            meta.put("hasMapVerse", hasTable(db, "mapverse"));
-            meta.put("hasMapTable", hasTable(db, "map"));
-            meta.put("hasFts", hasTable(db, "journalFTS"));
+            int dataImageCount = countRows(db, "SELECT COUNT(*) FROM data WHERE content IS NOT NULL AND length(content) > 0");
+            if (dataImageCount <= 0) {
+                return null;
+            }
+
+            boolean hasMapTable = hasTable(db, "map");
+            int mapTableRows = hasMapTable ? countRows(db, "SELECT COUNT(*) FROM map") : 0;
+            boolean hasMapVerse = hasTable(db, "mapverse");
+            int mapVerseRows = hasMapVerse ? countRows(db, "SELECT COUNT(*) FROM mapverse") : 0;
 
             String name = file.getName();
             String title = file.getName();
@@ -97,16 +121,38 @@ public final class MapSqliteRepository {
                 c = null;
             }
 
-            c = db.rawQuery("SELECT COUNT(*) FROM journal WHERE COALESCE(hidden, 0) = 0", null);
-            int mapCount = c.moveToFirst() ? c.getInt(0) : 0;
+            int journalCount = countRows(db, "SELECT COUNT(*) FROM journal WHERE COALESCE(hidden, 0) = 0");
+            int imgJournalCount = countRows(
+                db,
+                "SELECT COUNT(*) FROM journal WHERE COALESCE(hidden, 0) = 0 AND content LIKE '%<img%'"
+            );
 
+            boolean hasOfficialMapStructure = (mapTableRows > 0) || (mapVerseRows > 0) || !attribution.isEmpty();
+            if (!hasOfficialMapStructure) {
+                String metaBag = file.getName() + " " + name + " " + title + " " + abbreviation + " " + description;
+                boolean matchesMapKeyword = MAP_KEYWORD_PATTERN.matcher(metaBag).find();
+                boolean mostlyImages = imgJournalCount >= 3 || (journalCount > 0 && imgJournalCount * 2 >= journalCount);
+                if (!matchesMapKeyword || !mostlyImages) {
+                    return null;
+                }
+            }
+
+            JSObject meta = new JSObject();
+            meta.put("path", file.getAbsolutePath());
+            meta.put("fileName", file.getName());
+            meta.put("sizeBytes", file.length());
+            meta.put("hasMapVerse", mapVerseRows > 0);
+            meta.put("hasMapTable", mapTableRows > 0);
+            meta.put("hasGeoBounds", mapTableRows > 0);
+            meta.put("hasFts", hasTable(db, "journalFTS"));
             meta.put("name", name);
             meta.put("title", title);
             meta.put("abbreviation", abbreviation);
             meta.put("author", author);
             meta.put("description", description);
             meta.put("attribution", attribution);
-            meta.put("mapCount", mapCount);
+            meta.put("mapCount", imgJournalCount > 0 ? imgJournalCount : journalCount);
+            meta.put("imageCount", dataImageCount);
             return meta;
         } catch (Exception ignored) {
             return null;
@@ -126,17 +172,39 @@ public final class MapSqliteRepository {
         Cursor c = null;
         try {
             db = openReadOnly(file);
+            boolean hasMapTable = hasTable(db, "map");
             c = db.rawQuery(
-                "SELECT rowid, id, title, tags, relativeorder FROM journal " +
+                "SELECT rowid, id, title, tags, content FROM journal " +
                 "WHERE COALESCE(hidden, 0) = 0 ORDER BY relativeorder ASC, rowid ASC",
                 null
             );
             while (c.moveToNext()) {
+                int rowId = c.getInt(0);
+                String id = c.isNull(1) ? "" : c.getString(1);
+                String title = c.isNull(2) ? "" : c.getString(2);
+                String tags = c.isNull(3) ? "" : c.getString(3);
+                String content = c.isNull(4) ? "" : c.getString(4);
+
+                String firstImg = "";
+                Matcher m = IMG_SRC_PATTERN.matcher(content);
+                if (m.find() && m.group(1) != null) {
+                    firstImg = m.group(1);
+                }
+
                 JSObject item = new JSObject();
-                item.put("rowid", c.getInt(0));
-                item.put("id", c.isNull(1) ? "" : c.getString(1));
-                item.put("title", c.isNull(2) ? "" : c.getString(2));
-                item.put("tags", c.isNull(3) ? "" : c.getString(3));
+                item.put("rowid", rowId);
+                item.put("id", id);
+                item.put("title", title);
+                item.put("tags", tags);
+                item.put("hasImage", !firstImg.isEmpty());
+                item.put("primaryImage", firstImg);
+
+                if (hasMapTable && !firstImg.isEmpty()) {
+                    JSObject geo = findGeoOverlayForEntry(db, rowId, id, title, firstImg);
+                    if (geo != null && geo.has("bounds")) {
+                        item.put("bounds", geo.optJSONObject("bounds"));
+                    }
+                }
                 list.put(item);
             }
         } catch (Exception ignored) {
@@ -256,19 +324,36 @@ public final class MapSqliteRepository {
             String foundId = c.isNull(1) ? "" : c.getString(1);
             String foundTitle = c.isNull(2) ? "" : c.getString(2);
             String htmlContent = c.isNull(3) ? "" : c.getString(3);
+            c.close();
+            c = null;
+
+            String attribution = "";
+            if (hasTable(db, "details")) {
+                c = db.rawQuery("SELECT * FROM details LIMIT 1", null);
+                if (c.moveToFirst()) {
+                    attribution = safeString(c, "mapattribution", "");
+                }
+                c.close();
+                c = null;
+            }
 
             entry.put("rowid", foundRowId);
             entry.put("id", foundId);
             entry.put("title", foundTitle);
             entry.put("content", htmlContent);
             entry.put("modulePath", file.getAbsolutePath());
+            entry.put("attribution", attribution);
 
             JSArray images = new JSArray();
             Set<String> seen = new HashSet<>();
+            String firstImgSrc = "";
             Matcher matcher = IMG_SRC_PATTERN.matcher(htmlContent);
             while (matcher.find()) {
                 String src = matcher.group(1);
                 if (src != null && seen.add(src.toLowerCase(Locale.ROOT))) {
+                    if (firstImgSrc.isEmpty()) {
+                        firstImgSrc = src;
+                    }
                     JSObject imgObj = extractImageBlobToCache(context, db, file, src);
                     if (imgObj != null) {
                         images.put(imgObj);
@@ -276,6 +361,19 @@ public final class MapSqliteRepository {
                 }
             }
             entry.put("images", images);
+
+            if (hasTable(db, "map")) {
+                JSObject geo = findGeoOverlayForEntry(db, foundRowId, foundId, foundTitle, firstImgSrc);
+                if (geo != null) {
+                    if (geo.has("bounds")) {
+                        entry.put("bounds", geo.optJSONObject("bounds"));
+                    }
+                    if (geo.has("rawMapMeta")) {
+                        entry.put("rawMapMeta", geo.optJSONObject("rawMapMeta"));
+                    }
+                }
+            }
+
             return entry;
         } catch (Exception ignored) {
             return null;
@@ -303,7 +401,8 @@ public final class MapSqliteRepository {
             String likeParam = "%" + query.trim() + "%";
             c = db.rawQuery(
                 "SELECT rowid, id, title FROM journal " +
-                "WHERE COALESCE(hidden, 0) = 0 AND (title LIKE ? OR tags LIKE ? OR content LIKE ?) " +
+                "WHERE COALESCE(hidden, 0) = 0 AND content LIKE '%<img%' " +
+                "AND (title LIKE ? OR tags LIKE ? OR content LIKE ?) " +
                 "ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END, relativeorder ASC LIMIT " + safeLimit,
                 new String[]{likeParam, likeParam, likeParam, likeParam}
             );
@@ -326,6 +425,229 @@ public final class MapSqliteRepository {
             }
         }
         return results;
+    }
+
+    /**
+     * Inspeciona dinamicamente a tabela `map` de módulos MySword 9.0+ para localizar
+     * os limites geográficos (south, west, north, east) do mapa aberto.
+     */
+    private static JSObject findGeoOverlayForEntry(
+            SQLiteDatabase db,
+            int journalRowId,
+            String journalId,
+            String journalTitle,
+            String imgSrc
+    ) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery("SELECT rowid AS _mr, * FROM map", null);
+            String[] cols = c.getColumnNames();
+
+            String imgBase = imgSrc != null ? imgSrc.replaceAll("\\.[a-zA-Z0-9]+$", "") : "";
+            Set<String> matchKeys = new HashSet<>();
+            if (journalId != null && !journalId.trim().isEmpty()) {
+                matchKeys.add(journalId.trim().toLowerCase(Locale.ROOT));
+            }
+            if (journalTitle != null && !journalTitle.trim().isEmpty()) {
+                matchKeys.add(journalTitle.trim().toLowerCase(Locale.ROOT));
+            }
+            if (imgSrc != null && !imgSrc.trim().isEmpty()) {
+                matchKeys.add(imgSrc.trim().toLowerCase(Locale.ROOT));
+            }
+            if (!imgBase.isEmpty()) {
+                matchKeys.add(imgBase.trim().toLowerCase(Locale.ROOT));
+            }
+
+            JSObject bestBounds = null;
+            JSObject bestRawMeta = null;
+            int bestPriority = -1;
+
+            while (c.moveToNext()) {
+                int priority = scoreMapRowMatch(c, cols, journalRowId, matchKeys, imgBase);
+                if (priority <= bestPriority) {
+                    continue;
+                }
+
+                JSObject bounds = parseBoundsFromCursor(c, cols);
+                if (bounds != null) {
+                    bestPriority = priority;
+                    bestBounds = bounds;
+                    bestRawMeta = collectLightRowMeta(c, cols);
+                    if (priority >= 100) {
+                        break;
+                    }
+                }
+            }
+
+            if (bestBounds == null) {
+                return null;
+            }
+            JSObject out = new JSObject();
+            out.put("bounds", bestBounds);
+            if (bestRawMeta != null) {
+                out.put("rawMapMeta", bestRawMeta);
+            }
+            return out;
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+        }
+    }
+
+    private static int scoreMapRowMatch(
+            Cursor c,
+            String[] cols,
+            int journalRowId,
+            Set<String> matchKeys,
+            String imgBase
+    ) {
+        int score = -1;
+        for (int i = 0; i < cols.length; i++) {
+            String col = cols[i].toLowerCase(Locale.ROOT);
+            if (c.isNull(i)) {
+                continue;
+            }
+            int type = c.getType(i);
+            if (type == Cursor.FIELD_TYPE_BLOB) {
+                continue;
+            }
+
+            String val = String.valueOf(type == Cursor.FIELD_TYPE_INTEGER ? c.getLong(i) : c.getString(i)).trim();
+            if (val.isEmpty()) {
+                continue;
+            }
+            String lowerVal = val.toLowerCase(Locale.ROOT);
+
+            if (col.equals("id") || col.equals("journalid") || col.equals("journal_id")
+                    || col.equals("dataid") || col.equals("data_id") || col.equals("filename")
+                    || col.equals("image") || col.equals("img") || col.equals("name") || col.equals("title")) {
+                if (matchKeys.contains(lowerVal)) {
+                    score = Math.max(score, 100);
+                } else if (journalRowId > 0 && val.equals(String.valueOf(journalRowId))) {
+                    score = Math.max(score, 85);
+                } else if (!imgBase.isEmpty() && lowerVal.equals(imgBase.toLowerCase(Locale.ROOT))) {
+                    score = Math.max(score, 90);
+                }
+            } else if (col.equals("_mr") && journalRowId > 0 && c.getInt(i) == journalRowId) {
+                score = Math.max(score, 40);
+            }
+        }
+        return score;
+    }
+
+    private static JSObject parseBoundsFromCursor(Cursor c, String[] cols) {
+        Map<String, Double> numMap = new HashMap<>();
+        String boundsStr = "";
+
+        for (int i = 0; i < cols.length; i++) {
+            if (c.isNull(i)) {
+                continue;
+            }
+            int type = c.getType(i);
+            if (type == Cursor.FIELD_TYPE_BLOB) {
+                continue;
+            }
+            String col = cols[i].toLowerCase(Locale.ROOT);
+            if (type == Cursor.FIELD_TYPE_FLOAT || type == Cursor.FIELD_TYPE_INTEGER) {
+                numMap.put(col, c.getDouble(i));
+            } else if (type == Cursor.FIELD_TYPE_STRING) {
+                String s = c.getString(i);
+                if (s == null) {
+                    continue;
+                }
+                s = s.trim();
+                if (col.contains("bound") || col.contains("bbox") || col.contains("coord") || col.contains("extent")) {
+                    boundsStr = s;
+                } else {
+                    try {
+                        numMap.put(col, Double.parseDouble(s));
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
+        }
+
+        Double south = pickDouble(numMap, "south", "lat_s", "latsouth", "minlat", "min_lat", "latmin", "swlat", "sw_lat", "bottom", "lat1", "y1", "ymin", "miny", "s");
+        Double north = pickDouble(numMap, "north", "lat_n", "latnorth", "maxlat", "max_lat", "latmax", "nelat", "ne_lat", "top", "lat2", "y2", "ymax", "maxy", "n");
+        Double west = pickDouble(numMap, "west", "lon_w", "lng_w", "lonwest", "lngwest", "minlon", "min_lon", "minlng", "min_lng", "lonmin", "lngmin", "swlon", "swlng", "sw_lon", "sw_lng", "left", "lon1", "lng1", "x1", "xmin", "minx", "w");
+        Double east = pickDouble(numMap, "east", "lon_e", "lng_e", "loneast", "lngeast", "maxlon", "max_lon", "maxlng", "max_lng", "lonmax", "lngmax", "nelon", "nelng", "ne_lon", "ne_lng", "right", "lon2", "lng2", "x2", "xmax", "maxx", "e");
+
+        if (south != null && north != null && west != null && east != null) {
+            return buildValidatedBounds(south, west, north, east);
+        }
+
+        if (!boundsStr.isEmpty()) {
+            List<Double> nums = new ArrayList<>();
+            Matcher m = DOUBLE_PATTERN.matcher(boundsStr);
+            while (m.find() && nums.size() < 4) {
+                try {
+                    nums.add(Double.parseDouble(m.group()));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            if (nums.size() == 4) {
+                return buildValidatedBounds(nums.get(0), nums.get(1), nums.get(2), nums.get(3));
+            }
+        }
+
+        return null;
+    }
+
+    private static JSObject buildValidatedBounds(double latA, double lngA, double latB, double lngB) {
+        double south = Math.min(latA, latB);
+        double north = Math.max(latA, latB);
+        double west = Math.min(lngA, lngB);
+        double east = Math.max(lngA, lngB);
+
+        if (south < -90.0 || north > 90.0 || west < -180.0 || east > 180.0) {
+            return null;
+        }
+        if ((north - south) < 0.0005 || (east - west) < 0.0005) {
+            return null;
+        }
+
+        JSObject b = new JSObject();
+        b.put("south", south);
+        b.put("west", west);
+        b.put("north", north);
+        b.put("east", east);
+        return b;
+    }
+
+    private static Double pickDouble(Map<String, Double> map, String... keys) {
+        for (String k : keys) {
+            if (map.containsKey(k)) {
+                return map.get(k);
+            }
+        }
+        return null;
+    }
+
+    private static JSObject collectLightRowMeta(Cursor c, String[] cols) {
+        JSObject obj = new JSObject();
+        for (int i = 0; i < cols.length; i++) {
+            if (c.isNull(i) || c.getType(i) == Cursor.FIELD_TYPE_BLOB) {
+                continue;
+            }
+            String col = cols[i];
+            if ("_mr".equals(col)) {
+                continue;
+            }
+            if (c.getType(i) == Cursor.FIELD_TYPE_FLOAT) {
+                obj.put(col, c.getDouble(i));
+            } else if (c.getType(i) == Cursor.FIELD_TYPE_INTEGER) {
+                obj.put(col, c.getLong(i));
+            } else {
+                String val = c.getString(i);
+                if (val != null && val.length() <= 160) {
+                    obj.put(col, val);
+                }
+            }
+        }
+        return obj;
     }
 
     private static JSObject extractImageBlobToCache(Context context, SQLiteDatabase db, File moduleFile, String imgName) {
