@@ -4,7 +4,9 @@ import {
 } from '../formats/mysword-dictionary.js';
 import {
   lookupExactAcrossDictionaries,
-  searchAcrossDictionaries
+  searchAcrossDictionaries,
+  findDictionariesWithTerm,
+  getCachedDictionariesWithTerm
 } from '../formats/dictionary-lookup.js';
 import { parseBibleReference } from '../core/bible-refs.js';
 import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
@@ -15,16 +17,18 @@ const viewState = {
   activeModulePath: '',
   currentEntry: null,
   query: '',
+  filterTerm: '',
   searchBody: false,
   searchScope: 'current', // 'current' | 'all'
   mode: 'entry',          // 'entry' | 'results' | 'loading' | 'empty'
   statusText: '',
   results: [],
-  history: [],            // [{ modulePath, word }]
+  history: [],            // [{ modulePath, word, filterTerm }]
   activeAbort: null
 };
 
 let imageRenderSeq = 0;
+let isSteppingDict = false;
 
 let callbacks = {
   onOpenSources: () => {},
@@ -68,6 +72,7 @@ function notifyMeta() {
     activeModule: mod,
     entryWord: viewState.currentEntry ? viewState.currentEntry.word : '',
     query: viewState.query,
+    filterTerm: viewState.filterTerm,
     historyLength: viewState.history.length
   });
 }
@@ -86,7 +91,8 @@ function pushHistorySnapshot() {
   }
   viewState.history.push({
     modulePath: viewState.activeModulePath,
-    word: viewState.currentEntry.word
+    word: viewState.currentEntry.word,
+    filterTerm: viewState.filterTerm
   });
   if (viewState.history.length > 40) {
     viewState.history.shift();
@@ -201,6 +207,8 @@ export function getDictionaryViewState() {
     activeModulePath: viewState.activeModulePath,
     currentEntry: viewState.currentEntry,
     query: viewState.query,
+    filterTerm: viewState.filterTerm,
+    searchBody: viewState.searchBody,
     historyLength: viewState.history.length
   };
 }
@@ -212,14 +220,32 @@ export async function setActiveDictionaryModule(modulePath, options = {}) {
   const previousWord = viewState.currentEntry ? viewState.currentEntry.word : '';
   viewState.activeModulePath = target.path;
 
-  if (options.keepTerm && previousWord) {
-    await openDictionaryEntry(previousWord, {
+  if (options.matchedWord) {
+    await openDictionaryEntry(options.matchedWord, {
       modulePath: target.path,
-      pushHistory: false,
+      pushHistory: options.pushHistory !== false,
       fallbackAll: false,
+      keepFilterTerm: Boolean(options.keepFilterTerm),
       render: options.render !== false
     });
     return true;
+  }
+
+  const termToKeep = viewState.filterTerm || previousWord;
+  if (options.keepTerm && termToKeep) {
+    await openDictionaryEntry(termToKeep, {
+      modulePath: target.path,
+      pushHistory: false,
+      fallbackAll: false,
+      keepFilterTerm: Boolean(viewState.filterTerm),
+      render: options.render !== false
+    });
+    return true;
+  }
+
+  if (options.clearFilter) {
+    viewState.filterTerm = '';
+    viewState.query = '';
   }
 
   viewState.currentEntry = null;
@@ -233,7 +259,64 @@ export async function setActiveDictionaryModule(modulePath, options = {}) {
 
 export async function stepDictionaryModule(delta) {
   const list = viewState.dictionaries;
-  if (list.length < 2) return;
+  if (list.length < 2 || isSteppingDict) return;
+
+  const activeFilter = normalizeLookupTerm(viewState.filterTerm);
+
+  // Quando há um termo pesquisado ativo, navega apenas entre os dicionários que contêm o termo
+  if (activeFilter) {
+    isSteppingDict = true;
+    try {
+      let matches = getCachedDictionariesWithTerm(list, activeFilter, {
+        searchBody: viewState.searchBody
+      });
+      if (!matches) {
+        callbacks.onToast(`Verificando dicionários com "${activeFilter}"...`);
+        matches = await findDictionariesWithTerm(list, activeFilter, {
+          searchBody: viewState.searchBody,
+          activePath: viewState.activeModulePath,
+          concurrency: 4
+        });
+      }
+
+      if (!matches.length) {
+        callbacks.onToast(`Nenhum dicionário contém "${activeFilter}".`);
+        return;
+      }
+
+      if (matches.length === 1) {
+        const only = matches[0];
+        if (only.module.path === viewState.activeModulePath) {
+          callbacks.onToast(`Apenas este dicionário contém "${activeFilter}".`);
+          return;
+        }
+        await openDictionaryEntry(only.word, {
+          modulePath: only.module.path,
+          pushHistory: false,
+          fallbackAll: false,
+          keepFilterTerm: true
+        });
+        return;
+      }
+
+      const curIdx = matches.findIndex((item) => item.module.path === viewState.activeModulePath);
+      const nextIdx = curIdx < 0
+        ? (delta >= 0 ? 0 : matches.length - 1)
+        : (curIdx + delta + matches.length) % matches.length;
+      const nextMatch = matches[nextIdx];
+
+      await openDictionaryEntry(nextMatch.word, {
+        modulePath: nextMatch.module.path,
+        pushHistory: false,
+        fallbackAll: false,
+        keepFilterTerm: true
+      });
+    } finally {
+      isSteppingDict = false;
+    }
+    return;
+  }
+
   const idx = Math.max(0, list.findIndex((m) => m.path === viewState.activeModulePath));
   const nextIdx = (idx + delta + list.length) % list.length;
   await setActiveDictionaryModule(list[nextIdx].path, { keepTerm: true, render: true });
@@ -294,7 +377,13 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
     pushHistorySnapshot();
   }
 
-  viewState.query = clean;
+  if (options.keepFilterTerm && viewState.filterTerm) {
+    viewState.query = viewState.filterTerm;
+  } else {
+    viewState.query = clean;
+    viewState.filterTerm = clean;
+  }
+
   viewState.mode = 'loading';
   viewState.statusText = `Procurando "${clean}"...`;
   renderDictionaryView();
@@ -371,6 +460,8 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
 export async function searchDictionaryTerm(rawQuery, options = {}) {
   const clean = normalizeLookupTerm(rawQuery);
   if (!clean) {
+    viewState.query = '';
+    viewState.filterTerm = '';
     callbacks.onToast('Digite ou selecione uma palavra para buscar.');
     return;
   }
@@ -390,6 +481,7 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
   const searchBody = options.searchBody !== undefined ? Boolean(options.searchBody) : viewState.searchBody;
 
   viewState.query = clean;
+  viewState.filterTerm = clean;
   viewState.searchScope = scope;
   viewState.searchBody = searchBody;
   viewState.mode = 'loading';
@@ -466,7 +558,8 @@ export async function stepDictionaryEntry(direction) {
     }
     viewState.currentEntry = nextEntry;
     viewState.mode = 'entry';
-    viewState.query = nextEntry.word;
+    viewState.query = '';
+    viewState.filterTerm = '';
     notifyMeta();
     renderDictionaryView({ resetScroll: true });
   } catch (err) {
@@ -479,10 +572,12 @@ export async function goBackDictionaryHistory() {
   const prev = viewState.history.pop();
   if (!prev) return false;
 
+  viewState.filterTerm = prev.filterTerm || '';
   await openDictionaryEntry(prev.word, {
     modulePath: prev.modulePath,
     pushHistory: false,
-    fallbackAll: false
+    fallbackAll: false,
+    keepFilterTerm: Boolean(prev.filterTerm)
   });
   return true;
 }
@@ -582,6 +677,17 @@ function bindRenderedEvents(rootEl) {
   const input = rootEl.querySelector('#dct-search-input');
   const bodyChk = rootEl.querySelector('#dct-chk-body');
 
+  if (input) {
+    input.addEventListener('input', () => {
+      const val = (input.value || '').trim();
+      if (!val) {
+        viewState.query = '';
+        viewState.filterTerm = '';
+        notifyMeta();
+      }
+    });
+  }
+
   if (bodyChk) {
     bodyChk.addEventListener('change', () => {
       viewState.searchBody = Boolean(bodyChk.checked);
@@ -647,7 +753,8 @@ function bindRenderedEvents(rootEl) {
         openDictionaryEntry(hit.word, {
           modulePath: hit.module.path,
           pushHistory: true,
-          fallbackAll: false
+          fallbackAll: false,
+          keepFilterTerm: Boolean(viewState.filterTerm)
         });
       }
       return;
@@ -659,7 +766,6 @@ function bindRenderedEvents(rootEl) {
       const modHint = (dctLink.getAttribute('data-dct-module') || '').trim();
       const labelTxt = (dctLink.textContent || '').trim();
 
-      // Garantia extra: qualquer link cuja meta ou rótulo seja uma passagem bíblica vai direto para a Bíblia
       const isExplicitBible = /^#?(?:rx|b|v)[\s.:_-]*(?:\d|[A-Za-zÀ-ÿ])|^tw:\/\/bible|^bible:/i.test(term);
       const bibleTarget = isExplicitBible
         ? parseBibleReference(term, { allowChapterOnly: true })
