@@ -35,8 +35,15 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function stripPilcrow(str) {
+  return String(str || '')
+    .replace(/([.,;:!?])¶(?=\S)/g, '$1 ')
+    .replace(/[ \t]*¶(?=[ \t]|$|[.,;:!?)}\]])/g, '')
+    .replace(/¶/g, '');
+}
+
 function cleanText(str) {
-  return String(str || '').replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+  return stripPilcrow(str).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function stripAllTagsKeepSpaces(str) {
@@ -48,7 +55,7 @@ function pushUnique(arr, val) {
 }
 
 function formatClauseInlineHtml(raw) {
-  let safe = escapeHtml(String(raw || ''));
+  let safe = escapeHtml(stripPilcrow(raw));
   safe = safe
     .replace(/&lt;FR&gt;/g, '<span class="v-red">')
     .replace(/&lt;\/?Fr&gt;|&lt;\/FR&gt;/g, '</span>')
