@@ -43,6 +43,7 @@ const viewState = {
   query: '',
   filterTerm: '',
   searchOptions: loadSavedSearchOptions(),
+  searchPanelOpen: false,
   optionsOpen: false,
   searchScope: 'current', // 'current' | 'all'
   mode: 'entry',          // 'entry' | 'results' | 'loading' | 'empty' | 'error'
@@ -82,7 +83,15 @@ function getActiveModule() {
 
 function getModuleLabel(mod) {
   if (!mod) return 'Dicionário';
-  return mod.abbr || mod.title || mod.fileName || 'Dicionário';
+  return mod.title || mod.abbr || mod.fileName || 'Dicionário';
+}
+
+function shouldShowHeaderPanel() {
+  return Boolean(
+    viewState.searchPanelOpen ||
+    viewState.mode === 'results' ||
+    viewState.mode === 'error'
+  );
 }
 
 function getActiveOptionLabels(opts) {
@@ -113,6 +122,7 @@ function notifyMeta() {
     query: viewState.query,
     filterTerm: viewState.filterTerm,
     searchOptions: { ...viewState.searchOptions },
+    searchPanelOpen: shouldShowHeaderPanel(),
     historyLength: viewState.history.length
   });
 }
@@ -270,8 +280,46 @@ export function getDictionaryViewState() {
     filterTerm: viewState.filterTerm,
     searchBody: viewState.searchOptions.searchBody,
     searchOptions: { ...viewState.searchOptions },
+    searchPanelOpen: shouldShowHeaderPanel(),
     historyLength: viewState.history.length
   };
+}
+
+export function isDictionarySearchBarOpen() {
+  return shouldShowHeaderPanel();
+}
+
+export function toggleDictionarySearchBar(forceOpen = null) {
+  const nextOpen = typeof forceOpen === 'boolean'
+    ? forceOpen
+    : !shouldShowHeaderPanel();
+
+  viewState.searchPanelOpen = nextOpen;
+
+  // Se o usuário pediu para fechar estando na tela de resultados e há um verbete aberto, retorna ao verbete
+  if (!nextOpen && (viewState.mode === 'results' || viewState.mode === 'error') && viewState.currentEntry) {
+    viewState.mode = 'entry';
+    viewState.statusText = '';
+    notifyMeta();
+    renderDictionaryView({ resetScroll: false });
+    return;
+  }
+
+  const headerZone = document.getElementById('dct-header-zone');
+  if (headerZone) {
+    headerZone.classList.toggle('is-collapsed', !shouldShowHeaderPanel());
+    if (nextOpen) {
+      const scrollBox = document.getElementById('reader-scroll');
+      if (scrollBox) scrollBox.scrollTo({ top: 0, behavior: 'smooth' });
+      window.requestAnimationFrame(() => {
+        headerZone.querySelector('#dct-search-input')?.focus();
+      });
+    }
+    notifyMeta();
+  } else {
+    notifyMeta();
+    renderDictionaryView({ resetScroll: nextOpen });
+  }
 }
 
 export function openActiveDictionaryTerms() {
@@ -512,6 +560,7 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
         viewState.activeModulePath = exactHinted.module.path;
         viewState.currentEntry = exactHinted.entry;
         viewState.mode = 'entry';
+        viewState.searchPanelOpen = false;
         viewState.statusText = '';
         notifyMeta();
         renderDictionaryView({ resetScroll: true });
@@ -526,6 +575,7 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
         viewState.activeModulePath = preferredMod.path;
         viewState.currentEntry = exactHere;
         viewState.mode = 'entry';
+        viewState.searchPanelOpen = false;
         viewState.statusText = '';
         notifyMeta();
         renderDictionaryView({ resetScroll: true });
@@ -545,6 +595,7 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
         viewState.activeModulePath = exactAny.module.path;
         viewState.currentEntry = exactAny.entry;
         viewState.mode = 'entry';
+        viewState.searchPanelOpen = false;
         viewState.statusText = '';
         notifyMeta();
         renderDictionaryView({ resetScroll: true });
@@ -565,7 +616,9 @@ export async function openDictionaryEntry(rawTerm, options = {}) {
       error: err
     });
     viewState.mode = 'error';
+    viewState.searchPanelOpen = true;
     viewState.statusText = msg;
+    notifyMeta();
     renderDictionaryView();
     return false;
   }
@@ -601,6 +654,7 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
   viewState.filterTerm = clean;
   viewState.searchScope = scope;
   viewState.searchOptions = mergedOpts;
+  viewState.searchPanelOpen = true;
   saveSearchOptions(mergedOpts);
 
   const activeMod = getActiveModule();
@@ -683,6 +737,7 @@ export async function searchDictionaryTerm(rawQuery, options = {}) {
     });
     viewState.mode = 'error';
     viewState.statusText = msg;
+    notifyMeta();
     renderDictionaryView();
   }
 }
@@ -700,6 +755,7 @@ export async function stepDictionaryEntry(direction) {
     }
     viewState.currentEntry = nextEntry;
     viewState.mode = 'entry';
+    viewState.searchPanelOpen = false;
     viewState.query = '';
     viewState.filterTerm = '';
     notifyMeta();
@@ -736,6 +792,7 @@ function rerenderHeaderOnly() {
     renderDictionaryView({ resetScroll: false });
     return;
   }
+  headerZone.classList.toggle('is-collapsed', !shouldShowHeaderPanel());
   headerZone.innerHTML = `${buildToolbarHtml()}${buildOptionsSectionHtml()}`;
   bindHeaderEvents(headerZone);
 }
@@ -756,7 +813,6 @@ function updateSearchOptionsAndRefresh(nextPartial, headerZone) {
   if (viewState.mode === 'results' && normalizeLookupTerm(viewState.query)) {
     searchDictionaryTerm(viewState.query, { scope: viewState.searchScope });
   } else {
-    // Atualiza apenas barra e painel de opções sem recarregar o verbete aberto nem suas imagens
     rerenderHeaderOnly();
   }
 }
@@ -931,14 +987,14 @@ function buildEntryHtml() {
     return (
       '<div class="empty-state">' +
         '<h2>Leitor de Dicionários</h2>' +
-        `<p>${escapeHtml(viewState.statusText || 'Selecione um dicionário ou busque uma palavra acima.')}</p>` +
+        `<p>${escapeHtml(viewState.statusText || 'Selecione um dicionário ou toque na lupa abaixo para buscar.')}</p>` +
       '</div>'
     );
   }
 
   const dirAttr = entry.isRtl ? ' dir="rtl"' : '';
   const compareBtn = viewState.dictionaries.length > 1
-    ? '<button type="button" class="dct-action-btn" id="dct-btn-compare-all" style="height:32px;padding:0 10px;font-size:12px;">Ver em outros dicionários</button>'
+    ? '<button type="button" class="dct-action-btn" id="dct-btn-compare-all" style="height:30px;padding:0 10px;font-size:12px;">Ver em outros</button>'
     : '';
 
   return (
@@ -946,7 +1002,7 @@ function buildEntryHtml() {
       '<div class="dct-entry-head">' +
         '<div>' +
           `<h1 class="dct-entry-title">${escapeHtml(entry.word)}</h1>` +
-          `<div class="dct-entry-source">${escapeHtml(mod.title || getModuleLabel(mod))}</div>` +
+          `<div class="dct-entry-source">${escapeHtml(getModuleLabel(mod))}</div>` +
         '</div>' +
         compareBtn +
       '</div>' +
@@ -1041,7 +1097,9 @@ function bindBodyEvents(bodyZone) {
   bodyZone.querySelector('#dct-btn-restore-entry')?.addEventListener('click', () => {
     if (viewState.currentEntry) {
       viewState.mode = 'entry';
+      viewState.searchPanelOpen = false;
       viewState.statusText = '';
+      notifyMeta();
       renderDictionaryView({ resetScroll: false });
     }
   });
@@ -1180,9 +1238,11 @@ export function renderDictionaryView(options = {}) {
     bodyHtml = buildEntryHtml();
   }
 
+  const headerCollapsedCls = shouldShowHeaderPanel() ? '' : ' is-collapsed';
+
   container.innerHTML =
     '<div class="dct-reader">' +
-      `<div id="dct-header-zone" style="display:flex;flex-direction:column;gap:10px;">${buildToolbarHtml()}${buildOptionsSectionHtml()}</div>` +
+      `<div id="dct-header-zone" class="dct-header-zone${headerCollapsedCls}" style="display:flex;flex-direction:column;gap:10px;">${buildToolbarHtml()}${buildOptionsSectionHtml()}</div>` +
       `<div id="dct-body-zone" style="display:flex;flex-direction:column;gap:12px;">${bodyHtml}</div>` +
     '</div>';
 
