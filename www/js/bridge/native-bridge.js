@@ -1,8 +1,16 @@
+import { appLogger } from '../core/logger.js';
+
 function getNativePlugin() {
   if (typeof window === 'undefined') return null;
   const cap = window.Capacitor;
   if (!cap || !cap.Plugins || !cap.Plugins.BibleCore) return null;
   return cap.Plugins.BibleCore;
+}
+
+function shortFileName(path) {
+  const s = String(path || '');
+  const parts = s.split(/[\\/]/);
+  return parts[parts.length - 1] || s;
 }
 
 const mockState = {
@@ -105,25 +113,43 @@ function pluginOrFallback() {
   return getNativePlugin() || fallback;
 }
 
+async function runLogged(scope, label, detailMeta, callFn) {
+  try {
+    return await callFn();
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    appLogger.error(scope, `${label}: ${msg}`, detailMeta);
+    throw err;
+  }
+}
+
 export const nativeBridge = {
   isNative() {
     return Boolean(getNativePlugin());
   },
 
   checkStoragePermission() {
-    return pluginOrFallback().checkStoragePermission();
+    return runLogged('NATIVE', 'checkStoragePermission', '', () =>
+      pluginOrFallback().checkStoragePermission()
+    );
   },
 
   requestStoragePermission() {
-    return pluginOrFallback().requestStoragePermission();
+    return runLogged('NATIVE', 'requestStoragePermission', '', () =>
+      pluginOrFallback().requestStoragePermission()
+    );
   },
 
   getStorageRoots() {
-    return pluginOrFallback().getStorageRoots();
+    return runLogged('NATIVE', 'getStorageRoots', '', () =>
+      pluginOrFallback().getStorageRoots()
+    );
   },
 
   listDirectory(path, formatId = 'mysword_bbl') {
-    return pluginOrFallback().listDirectory({ path, formatId });
+    return runLogged('NATIVE', 'listDirectory', { path, formatId }, () =>
+      pluginOrFallback().listDirectory({ path, formatId })
+    );
   },
 
   addSource({
@@ -133,48 +159,70 @@ export const nativeBridge = {
     resourceKind = 'bible',
     formatId = 'mysword_bbl'
   }) {
-    return pluginOrFallback().addSource({
-      path,
-      mode,
-      recursive: Boolean(recursive),
-      resourceKind,
-      formatId
-    });
+    return runLogged('NATIVE', 'addSource', { path, mode, recursive, resourceKind, formatId }, () =>
+      pluginOrFallback().addSource({
+        path,
+        mode,
+        recursive: Boolean(recursive),
+        resourceKind,
+        formatId
+      })
+    );
   },
 
   removeSource(sourceId) {
-    return pluginOrFallback().removeSource({ sourceId: Number(sourceId) });
+    return runLogged('NATIVE', 'removeSource', { sourceId }, () =>
+      pluginOrFallback().removeSource({ sourceId: Number(sourceId) })
+    );
   },
 
   listSources() {
-    return pluginOrFallback().listSources();
+    return runLogged('NATIVE', 'listSources', '', () =>
+      pluginOrFallback().listSources()
+    );
   },
 
   listModules(resourceKind = null) {
     const payload = resourceKind ? { resourceKind } : {};
-    return pluginOrFallback().listModules(payload);
+    return runLogged('NATIVE', 'listModules', payload, () =>
+      pluginOrFallback().listModules(payload)
+    );
   },
 
   refreshSources() {
-    return pluginOrFallback().refreshSources();
+    return runLogged('NATIVE', 'refreshSources', '', () =>
+      pluginOrFallback().refreshSources()
+    );
   },
 
   setModuleFavorite(moduleId, favorite) {
-    return pluginOrFallback().setModuleFavorite({
-      moduleId: Number(moduleId),
-      favorite: Boolean(favorite)
-    });
+    return runLogged('NATIVE', 'setModuleFavorite', { moduleId, favorite }, () =>
+      pluginOrFallback().setModuleFavorite({
+        moduleId: Number(moduleId),
+        favorite: Boolean(favorite)
+      })
+    );
   },
 
   queryModule(path, sql, params = []) {
-    return pluginOrFallback().queryModule({
-      path,
-      sql,
-      params: Array.isArray(params) ? params.map(String) : []
-    });
+    const strParams = Array.isArray(params) ? params.map(String) : [];
+    const meta = {
+      file: shortFileName(path),
+      sql: String(sql || '').slice(0, 480),
+      params: strParams.slice(0, 12)
+    };
+    return runLogged('SQL', `queryModule (${meta.file})`, meta, () =>
+      pluginOrFallback().queryModule({
+        path,
+        sql,
+        params: strParams
+      })
+    );
   },
 
   closeAllModules() {
-    return pluginOrFallback().closeAllModules();
+    return runLogged('NATIVE', 'closeAllModules', '', () =>
+      pluginOrFallback().closeAllModules()
+    );
   }
 };
