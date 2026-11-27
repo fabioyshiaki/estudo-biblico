@@ -4,6 +4,33 @@ import { parseBibleReference } from '../core/bible-refs.js';
 const schemaCache = new Map();
 const initialsCache = new Map();
 
+export const DEFAULT_DICT_SEARCH_OPTIONS = Object.freeze({
+  matchMode: 'contains',   // 'contains' | 'startsWith' | 'exact'
+  accentSensitive: false,  // false = ignora acentos; true = diferencia com/sem acento
+  caseSensitive: false,    // false = ignora maiúsculas; true = diferencia maiúsculas/minúsculas
+  searchBody: false,       // false = títulos/sinônimos; true = busca também nas definições
+  searchAltWords: true,    // true = inclui sinônimos (alt_words)
+  exactPhrase: false,      // false = todas as palavras (qualquer ordem); true = frase exata
+  favoritesOnly: false     // true = restringe busca global e filtro de dicionários aos favoritos
+});
+
+export function normalizeDictSearchOptions(raw = {}) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const mode = src.matchMode === 'exact' || src.matchMode === 'startsWith'
+    ? src.matchMode
+    : 'contains';
+
+  return {
+    matchMode: mode,
+    accentSensitive: Boolean(src.accentSensitive),
+    caseSensitive: Boolean(src.caseSensitive),
+    searchBody: Boolean(src.searchBody),
+    searchAltWords: src.searchAltWords !== false,
+    exactPhrase: Boolean(src.exactPhrase),
+    favoritesOnly: Boolean(src.favoritesOnly)
+  };
+}
+
 const INITIAL_ACCENT_GROUPS = {
   A: ['A', 'Á', 'À', 'Â', 'Ã', 'Ä', 'Å', 'a', 'á', 'à', 'â', 'ã', 'ä', 'å'],
   C: ['C', 'Ç', 'c', 'ç'],
@@ -13,6 +40,39 @@ const INITIAL_ACCENT_GROUPS = {
   O: ['O', 'Ó', 'Ò', 'Ô', 'Õ', 'Ö', 'o', 'ó', 'ò', 'ô', 'õ', 'ö'],
   U: ['U', 'Ú', 'Ù', 'Û', 'Ü', 'u', 'ú', 'ù', 'û', 'ü'],
   Y: ['Y', 'Ý', 'Ÿ', 'y', 'ý', 'ÿ']
+};
+
+const SQL_ACCENT_FOLD_MAP = [
+  ['á', 'a'], ['à', 'a'], ['â', 'a'], ['ã', 'a'], ['ä', 'a'], ['å', 'a'],
+  ['Á', 'a'], ['À', 'a'], ['Â', 'a'], ['Ã', 'a'], ['Ä', 'a'], ['Å', 'a'],
+  ['é', 'e'], ['è', 'e'], ['ê', 'e'], ['ë', 'e'],
+  ['É', 'e'], ['È', 'e'], ['Ê', 'e'], ['Ë', 'e'],
+  ['í', 'i'], ['ì', 'i'], ['î', 'i'], ['ï', 'i'],
+  ['Í', 'i'], ['Ì', 'i'], ['Î', 'i'], ['Ï', 'i'],
+  ['ó', 'o'], ['ò', 'o'], ['ô', 'o'], ['õ', 'o'], ['ö', 'o'],
+  ['Ó', 'o'], ['Ò', 'o'], ['Ô', 'o'], ['Õ', 'o'], ['Ö', 'o'],
+  ['ú', 'u'], ['ù', 'u'], ['û', 'u'], ['ü', 'u'],
+  ['Ú', 'u'], ['Ù', 'u'], ['Û', 'u'], ['Ü', 'u'],
+  ['ç', 'c'], ['Ç', 'c'], ['ñ', 'n'], ['Ñ', 'n'], ['ý', 'y'], ['Ý', 'y']
+];
+
+const SQL_ACCENT_CASE_MAP = [
+  ['Á', 'á'], ['À', 'à'], ['Â', 'â'], ['Ã', 'ã'], ['Ä', 'ä'],
+  ['É', 'é'], ['È', 'è'], ['Ê', 'ê'], ['Ë', 'ë'],
+  ['Í', 'í'], ['Ì', 'ì'], ['Î', 'î'], ['Ï', 'ï'],
+  ['Ó', 'ó'], ['Ò', 'ò'], ['Ô', 'ô'], ['Õ', 'õ'], ['Ö', 'ö'],
+  ['Ú', 'ú'], ['Ù', 'ù'], ['Û', 'û'], ['Ü', 'ü'],
+  ['Ç', 'ç'], ['Ñ', 'ñ'], ['Ý', 'ý']
+];
+
+const PT_SHORT_VARIANTS = {
+  a: ['a', 'á', 'à', 'â', 'ã'],
+  e: ['e', 'é', 'ê'],
+  i: ['i', 'í'],
+  o: ['o', 'ó', 'ô', 'õ'],
+  u: ['u', 'ú'],
+  c: ['c', 'ç'],
+  n: ['n', 'ñ']
 };
 
 const NAMED_ENTITIES = {
@@ -36,6 +96,7 @@ const NAMED_ENTITIES = {
 };
 
 const RE_RTL_SCRIPT = /[\u0590-\u05FF\u0600-\u06FF\u0700-\u074F]/;
+const RE_COMBINING_MARKS = /[\u0300-\u036f\u0591-\u05C7\u0730-\u074A]/g;
 
 function quoteIdent(name) {
   return `"${String(name || '').replace(/"/g, '""')}"`;
@@ -47,6 +108,14 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function escapeRegExp(str) {
+  return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeLike(str) {
+  return String(str || '').replace(/[\\%_]/g, '\\$&');
 }
 
 function decodeNumericEntities(str) {
@@ -130,7 +199,7 @@ function normalizeInitialBucket(rawChar) {
   const baseLatin = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
   if (/^[A-Z]$/.test(baseLatin)) return baseLatin;
 
-  const baseScript = ch.normalize('NFD').replace(/[\u0300-\u036f\u0591-\u05C7\u0730-\u074A]/g, '');
+  const baseScript = ch.normalize('NFD').replace(RE_COMBINING_MARKS, '');
   if (baseScript && /[\p{L}]/u.test(baseScript)) {
     return baseScript.charAt(0).toUpperCase();
   }
@@ -144,10 +213,11 @@ export function normalizeLookupTerm(rawTerm) {
     .trim();
 }
 
-export function buildLookupCandidates(rawTerm) {
+export function buildLookupCandidates(rawTerm, options = {}) {
   const clean = normalizeLookupTerm(rawTerm);
   if (!clean) return [];
 
+  const accentSensitive = Boolean(options.accentSensitive);
   const list = [];
   const push = (v) => {
     const t = String(v || '').trim();
@@ -167,35 +237,398 @@ export function buildLookupCandidates(rawTerm) {
     push(`${num}${suffix}`);
   }
 
-  const noAccents = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  if (noAccents && noAccents !== clean) {
-    push(noAccents);
-  }
+  if (!accentSensitive) {
+    const noAccents = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (noAccents && noAccents !== clean) {
+      push(noAccents);
+    }
 
-  const noMarks = clean.normalize('NFD').replace(/[\u0300-\u036f\u0591-\u05C7\u0730-\u074A]/g, '');
-  if (noMarks && noMarks !== clean) {
-    push(noMarks);
+    const noMarks = clean.normalize('NFD').replace(RE_COMBINING_MARKS, '');
+    if (noMarks && noMarks !== clean) {
+      push(noMarks);
+    }
   }
 
   return list;
 }
 
-function buildSnippet(rawData, query) {
-  const plain = stripTagsPlain(rawData).replace(/\n+/g, ' ');
-  if (!plain) return '';
-  const q = normalizeLookupTerm(query).toLowerCase();
-  if (!q) return plain.slice(0, 140) + (plain.length > 140 ? '…' : '');
+function foldForMatch(str, opts) {
+  let out = String(str || '').normalize('NFC').replace(/\s+/g, ' ').trim();
+  if (!opts.accentSensitive) {
+    out = out.normalize('NFD').replace(RE_COMBINING_MARKS, '').normalize('NFC');
+  }
+  if (!opts.caseSensitive) {
+    out = out.toLowerCase();
+  }
+  return out;
+}
 
-  const idx = plain.toLowerCase().indexOf(q);
-  if (idx < 0) {
-    return plain.slice(0, 140) + (plain.length > 140 ? '…' : '');
+function buildSqlFoldExpr(colExpr, accentSensitive) {
+  const map = accentSensitive ? SQL_ACCENT_CASE_MAP : SQL_ACCENT_FOLD_MAP;
+  let expr = `lower(${colExpr})`;
+  for (const [from, to] of map) {
+    expr = `replace(${expr}, '${from}', '${to}')`;
+  }
+  return expr;
+}
+
+function foldSqlParam(str, accentSensitive) {
+  let out = String(str || '').normalize('NFC');
+  if (!accentSensitive) {
+    out = out.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC');
+  }
+  return out.toLowerCase();
+}
+
+function splitSearchTokens(cleanQuery, opts) {
+  if (opts.exactPhrase) return [cleanQuery];
+  const parts = cleanQuery.split(/\s+/).filter(Boolean);
+  return parts.length ? parts : [cleanQuery];
+}
+
+function testTokenInText(foldedText, foldedToken, matchMode, isWholeField = false) {
+  if (!foldedText || !foldedToken) return false;
+
+  if (matchMode === 'exact') {
+    if (isWholeField) return foldedText === foldedToken;
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(foldedToken)}(?![\\p{L}\\p{N}])`, 'u');
+    return re.test(foldedText);
   }
 
-  const start = Math.max(0, idx - 48);
-  const end = Math.min(plain.length, idx + q.length + 88);
+  if (matchMode === 'startsWith') {
+    if (isWholeField) return foldedText.startsWith(foldedToken);
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(foldedToken)}`, 'u');
+    return re.test(foldedText);
+  }
+
+  return foldedText.includes(foldedToken);
+}
+
+function matchEntryTitle(word, altWords, rawQuery, opts) {
+  const clean = normalizeLookupTerm(rawQuery);
+  if (!clean) return null;
+
+  const isStrong = /^[GH]\s*0*\d+[a-z]?$/i.test(clean);
+  const foldedWord = foldForMatch(word, opts);
+  const tokens = splitSearchTokens(clean, opts);
+  const foldedTokens = tokens.map((t) => foldForMatch(t, opts)).filter(Boolean);
+  if (!foldedTokens.length) return null;
+
+  // 1. Correspondência exata de código Strong (ex.: H430 <-> H0430)
+  if (isStrong) {
+    const strongCands = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive })
+      .map((c) => foldForMatch(c, opts));
+    if (strongCands.includes(foldedWord)) {
+      return 'exact';
+    }
+    if (opts.matchMode === 'exact') {
+      return null;
+    }
+  }
+
+  const singleOrPhrase = foldedTokens.length === 1;
+
+  // 2. Testa no título principal (`word`)
+  if (singleOrPhrase) {
+    const needle = foldedTokens[0];
+    if (foldedWord === needle) return 'exact';
+
+    if (opts.matchMode === 'exact') {
+      // No modo exato, também aceita palavra inteira se o título tiver subtítulo separado por vírgula/parêntese
+      const subParts = String(word || '').split(/[,;(/]+/).map((p) => foldForMatch(p, opts)).filter(Boolean);
+      if (subParts.includes(needle)) return 'exact';
+    } else if (opts.matchMode === 'startsWith') {
+      if (foldedWord.startsWith(needle)) return 'prefix';
+    } else {
+      if (foldedWord.startsWith(needle)) return 'prefix';
+      if (foldedWord.includes(needle)) return 'title';
+    }
+  } else {
+    // Múltiplas palavras (todas devem aparecer no título)
+    const allMatch = foldedTokens.every((tok) => testTokenInText(foldedWord, tok, opts.matchMode, false));
+    if (allMatch) {
+      return foldedWord.startsWith(foldedTokens[0]) ? 'prefix' : 'title';
+    }
+  }
+
+  // 3. Testa nos sinônimos (`alt_words`), se habilitado
+  if (opts.searchAltWords && altWords) {
+    const altParts = String(altWords).split(/[,;]+/).map((p) => p.trim()).filter(Boolean);
+    for (const part of altParts) {
+      const foldedPart = foldForMatch(part, opts);
+      if (!foldedPart) continue;
+
+      if (singleOrPhrase) {
+        const needle = foldedTokens[0];
+        if (foldedPart === needle) return 'exact';
+        if (opts.matchMode === 'startsWith' && foldedPart.startsWith(needle)) return 'prefix';
+        if (opts.matchMode === 'contains' && foldedPart.includes(needle)) return 'title';
+      } else {
+        const allAlt = foldedTokens.every((tok) => testTokenInText(foldedPart, tok, opts.matchMode, false));
+        if (allAlt) return 'title';
+      }
+    }
+  }
+
+  return null;
+}
+
+function matchEntryBody(rawData, rawQuery, opts) {
+  const plain = stripTagsPlain(rawData).replace(/\n+/g, ' ');
+  if (!plain) return false;
+
+  const clean = normalizeLookupTerm(rawQuery);
+  const foldedPlain = foldForMatch(plain, opts);
+  const tokens = splitSearchTokens(clean, opts);
+  const foldedTokens = tokens.map((t) => foldForMatch(t, opts)).filter(Boolean);
+  if (!foldedTokens.length) return false;
+
+  if (foldedTokens.length === 1 && /^[GH]\s*0*\d+[a-z]?$/i.test(clean)) {
+    const cands = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive })
+      .map((c) => foldForMatch(c, opts));
+    return cands.some((c) => testTokenInText(foldedPlain, c, opts.matchMode, false));
+  }
+
+  return foldedTokens.every((tok) => testTokenInText(foldedPlain, tok, opts.matchMode, false));
+}
+
+function expandShortAccentVariants(token, maxOut = 8) {
+  const base = token.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  let results = [''];
+  for (const ch of base) {
+    const opts = PT_SHORT_VARIANTS[ch] || [ch];
+    const next = [];
+    for (const prefix of results) {
+      for (const c of opts) {
+        next.push(prefix + c);
+        if (next.length >= maxOut) break;
+      }
+      if (next.length >= maxOut) break;
+    }
+    results = next;
+  }
+  return results;
+}
+
+function buildBodyPreFilterSql(colSql, token, opts) {
+  const cleanTok = String(token || '').trim();
+  if (!cleanTok) return null;
+
+  // Se tiver acento ou for busca sensível a acento
+  if (opts.accentSensitive) {
+    if (opts.caseSensitive) {
+      return {
+        sql: `instr(${colSql}, ?) > 0`,
+        params: [cleanTok]
+      };
+    }
+    const variants = [];
+    const addV = (v) => {
+      if (v && !variants.includes(v)) variants.push(v);
+    };
+    addV(cleanTok);
+    addV(cleanTok.toLowerCase());
+    addV(cleanTok.toUpperCase());
+    if (cleanTok.length > 1) {
+      addV(cleanTok.charAt(0).toUpperCase() + cleanTok.slice(1).toLowerCase());
+    }
+    return {
+      sql: `(${variants.map(() => `${colSql} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+      params: variants.map((v) => `%${escapeLike(v)}%`)
+    };
+  }
+
+  // Sem diferenciar acentos: substitui letras acentuáveis por '_' quando há base suficiente
+  const stripped = cleanTok.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let solidCount = 0;
+  let wildcardPat = '';
+  for (const ch of stripped) {
+    const lower = ch.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(PT_SHORT_VARIANTS, lower)) {
+      wildcardPat += '_';
+    } else {
+      if (/[a-z0-9]/i.test(ch)) solidCount++;
+      wildcardPat += escapeLike(ch);
+    }
+  }
+
+  if (solidCount >= 2 || (solidCount >= 1 && stripped.length >= 4)) {
+    return {
+      sql: `${colSql} LIKE ? ESCAPE '\\'`,
+      params: [`%${wildcardPat}%`]
+    };
+  }
+
+  // Palavras muito curtas ou só vogais (ex.: "fe", "jo", "pao"): usa variantes acentuadas comuns
+  const variants = expandShortAccentVariants(stripped, 8);
+  const allForms = [];
+  for (const v of variants) {
+    if (!allForms.includes(v)) allForms.push(v);
+    const cap = v.charAt(0).toUpperCase() + v.slice(1);
+    if (cap !== v && !allForms.includes(cap)) allForms.push(cap);
+  }
+  const capped = allForms.slice(0, 10);
+  return {
+    sql: `(${capped.map(() => `${colSql} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+    params: capped.map((v) => `%${escapeLike(v)}%`)
+  };
+}
+
+function buildTitlePreFilterSql(schema, rawQuery, opts) {
+  const clean = normalizeLookupTerm(rawQuery);
+  const tokens = splitSearchTokens(clean, opts);
+  const hasNonLatin = /[\u0370-\u03FF\u1F00-\u1FFF\u0590-\u05FF\u0700-\u074F]/.test(clean);
+
+  // Para grego/hebraico/siríaco sem acentos, faz busca direta com candidatos sem marcas
+  if (hasNonLatin) {
+    const cands = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive });
+    const cols = [schema.qWord];
+    if (opts.searchAltWords && schema.qAlt) cols.push(schema.qAlt);
+    const clauses = [];
+    const params = [];
+
+    for (const col of cols) {
+      for (const c of cands) {
+        const esc = escapeLike(c);
+        const pat = opts.matchMode === 'startsWith' ? `${esc}%` : `%${esc}%`;
+        clauses.push(`${col} LIKE ? ESCAPE '\\' COLLATE NOCASE`);
+        params.push(pat);
+      }
+    }
+    return { sql: `(${clauses.join(' OR ')})`, params };
+  }
+
+  const wordExpr = buildSqlFoldExpr(schema.qWord, opts.accentSensitive);
+  const altExpr = opts.searchAltWords && schema.qAlt
+    ? buildSqlFoldExpr(schema.qAlt, opts.accentSensitive)
+    : '';
+
+  const buildTokenGroup = (colExpr) => {
+    const subClauses = [];
+    const subParams = [];
+
+    if (tokens.length === 1 && /^[GH]\s*0*\d+[a-z]?$/i.test(tokens[0])) {
+      const strongCands = buildLookupCandidates(tokens[0], { accentSensitive: opts.accentSensitive })
+        .map((c) => foldSqlParam(c, opts.accentSensitive));
+      const parts = [];
+      for (const sc of strongCands) {
+        const esc = escapeLike(sc);
+        if (opts.matchMode === 'exact') {
+          parts.push(`${colExpr} = ?`);
+          subParams.push(sc);
+        } else if (opts.matchMode === 'startsWith') {
+          parts.push(`${colExpr} LIKE ? ESCAPE '\\'`);
+          subParams.push(`${esc}%`);
+        } else {
+          parts.push(`${colExpr} LIKE ? ESCAPE '\\'`);
+          subParams.push(`%${esc}%`);
+        }
+      }
+      return { sql: `(${parts.join(' OR ')})`, params: subParams };
+    }
+
+    for (const tok of tokens) {
+      const foldedTok = foldSqlParam(tok, opts.accentSensitive);
+      const esc = escapeLike(foldedTok);
+      if (tokens.length === 1 && opts.matchMode === 'startsWith') {
+        subClauses.push(`${colExpr} LIKE ? ESCAPE '\\'`);
+        subParams.push(`${esc}%`);
+      } else {
+        subClauses.push(`${colExpr} LIKE ? ESCAPE '\\'`);
+        subParams.push(`%${esc}%`);
+      }
+    }
+
+    return { sql: `(${subClauses.join(' AND ')})`, params: subParams };
+  };
+
+  const wordGrp = buildTokenGroup(wordExpr);
+  if (!altExpr) return wordGrp;
+
+  const altGrp = buildTokenGroup(altExpr);
+  return {
+    sql: `(${wordGrp.sql} OR ${altGrp.sql})`,
+    params: [...wordGrp.params, ...altGrp.params]
+  };
+}
+
+function findMatchRangeInPlain(plain, rawQuery, opts) {
+  const clean = normalizeLookupTerm(rawQuery);
+  if (!plain || !clean) return null;
+
+  const tokens = splitSearchTokens(clean, opts);
+  const firstTok = tokens[0] || clean;
+  const targetFold = foldForMatch(firstTok, opts);
+  if (!targetFold) return null;
+
+  // Mapeia posição no texto normalizado de volta para o índice real em `plain`
+  const normChars = [];
+  const origIdxMap = [];
+  for (let i = 0; i < plain.length; i++) {
+    let piece = plain[i];
+    if (!opts.accentSensitive) {
+      piece = piece.normalize('NFD').replace(RE_COMBINING_MARKS, '');
+    }
+    if (!opts.caseSensitive) {
+      piece = piece.toLowerCase();
+    }
+    for (let j = 0; j < piece.length; j++) {
+      normChars.push(piece[j]);
+      origIdxMap.push(i);
+    }
+  }
+
+  const foldedJoined = normChars.join('');
+  let matchPos = -1;
+  let matchLen = targetFold.length;
+
+  if (opts.matchMode === 'exact') {
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(targetFold)}(?![\\p{L}\\p{N}])`, 'u');
+    const m = re.exec(foldedJoined);
+    if (m) matchPos = m.index;
+  } else if (opts.matchMode === 'startsWith') {
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(targetFold)}`, 'u');
+    const m = re.exec(foldedJoined);
+    if (m) matchPos = m.index;
+  } else {
+    matchPos = foldedJoined.indexOf(targetFold);
+  }
+
+  if (matchPos < 0) return null;
+
+  const origStart = origIdxMap[matchPos] ?? 0;
+  const lastNormIdx = Math.min(origIdxMap.length - 1, matchPos + matchLen - 1);
+  let origEnd = (origIdxMap[lastNormIdx] ?? origStart) + 1;
+  while (origEnd < plain.length && /[\u0300-\u036f\u0591-\u05C7\u0730-\u074A]/.test(plain[origEnd])) {
+    origEnd++;
+  }
+  return { start: origStart, end: origEnd };
+}
+
+function buildSnippetData(rawData, rawQuery, opts) {
+  const plain = stripTagsPlain(rawData).replace(/\n+/g, ' ');
+  if (!plain) return { snippet: '', snippetHtml: '' };
+
+  const range = findMatchRangeInPlain(plain, rawQuery, opts);
+  if (!range) {
+    const shortText = plain.slice(0, 145) + (plain.length > 145 ? '…' : '');
+    return { snippet: shortText, snippetHtml: escapeHtml(shortText) };
+  }
+
+  const start = Math.max(0, range.start - 48);
+  const end = Math.min(plain.length, range.end + 92);
   const prefix = start > 0 ? '…' : '';
   const suffix = end < plain.length ? '…' : '';
-  return `${prefix}${plain.slice(start, end).trim()}${suffix}`;
+
+  const before = plain.slice(start, range.start);
+  const hit = plain.slice(range.start, range.end);
+  const after = plain.slice(range.end, end);
+
+  const snippet = `${prefix}${before}${hit}${after}${suffix}`.trim();
+  const snippetHtml =
+    `${prefix}${escapeHtml(before)}<mark class="dct-hit">${escapeHtml(hit)}</mark>${escapeHtml(after)}${suffix}`;
+
+  return { snippet, snippetHtml };
 }
 
 function cleanLabel(str) {
@@ -319,7 +752,6 @@ export function formatMySwordDictionaryData(rawData) {
 
   text = text.replace(/<(script|style|iframe)[\s\S]*?<\/\1>/gi, '');
 
-  // 1. Extrai notas <RF>...</Rf>
   const footnotes = [];
   const footnoteLabels = [];
   text = text.replace(/<RF(\s+[^>]*)?>([\s\S]*?)<\/?Rf>/gi, (_, attrs, inner) => {
@@ -331,7 +763,6 @@ export function formatMySwordDictionaryData(rawData) {
     return `\u0001${idx}\u0001`;
   });
 
-  // 1b. Extrai imagens <img ... src="..."> (e eventual URL Wikimedia próxima para fallback)
   const imageTokens = [];
   text = text.replace(/<img\b([^>]*)>/gi, (full, attrs, offset, fullStr) => {
     const srcMatch = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs || '');
@@ -350,7 +781,6 @@ export function formatMySwordDictionaryData(rawData) {
     return `\u0006${idx}\u0006`;
   });
 
-  // 1c. Extrai notas embutidas <a href="r ...">[3]</a>
   text = text.replace(
     /<a\b[^>]*\bhref\s*=\s*(?:"r\s+([^"]*)"|'r\s+([^']*)')[^>]*>([\s\S]*?)<\/a>/gi,
     (_, dbl, sgl, labelRaw) => {
@@ -365,7 +795,6 @@ export function formatMySwordDictionaryData(rawData) {
     }
   );
 
-  // 2. Converte links internos, Strong, Morfologia e referências <RX> em tokens clicáveis
   const linkTokens = [];
   const pushLinkToken = (linkObj) => {
     const idx = linkTokens.length;
@@ -407,12 +836,10 @@ export function formatMySwordDictionaryData(rawData) {
     return pushLinkToken({ kind: 'bible', target: ref, moduleHint: '', label: ref });
   });
 
-  // 3. Preserva classes estruturais úteis (.info e .definition) antes de escapar HTML
   text = text
     .replace(/<(p|div)\b[^>]*class\s*=\s*["'][^"']*\binfo\b[^"']*["'][^>]*>/gi, '\u0007INFO_OPEN\u0007')
     .replace(/<(p|div)\b[^>]*class\s*=\s*["'][^"']*\bdefinition\b[^"']*["'][^>]*>/gi, '\u0007DEF_OPEN\u0007');
 
-  // 4. Escapa HTML e restaura apenas tags estruturais seguras (sem cores inline fixas)
   let safe = escapeHtml(text);
 
   safe = safe
@@ -447,7 +874,6 @@ export function formatMySwordDictionaryData(rawData) {
     .replace(/(<br>\s*)+$/, '')
     .trim();
 
-  // 5. Restaura figuras de imagem
   safe = safe.replace(/(?:<p>\s*)?\u0006(\d+)\u0006(?:\s*<\/p>)?/g, (_, idxStr) => {
     const img = imageTokens[Number(idxStr)];
     if (!img) return '';
@@ -459,7 +885,6 @@ export function formatMySwordDictionaryData(rawData) {
     );
   });
 
-  // 6. Restaura links clicáveis
   safe = safe.replace(/\u0005(\d+)\u0005/g, (_, idxStr) => {
     const link = linkTokens[Number(idxStr)];
     if (!link) return '';
@@ -476,7 +901,6 @@ export function formatMySwordDictionaryData(rawData) {
     return `<button type="button" class="dct-link ${extraCls}" data-dct-lookup="${escapeHtml(link.target)}"${modAttr}>${labelHtml}</button>`;
   });
 
-  // 7. Restaura notas de rodapé
   safe = safe.replace(/\u0001(\d+)\u0001/g, (_, idxStr) => {
     const idx = Number(idxStr);
     const label = footnoteLabels[idx] || '*';
@@ -655,6 +1079,7 @@ export const myswordDictionaryAdapter = {
     const search = normalizeLookupTerm(options.search || '');
     const startsWith = String(options.startsWith || '').trim();
     const includeTotal = options.includeTotal !== undefined ? Boolean(options.includeTotal) : offset === 0;
+    const accentSensitive = Boolean(options.accentSensitive);
 
     const whereParts = [`${s.qWord} IS NOT NULL`, `TRIM(${s.qWord}) <> ''`];
     const whereParams = [];
@@ -668,24 +1093,15 @@ export const myswordDictionaryAdapter = {
     }
 
     if (search) {
-      const searchClauses = [`${s.qWord} LIKE ? COLLATE NOCASE`];
-      const searchParams = [`%${search}%`];
-
-      const candidates = buildLookupCandidates(search);
-      for (let i = 1; i < candidates.length; i++) {
-        const cand = candidates[i];
-        if (!cand || cand.toLowerCase() === search.toLowerCase()) continue;
-        searchClauses.push(`${s.qWord} LIKE ? COLLATE NOCASE`);
-        searchParams.push(`%${cand}%`);
-      }
-
-      if (s.qAlt) {
-        searchClauses.push(`${s.qAlt} LIKE ? COLLATE NOCASE`);
-        searchParams.push(`%${search}%`);
-      }
-
-      whereParts.push(`(${searchClauses.join(' OR ')})`);
-      whereParams.push(...searchParams);
+      const filter = buildTitlePreFilterSql(s, search, {
+        matchMode: 'contains',
+        accentSensitive,
+        caseSensitive: false,
+        searchAltWords: true,
+        exactPhrase: false
+      });
+      whereParts.push(filter.sql);
+      whereParams.push(...filter.params);
     }
 
     const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
@@ -696,11 +1112,13 @@ export const myswordDictionaryAdapter = {
     let orderSql;
     const queryParams = [...whereParams];
     if (search) {
+      const foldedExpr = buildSqlFoldExpr(s.qWord, accentSensitive);
+      const foldedSearch = foldSqlParam(search, accentSensitive);
       orderSql =
-        `ORDER BY CASE WHEN ${s.qWord} = ? COLLATE NOCASE THEN 0 ` +
-        `WHEN ${s.qWord} LIKE ? COLLATE NOCASE THEN 1 ELSE 2 END, ` +
+        `ORDER BY CASE WHEN ${foldedExpr} = ? THEN 0 ` +
+        `WHEN ${foldedExpr} LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, ` +
         `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC`;
-      queryParams.push(search, `${search}%`);
+      queryParams.push(foldedSearch, `${escapeLike(foldedSearch)}%`);
     } else {
       orderSql = `ORDER BY ${s.qWord} COLLATE NOCASE ASC`;
     }
@@ -747,150 +1165,142 @@ export const myswordDictionaryAdapter = {
     return page.items.map((it) => it.word);
   },
 
-  // Consulta rápida (LIMIT 1 sem ler coluna data) para filtrar quais dicionários possuem o termo
-  async findQuickMatch(modulePath, rawQuery, options = {}) {
+  // Consulta rápida respeitando todas as opções de busca (usada no filtro de dicionários)
+  async findQuickMatch(modulePath, rawQuery, rawOptions = {}) {
     const s = await resolveSchema(modulePath);
     const clean = normalizeLookupTerm(rawQuery);
     if (!clean) return null;
 
-    const searchBody = Boolean(options.searchBody);
-    const candidates = buildLookupCandidates(clean);
+    const opts = normalizeDictSearchOptions(rawOptions);
     const isStrongCode = /^[GH]\s*0*\d+[a-z]?$/i.test(clean);
     const isLouwNida = /^\d{1,2}\.\d{1,3}$/.test(clean);
 
-    const placeholders = candidates.map(() => '?').join(', ');
-    const exactRes = await nativeBridge.queryModule(
+    // Para Strong ou Louw-Nida no filtro de dicionários, força correspondência exata no título
+    const titleOpts = (isStrongCode || isLouwNida)
+      ? { ...opts, matchMode: 'exact' }
+      : opts;
+
+    // 1. Verifica títulos (e sinônimos, se ativo) sem ler a coluna `data`
+    const selectTitle = s.qAlt
+      ? `${s.qWord} AS word, ${s.qAlt} AS altWords`
+      : `${s.qWord} AS word`;
+
+    const pre = buildTitlePreFilterSql(s, clean, titleOpts);
+    const titleRes = await nativeBridge.queryModule(
       modulePath,
-      `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-        `WHERE ${s.qWord} IN (${placeholders}) COLLATE NOCASE LIMIT 1`,
-      candidates
+      `SELECT ${selectTitle} FROM ${s.qTable} WHERE ${pre.sql} ORDER BY LENGTH(${s.qWord}) ASC LIMIT 24`,
+      pre.params
     );
-    const exactRow = exactRes && Array.isArray(exactRes.rows) ? exactRes.rows[0] : null;
-    if (exactRow) {
-      const w = String(getRowField(exactRow, 'word') || '').trim();
-      if (w) return { word: w, matchType: 'exact' };
-    }
 
-    if (s.qAlt) {
-      const altRes = await nativeBridge.queryModule(
-        modulePath,
-        `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-          `WHERE ${s.qAlt} = ? COLLATE NOCASE ` +
-          `OR ${s.qAlt} LIKE ? COLLATE NOCASE ` +
-          `OR ${s.qAlt} LIKE ? COLLATE NOCASE ` +
-          `OR ${s.qAlt} LIKE ? COLLATE NOCASE LIMIT 1`,
-        [clean, `${clean},%`, `%, ${clean}`, `%, ${clean},%`]
-      );
-      const altRow = altRes && Array.isArray(altRes.rows) ? altRes.rows[0] : null;
-      if (altRow) {
-        const w = String(getRowField(altRow, 'word') || '').trim();
-        if (w) return { word: w, matchType: 'exact' };
+    const priority = { exact: 0, prefix: 1, title: 2 };
+    let bestTitleHit = null;
+
+    for (const row of (titleRes && titleRes.rows) || []) {
+      const w = String(getRowField(row, 'word') || '').trim();
+      const alt = s.qAlt ? String(getRowField(row, 'altwords') || '').trim() : '';
+      if (!w) continue;
+
+      const kind = matchEntryTitle(w, alt, clean, titleOpts);
+      if (!kind) continue;
+
+      if (!bestTitleHit || (priority[kind] ?? 9) < (priority[bestTitleHit.matchType] ?? 9)) {
+        bestTitleHit = { word: w, matchType: kind };
+        if (kind === 'exact') return bestTitleHit;
       }
     }
 
-    if (!isStrongCode && !isLouwNida) {
-      const noAccents = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const hasAltSpell = Boolean(noAccents && noAccents.toLowerCase() !== clean.toLowerCase());
+    if (bestTitleHit) return bestTitleHit;
 
-      if (clean.length <= 2) {
-        const shortRes = await nativeBridge.queryModule(
-          modulePath,
-          `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-            `WHERE ${s.qWord} LIKE ? COLLATE NOCASE ` +
-            `OR ${s.qWord} LIKE ? COLLATE NOCASE ` +
-            `OR ${s.qWord} LIKE ? COLLATE NOCASE ` +
-            `ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`,
-          [`${clean} %`, `${clean},%`, `${clean};%`]
-        );
-        const shortRow = shortRes && Array.isArray(shortRes.rows) ? shortRes.rows[0] : null;
-        if (shortRow) {
-          const w = String(getRowField(shortRow, 'word') || '').trim();
-          if (w) return { word: w, matchType: 'prefix' };
-        }
-      } else {
-        const prefSql = hasAltSpell
-          ? `SELECT ${s.qWord} AS word FROM ${s.qTable} WHERE ${s.qWord} LIKE ? COLLATE NOCASE OR ${s.qWord} LIKE ? COLLATE NOCASE ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`
-          : `SELECT ${s.qWord} AS word FROM ${s.qTable} WHERE ${s.qWord} LIKE ? COLLATE NOCASE ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`;
-        const prefParams = hasAltSpell ? [`${clean}%`, `${noAccents}%`] : [`${clean}%`];
-        const prefRes = await nativeBridge.queryModule(modulePath, prefSql, prefParams);
-        const prefRow = prefRes && Array.isArray(prefRes.rows) ? prefRes.rows[0] : null;
-        if (prefRow) {
-          const w = String(getRowField(prefRow, 'word') || '').trim();
-          if (w) return { word: w, matchType: 'prefix' };
-        }
+    // 2. Opcional: verifica no corpo da definição somente quando "No texto" estiver ativo
+    if (opts.searchBody && clean.length >= 2) {
+      const tokens = splitSearchTokens(clean, opts);
+      const tokenClauses = [];
+      const tokenParams = [];
 
-        const titleClauses = [`${s.qWord} LIKE ? COLLATE NOCASE`];
-        const titleParams = [`%${clean}%`];
-        if (hasAltSpell) {
-          titleClauses.push(`${s.qWord} LIKE ? COLLATE NOCASE`);
-          titleParams.push(`%${noAccents}%`);
-        }
-        if (s.qAlt) {
-          titleClauses.push(`${s.qAlt} LIKE ? COLLATE NOCASE`);
-          titleParams.push(`%${clean}%`);
-        }
-        const titleRes = await nativeBridge.queryModule(
-          modulePath,
-          `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-            `WHERE ${titleClauses.join(' OR ')} ` +
-            `ORDER BY LENGTH(${s.qWord}) ASC LIMIT 1`,
-          titleParams
-        );
-        const titleRow = titleRes && Array.isArray(titleRes.rows) ? titleRes.rows[0] : null;
-        if (titleRow) {
-          const w = String(getRowField(titleRow, 'word') || '').trim();
-          if (w) return { word: w, matchType: 'title' };
+      for (const tok of tokens) {
+        const bf = buildBodyPreFilterSql(s.qData, tok, opts);
+        if (bf) {
+          tokenClauses.push(bf.sql);
+          tokenParams.push(...bf.params);
         }
       }
-    }
 
-    if (searchBody && clean.length >= 2) {
-      const bodyTerm = isStrongCode ? candidates[0] : clean;
-      const bodyRes = await nativeBridge.queryModule(
-        modulePath,
-        `SELECT ${s.qWord} AS word FROM ${s.qTable} ` +
-          `WHERE ${s.qData} LIKE ? COLLATE NOCASE LIMIT 1`,
-        [`%${bodyTerm}%`]
-      );
-      const bodyRow = bodyRes && Array.isArray(bodyRes.rows) ? bodyRes.rows[0] : null;
-      if (bodyRow) {
-        const w = String(getRowField(bodyRow, 'word') || '').trim();
-        if (w) return { word: w, matchType: 'body' };
+      if (tokenClauses.length) {
+        const bodyRes = await nativeBridge.queryModule(
+          modulePath,
+          `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
+            `WHERE ${tokenClauses.join(' AND ')} ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT 12`,
+          tokenParams
+        );
+        for (const row of (bodyRes && bodyRes.rows) || []) {
+          const w = String(getRowField(row, 'word') || '').trim();
+          const data = String(getRowField(row, 'data') || '');
+          if (!w) continue;
+          if (matchEntryBody(data, clean, opts)) {
+            return { word: w, matchType: 'body' };
+          }
+        }
       }
     }
 
     return null;
   },
 
-  async getEntry(modulePath, rawTerm) {
+  async getEntry(modulePath, rawTerm, rawOptions = {}) {
     const s = await resolveSchema(modulePath);
-    const candidates = buildLookupCandidates(rawTerm);
-    if (!candidates.length) return null;
+    const clean = normalizeLookupTerm(rawTerm);
+    if (!clean) return null;
 
+    const opts = normalizeDictSearchOptions({
+      ...rawOptions,
+      matchMode: 'exact'
+    });
+
+    const selectCols = s.qAlt
+      ? `${s.qWord} AS word, ${s.qData} AS data, ${s.qAlt} AS altWords`
+      : `${s.qWord} AS word, ${s.qData} AS data`;
+
+    // 1. Tenta correspondência direta rápida por candidatos
+    const candidates = buildLookupCandidates(clean, { accentSensitive: opts.accentSensitive });
     const placeholders = candidates.map(() => '?').join(', ');
-    const res = await nativeBridge.queryModule(
+    const directRes = await nativeBridge.queryModule(
       modulePath,
-      `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-        `WHERE ${s.qWord} IN (${placeholders}) COLLATE NOCASE LIMIT 1`,
+      `SELECT ${selectCols} FROM ${s.qTable} WHERE ${s.qWord} IN (${placeholders}) COLLATE NOCASE LIMIT 10`,
       candidates
     );
-    let row = res && Array.isArray(res.rows) ? res.rows[0] : null;
 
-    if (!row && s.qAlt) {
-      const primary = candidates[0];
-      const altRes = await nativeBridge.queryModule(
-        modulePath,
-        `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-          `WHERE ${s.qAlt} = ? COLLATE NOCASE OR ${s.qAlt} LIKE ? COLLATE NOCASE LIMIT 1`,
-        [primary, `%${primary}%`]
-      );
-      row = altRes && Array.isArray(altRes.rows) ? altRes.rows[0] : null;
+    let chosenRow = null;
+    for (const row of (directRes && directRes.rows) || []) {
+      const w = String(getRowField(row, 'word') || '').trim();
+      const alt = s.qAlt ? String(getRowField(row, 'altwords') || '').trim() : '';
+      if (matchEntryTitle(w, alt, clean, opts) === 'exact') {
+        chosenRow = row;
+        break;
+      }
     }
 
-    if (!row) return null;
+    // 2. Se não achou na busca direta (ex.: "abraao" -> "Abraão" ou sinônimo), usa busca dobrada por acento
+    if (!chosenRow) {
+      const pre = buildTitlePreFilterSql(s, clean, opts);
+      const foldRes = await nativeBridge.queryModule(
+        modulePath,
+        `SELECT ${selectCols} FROM ${s.qTable} WHERE ${pre.sql} ORDER BY LENGTH(${s.qWord}) ASC LIMIT 20`,
+        pre.params
+      );
+      for (const row of (foldRes && foldRes.rows) || []) {
+        const w = String(getRowField(row, 'word') || '').trim();
+        const alt = s.qAlt ? String(getRowField(row, 'altwords') || '').trim() : '';
+        if (matchEntryTitle(w, alt, clean, opts) === 'exact') {
+          chosenRow = row;
+          break;
+        }
+      }
+    }
 
-    const word = String(getRowField(row, 'word') || '');
-    const raw = String(getRowField(row, 'data') || '');
+    if (!chosenRow) return null;
+
+    const word = String(getRowField(chosenRow, 'word') || '');
+    const raw = String(getRowField(chosenRow, 'data') || '');
     const parsed = formatMySwordDictionaryData(raw);
 
     return {
@@ -960,87 +1370,112 @@ export const myswordDictionaryAdapter = {
     };
   },
 
-  async searchEntries(modulePath, rawQuery, options = {}) {
+  async searchEntries(modulePath, rawQuery, rawOptions = {}) {
     const s = await resolveSchema(modulePath);
     const clean = normalizeLookupTerm(rawQuery);
     if (!clean) return [];
 
-    const limit = Math.max(1, Math.min(Math.trunc(Number(options.limit) || 40), 120));
-    const searchBody = Boolean(options.searchBody);
-    const candidates = buildLookupCandidates(clean);
+    const limit = Math.max(1, Math.min(Math.trunc(Number(rawOptions.limit) || 40), 120));
+    const opts = normalizeDictSearchOptions(rawOptions);
     const results = [];
     const seen = new Set();
 
-    const placeholders = candidates.map(() => '?').join(', ');
-    const exactRes = await nativeBridge.queryModule(
+    const selectCols = s.qAlt
+      ? `${s.qWord} AS word, ${s.qData} AS data, ${s.qAlt} AS altWords`
+      : `${s.qWord} AS word, ${s.qData} AS data`;
+
+    // 1. Busca em títulos e sinônimos com validação Unicode exata
+    const pre = buildTitlePreFilterSql(s, clean, opts);
+    const fetchCap = Math.min(240, Math.max(limit * 3, 60));
+    const foldedExpr = buildSqlFoldExpr(s.qWord, opts.accentSensitive);
+    const firstTokenFolded = foldSqlParam(splitSearchTokens(clean, opts)[0] || clean, opts.accentSensitive);
+
+    const titleRes = await nativeBridge.queryModule(
       modulePath,
-      `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-        `WHERE ${s.qWord} IN (${placeholders}) COLLATE NOCASE LIMIT 5`,
-      candidates
+      `SELECT ${selectCols} FROM ${s.qTable} WHERE ${pre.sql} ` +
+        `ORDER BY CASE WHEN ${foldedExpr} = ? THEN 0 ` +
+        `WHEN ${foldedExpr} LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, ` +
+        `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ${fetchCap}`,
+      [...pre.params, firstTokenFolded, `${escapeLike(firstTokenFolded)}%`]
     );
-    for (const row of (exactRes && exactRes.rows) || []) {
-      const w = String(getRowField(row, 'word') || '');
+
+    const titleMatches = [];
+    for (const row of (titleRes && titleRes.rows) || []) {
+      const w = String(getRowField(row, 'word') || '').trim();
       const key = w.toLowerCase();
       if (!w || seen.has(key)) continue;
+
+      const alt = s.qAlt ? String(getRowField(row, 'altwords') || '').trim() : '';
+      const matchType = matchEntryTitle(w, alt, clean, opts);
+      if (!matchType) continue;
+
       seen.add(key);
-      results.push({
+      const rawData = String(getRowField(row, 'data') || '');
+      const snip = buildSnippetData(rawData, clean, opts);
+      titleMatches.push({
         word: w,
-        matchType: 'exact',
-        snippet: buildSnippet(getRowField(row, 'data'), clean)
+        matchType,
+        snippet: snip.snippet,
+        snippetHtml: snip.snippetHtml
       });
     }
 
-    if (results.length < limit) {
-      const whereClause = s.qAlt
-        ? `(${s.qWord} LIKE ? COLLATE NOCASE OR ${s.qAlt} LIKE ? COLLATE NOCASE)`
-        : `${s.qWord} LIKE ? COLLATE NOCASE`;
-      const params = s.qAlt
-        ? [`%${clean}%`, `%${clean}%`, `${clean}%`]
-        : [`%${clean}%`, `${clean}%`];
+    const matchOrder = { exact: 0, prefix: 1, title: 2, body: 3 };
+    titleMatches.sort((a, b) => {
+      const d = (matchOrder[a.matchType] ?? 9) - (matchOrder[b.matchType] ?? 9);
+      if (d !== 0) return d;
+      if (a.word.length !== b.word.length) return a.word.length - b.word.length;
+      return a.word.localeCompare(b.word, 'pt-BR');
+    });
 
-      const titleRes = await nativeBridge.queryModule(
-        modulePath,
-        `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-          `WHERE ${whereClause} ` +
-          `ORDER BY CASE WHEN ${s.qWord} LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END, ` +
-          `LENGTH(${s.qWord}) ASC, ${s.qWord} COLLATE NOCASE ASC LIMIT ${limit}`,
-        params
-      );
-      for (const row of (titleRes && titleRes.rows) || []) {
-        if (results.length >= limit) break;
-        const w = String(getRowField(row, 'word') || '');
-        const key = w.toLowerCase();
-        if (!w || seen.has(key)) continue;
-        seen.add(key);
-        results.push({
-          word: w,
-          matchType: w.toLowerCase().startsWith(clean.toLowerCase()) ? 'prefix' : 'title',
-          snippet: buildSnippet(getRowField(row, 'data'), clean)
-        });
-      }
+    for (const item of titleMatches) {
+      if (results.length >= limit) break;
+      results.push(item);
     }
 
-    if (searchBody && results.length < limit && clean.length >= 2) {
+    // 2. Busca no corpo das definições (ignorando tags HTML), se "No texto" estiver ativo
+    if (opts.searchBody && results.length < limit && clean.length >= 2) {
       const remaining = limit - results.length;
-      const bodyLimit = remaining + 10;
-      const bodyRes = await nativeBridge.queryModule(
-        modulePath,
-        `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
-          `WHERE ${s.qData} LIKE ? COLLATE NOCASE ` +
-          `ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT ${bodyLimit}`,
-        [`%${clean}%`]
-      );
-      for (const row of (bodyRes && bodyRes.rows) || []) {
-        if (results.length >= limit) break;
-        const w = String(getRowField(row, 'word') || '');
-        const key = w.toLowerCase();
-        if (!w || seen.has(key)) continue;
-        seen.add(key);
-        results.push({
-          word: w,
-          matchType: 'body',
-          snippet: buildSnippet(getRowField(row, 'data'), clean)
-        });
+      const bodyFetchCap = Math.min(200, Math.max(remaining * 4, 48));
+      const tokens = splitSearchTokens(clean, opts);
+      const tokenClauses = [];
+      const tokenParams = [];
+
+      for (const tok of tokens) {
+        const bf = buildBodyPreFilterSql(s.qData, tok, opts);
+        if (bf) {
+          tokenClauses.push(bf.sql);
+          tokenParams.push(...bf.params);
+        }
+      }
+
+      if (tokenClauses.length) {
+        const bodyRes = await nativeBridge.queryModule(
+          modulePath,
+          `SELECT ${s.qWord} AS word, ${s.qData} AS data FROM ${s.qTable} ` +
+            `WHERE ${tokenClauses.join(' AND ')} ` +
+            `ORDER BY ${s.qWord} COLLATE NOCASE ASC LIMIT ${bodyFetchCap}`,
+          tokenParams
+        );
+
+        for (const row of (bodyRes && bodyRes.rows) || []) {
+          if (results.length >= limit) break;
+          const w = String(getRowField(row, 'word') || '').trim();
+          const key = w.toLowerCase();
+          if (!w || seen.has(key)) continue;
+
+          const rawData = String(getRowField(row, 'data') || '');
+          if (!matchEntryBody(rawData, clean, opts)) continue;
+
+          seen.add(key);
+          const snip = buildSnippetData(rawData, clean, opts);
+          results.push({
+            word: w,
+            matchType: 'body',
+            snippet: snip.snippet,
+            snippetHtml: snip.snippetHtml
+          });
+        }
       }
     }
 
