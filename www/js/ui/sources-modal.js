@@ -1,6 +1,7 @@
 import { nativeBridge } from '../bridge/native-bridge.js';
 import { store } from '../core/store.js';
 import { eventBus, EVENTS } from '../core/events.js';
+import { appLogger } from '../core/logger.js';
 import { openModalShell } from './nav-modal.js';
 
 function escapeHtml(str) {
@@ -16,6 +17,45 @@ function formatBytes(bytes) {
   if (num < 1024) return `${num} B`;
   if (num < 1024 * 1024) return `${(num / 1024).toFixed(1)} KB`;
   return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatLogClock(ts) {
+  try {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch (err) {
+    return '';
+  }
+}
+
+async function copyTextSafe(text) {
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    // Segue para fallback de textarea no WebView
+  }
+
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', 'readonly');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Boolean(ok);
+  } catch (err) {
+    return false;
+  }
 }
 
 function getKindMeta(kind) {
@@ -47,12 +87,17 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
   let browserDir = null;
   let recursiveFlag = false;
   let busy = false;
+  let logFilter = 'all'; // 'all' | 'error' | 'warn'
+
+  const initStats = appLogger.getStats();
+  const errLabel = initStats.errors > 0 ? ` (${initStats.errors})` : '';
 
   const modal = openModalShell({
     title: 'Configurações',
     tabsHtml: `
       <button type="button" class="modal-tab ${activeTab === 'sources' ? 'active' : ''}" data-cfg-tab="sources">Fontes</button>
       <button type="button" class="modal-tab ${activeTab === 'reading' ? 'active' : ''}" data-cfg-tab="reading">Leitura</button>
+      <button type="button" class="modal-tab ${activeTab === 'logs' ? 'active' : ''}" data-cfg-tab="logs" id="cfg-tab-logs">Logs${errLabel}</button>
     `
   });
   if (!modal || !modal.body) return;
@@ -61,6 +106,11 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
     modal.sheet.querySelectorAll('[data-cfg-tab]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.cfgTab === activeTab);
     });
+    const logTabBtn = modal.sheet.querySelector('#cfg-tab-logs');
+    if (logTabBtn) {
+      const st = appLogger.getStats();
+      logTabBtn.textContent = st.errors > 0 ? `Logs (${st.errors})` : 'Logs';
+    }
   }
 
   async function openBrowserAt(path, forcedKind = null) {
@@ -430,15 +480,98 @@ export function openSettingsModal({ initialTab = 'sources', initialKind = null }
     });
   }
 
+  function renderLogsTab() {
+    const stats = appLogger.getStats();
+    const items = appLogger.getLogs({ level: logFilter });
+
+    const levelColor = (lvl) => {
+      if (lvl === 'error') return 'var(--text-red-letter, #c62828)';
+      if (lvl === 'warn') return '#b26a00';
+      return 'var(--accent)';
+    };
+
+    const listHtml = items.length
+      ? items.map((it) => `
+          <div style="padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-app);margin-bottom:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px;font-family:var(--font-ui);font-size:11.5px;">
+              <span style="font-weight:700;color:${levelColor(it.level)};">[${escapeHtml(it.level.toUpperCase())}] ${escapeHtml(it.scope)}</span>
+              <span style="color:var(--text-muted);">${escapeHtml(formatLogClock(it.ts))}</span>
+            </div>
+            <div style="font-family:var(--font-ui);font-size:13px;font-weight:600;color:var(--text-main);word-break:break-word;">
+              ${escapeHtml(it.message)}
+            </div>
+            ${it.detail ? `<pre style="margin:6px 0 0;padding:8px;border-radius:6px;background:var(--bg-surface);border:1px solid var(--border);font-size:11.5px;line-height:1.4;white-space:pre-wrap;word-break:break-word;color:var(--text-muted);max-height:220px;overflow:auto;">${escapeHtml(it.detail)}</pre>` : ''}
+          </div>
+        `).join('')
+      : '<p class="row-sub" style="margin:8px 0;">Nenhum log registrado neste filtro. Quando ocorrer um erro no app, ele aparecerá salvo aqui automaticamente.</p>';
+
+    modal.body.innerHTML = `
+      <div class="settings-card">
+        <div class="row-title">Registro de erros e diagnóstico</div>
+        <p class="row-sub" style="margin: 4px 0 10px;">
+          Salvo automaticamente no dispositivo (${stats.total} registro(s) • ${stats.errors} erro(s) • ${stats.warns} aviso(s)).
+        </p>
+        <div class="browser-actions" style="margin-bottom:8px;">
+          <button type="button" class="primary-btn" id="btn-copy-logs" ${items.length ? '' : 'disabled'}>Copiar logs</button>
+          <button type="button" class="secondary-btn" id="btn-refresh-logs">Atualizar</button>
+          <button type="button" class="danger-btn" id="btn-clear-logs" ${stats.total ? '' : 'disabled'}>Limpar</button>
+        </div>
+        <div class="browser-actions" style="margin:0;">
+          <button type="button" class="${logFilter === 'all' ? 'primary-btn' : 'secondary-btn'}" data-log-filter="all">Todos (${stats.total})</button>
+          <button type="button" class="${logFilter === 'error' ? 'primary-btn' : 'secondary-btn'}" data-log-filter="error">Erros (${stats.errors})</button>
+          <button type="button" class="${logFilter === 'warn' ? 'primary-btn' : 'secondary-btn'}" data-log-filter="warn">Avisos (${stats.warns})</button>
+        </div>
+      </div>
+
+      <div id="logs-list-box">${listHtml}</div>
+    `;
+
+    modal.body.querySelector('#btn-copy-logs')?.addEventListener('click', async () => {
+      const report = appLogger.formatLogsForShare({ level: logFilter, maxItems: 80 });
+      const ok = await copyTextSafe(report);
+      if (ok) {
+        eventBus.emit(EVENTS.TOAST, 'Logs copiados! Agora é só colar na conversa.');
+      } else {
+        // Fallback visual: abre caixa selecionável caso o WebView bloqueie cópia automática
+        const box = modal.body.querySelector('#logs-list-box');
+        if (box) {
+          box.innerHTML =
+            '<p class="row-sub" style="margin:0 0 6px;">Selecione e copie o texto abaixo:</p>' +
+            `<textarea style="width:100%;min-height:260px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-app);color:var(--text-main);font-family:monospace;font-size:12px;" readonly>${escapeHtml(report)}</textarea>`;
+        }
+      }
+    });
+
+    modal.body.querySelector('#btn-refresh-logs')?.addEventListener('click', () => {
+      syncTabs();
+      renderLogsTab();
+    });
+
+    modal.body.querySelector('#btn-clear-logs')?.addEventListener('click', () => {
+      appLogger.clearLogs();
+      syncTabs();
+      renderLogsTab();
+      eventBus.emit(EVENTS.TOAST, 'Logs limpos.');
+    });
+
+    modal.body.querySelectorAll('[data-log-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        logFilter = btn.dataset.logFilter || 'all';
+        renderLogsTab();
+      });
+    });
+  }
+
   function renderCurrentTab() {
+    syncTabs();
     if (activeTab === 'sources') renderSourcesTab();
-    else renderReadingTab();
+    else if (activeTab === 'reading') renderReadingTab();
+    else renderLogsTab();
   }
 
   modal.sheet.querySelectorAll('[data-cfg-tab]').forEach((tabBtn) => {
     tabBtn.addEventListener('click', () => {
       activeTab = tabBtn.dataset.cfgTab;
-      syncTabs();
       renderCurrentTab();
     });
   });
