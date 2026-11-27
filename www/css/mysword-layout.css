@@ -1,0 +1,803 @@
+/* Organização e visual inspirados no layout MySword (adaptado aos 4 temas: paper, light, sepia, dark) */
+
+:root,
+:root[data-theme="paper"] {
+  --ms-bar-bg: #efe9dc;
+  --ms-bar-border: #d6cdbc;
+  --ms-bar-fg: #1f1c18;
+  --ms-bar-muted: #6a6257;
+  --ms-arrow-green: #2e8b3c;
+  --ms-arrow-blue: #1d6fd6;
+  --ms-active-green: #1e7e34;
+  --ms-dropdown-bg: #faf7f0;
+  --ms-dropdown-border: #cfc6b4;
+  --ms-dropdown-sep: #e5dec9;
+  --ms-dropdown-hover: rgba(29, 111, 214, 0.08);
+  --ms-verse-num-fg: #1b5fa8;
+  --ms-verse-sel-bg: rgba(29, 111, 214, 0.09);
+  --ms-verse-sep: rgba(0, 0, 0, 0.07);
+  --ms-badge-bible-bg: #2b2620;
+  --ms-badge-bible-fg: #f5d78e;
+  --ms-badge-dict-bg: #c62828;
+  --ms-badge-dict-fg: #ffffff;
+}
+
+:root[data-theme="light"] {
+  --ms-bar-bg: #f1f5f9;
+  --ms-bar-border: #d5dde7;
+  --ms-bar-fg: #0f172a;
+  --ms-bar-muted: #64748b;
+  --ms-arrow-green: #1f8b4c;
+  --ms-arrow-blue: #1d6fd6;
+  --ms-active-green: #167c3e;
+  --ms-dropdown-bg: #ffffff;
+  --ms-dropdown-border: #cbd5e1;
+  --ms-dropdown-sep: #e2e8f0;
+  --ms-dropdown-hover: rgba(29, 111, 214, 0.08);
+  --ms-verse-num-fg: #1d5bb8;
+  --ms-verse-sel-bg: rgba(29, 91, 184, 0.09);
+  --ms-verse-sep: rgba(15, 23, 42, 0.07);
+  --ms-badge-bible-bg: #1e293b;
+  --ms-badge-bible-fg: #f8dfa0;
+  --ms-badge-dict-bg: #c62828;
+  --ms-badge-dict-fg: #ffffff;
+}
+
+:root[data-theme="sepia"] {
+  --ms-bar-bg: #e8dcc4;
+  --ms-bar-border: #cbbba0;
+  --ms-bar-fg: #332515;
+  --ms-bar-muted: #705d44;
+  --ms-arrow-green: #2c7a3b;
+  --ms-arrow-blue: #235f9c;
+  --ms-active-green: #236e32;
+  --ms-dropdown-bg: #f7efde;
+  --ms-dropdown-border: #c5b394;
+  --ms-dropdown-sep: #dfd2b8;
+  --ms-dropdown-hover: rgba(130, 82, 24, 0.09);
+  --ms-verse-num-fg: #205791;
+  --ms-verse-sel-bg: rgba(143, 88, 22, 0.11);
+  --ms-verse-sep: rgba(51, 37, 21, 0.09);
+  --ms-badge-bible-bg: #3b2a19;
+  --ms-badge-bible-fg: #f3d286;
+  --ms-badge-dict-bg: #b82929;
+  --ms-badge-dict-fg: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #000000;
+  --bg-surface: #0b0c0e;
+  --bg-subtle: #181a1f;
+  --text-main: #d8dee6;
+  --text-muted: #939ca8;
+  --border: #25282e;
+  --ms-bar-bg: #000000;
+  --ms-bar-border: #1f2228;
+  --ms-bar-fg: #eef2f6;
+  --ms-bar-muted: #9aa3ae;
+  --ms-arrow-green: #69c94e;
+  --ms-arrow-blue: #4ea8de;
+  --ms-active-green: #2cc946;
+  --ms-dropdown-bg: #242629;
+  --ms-dropdown-border: #3a3d44;
+  --ms-dropdown-sep: #32353b;
+  --ms-dropdown-hover: rgba(255, 255, 255, 0.07);
+  --ms-verse-num-fg: #66b2ff;
+  --ms-verse-sel-bg: #26292e;
+  --ms-verse-sep: rgba(255, 255, 255, 0.08);
+  --ms-badge-bible-bg: #1e1c18;
+  --ms-badge-bible-fg: #f2d488;
+  --ms-badge-dict-bg: #c62828;
+  --ms-badge-dict-fg: #ffffff;
+  --dct-card-bg: #000000;
+  --dct-card-border: #1e2228;
+}
+
+/* ===========================
+   BARRA SUPERIOR COMPACTA
+   =========================== */
+.topbar.ms-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 48px;
+  height: auto;
+  padding: calc(4px + env(safe-area-inset-top, 0px)) 4px 4px 4px;
+  background: var(--ms-bar-bg);
+  border-bottom: 1px solid var(--ms-bar-border);
+  box-shadow: none;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.ms-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 38px;
+  padding: 0 5px 0 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ms-menu-trigger:active {
+  background: var(--ms-dropdown-hover);
+}
+
+.ms-hamburger-bars {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 11px;
+}
+
+.ms-hamburger-bars span {
+  display: block;
+  height: 1.8px;
+  width: 100%;
+  background: currentColor;
+  border-radius: 1px;
+  opacity: 0.85;
+}
+
+/* Selos quadrados de recurso († Bíblia, D Dicionário) */
+.ms-res-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+.ms-res-badge--bible {
+  background: var(--ms-badge-bible-bg);
+  color: var(--ms-badge-bible-fg);
+  border: 1px solid rgba(242, 212, 136, 0.5);
+}
+
+.ms-res-badge--dict {
+  background: var(--ms-badge-dict-bg);
+  color: var(--ms-badge-dict-fg);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+/* Grupos de navegação da barra superior */
+.ms-top-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ms-top-strip.hidden {
+  display: none !important;
+}
+
+.ms-top-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ms-top-icon-btn:active {
+  background: var(--ms-dropdown-hover);
+}
+
+.ms-top-icon-btn:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.ms-green-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ms-arrow-green);
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ms-green-arrow:active {
+  background: var(--ms-dropdown-hover);
+}
+
+.ms-green-arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ms-ref-btn {
+  height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 145px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+}
+
+.ms-ref-btn:active {
+  background: var(--ms-dropdown-hover);
+}
+
+/* Seletor sublinhado com triângulo ◢ igual às capturas */
+.ms-top-spinner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  min-width: 96px;
+  max-width: 240px;
+  padding: 0 18px 0 6px;
+  border: 0;
+  border-bottom: 1.5px solid var(--ms-bar-muted);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  flex: 0 1 220px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ms-top-spinner::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-bottom: 8px solid var(--ms-bar-muted);
+  pointer-events: none;
+}
+
+.ms-top-spinner span {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-top-spinner:active {
+  background: var(--ms-dropdown-hover);
+}
+
+/* Abas rápidas de módulos favoritos/recentes ao lado do seletor */
+.ms-quick-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 80px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ms-quick-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ms-quick-tab {
+  flex: 0 0 auto;
+  height: 34px;
+  max-width: 165px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  opacity: 0.84;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ms-quick-tab:active {
+  opacity: 1;
+  background: var(--ms-dropdown-hover);
+}
+
+.ms-overflow-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+}
+
+.ms-overflow-btn:active {
+  background: var(--ms-dropdown-hover);
+}
+
+/* ===========================
+   MENUS SUSPENSOS ANCORADOS
+   =========================== */
+.ms-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.26);
+}
+
+.ms-popover-panel {
+  position: fixed;
+  z-index: 81;
+  display: flex;
+  flex-direction: column;
+  background: var(--ms-dropdown-bg);
+  color: var(--ms-bar-fg);
+  border: 1px solid var(--ms-dropdown-border);
+  border-radius: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+  box-sizing: border-box;
+  font-family: var(--font-ui);
+}
+
+.ms-popover-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ms-dropdown-sep);
+  background: var(--ms-dropdown-bg);
+  flex: 0 0 auto;
+}
+
+.ms-popover-input-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ms-popover-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 28px 0 8px;
+  border: 1px solid var(--ms-dropdown-border);
+  border-radius: 4px;
+  background: var(--bg-app);
+  color: var(--text-main);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.ms-popover-input:focus {
+  border-color: var(--accent);
+}
+
+.ms-popover-clear {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ms-bar-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ms-popover-clear.hidden {
+  display: none;
+}
+
+.ms-popover-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--ms-bar-muted);
+}
+
+.ms-popover-toggle-btn {
+  padding: 2px 8px;
+  border: 1px solid var(--ms-dropdown-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ms-popover-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ms-dropdown-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  border-bottom: 1px solid var(--ms-dropdown-sep);
+  box-sizing: border-box;
+}
+
+.ms-dropdown-row:last-child {
+  border-bottom: 0;
+}
+
+.ms-dropdown-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ms-dropdown-btn:active {
+  background: var(--ms-dropdown-hover);
+}
+
+.ms-dropdown-row.is-active .ms-dropdown-btn,
+.ms-dropdown-row.is-active .ms-dropdown-title {
+  color: var(--ms-active-green);
+  font-weight: 700;
+}
+
+.ms-dropdown-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ms-dropdown-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.ms-dropdown-sub {
+  font-size: 11.5px;
+  color: var(--ms-bar-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.ms-dropdown-hit {
+  font-size: 11.5px;
+  color: var(--ms-active-green);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.ms-dropdown-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 42px;
+  border: 0;
+  background: transparent;
+  color: var(--ms-bar-muted);
+  font-size: 17px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+}
+
+.ms-dropdown-star.is-fav {
+  color: #e6a817;
+}
+
+.ms-drawer-sep {
+  height: 1px;
+  background: var(--ms-dropdown-border);
+  margin: 2px 0;
+}
+
+.ms-drawer-section-label {
+  padding: 7px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ms-bar-muted);
+}
+
+.ms-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--ms-dropdown-sep);
+  background: var(--ms-dropdown-bg);
+  flex: 0 0 auto;
+}
+
+.ms-popover-empty {
+  padding: 18px 14px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ms-bar-muted);
+}
+
+/* ===========================
+   ÁREA DE LEITURA (BÍBLIA E DICIONÁRIO)
+   =========================== */
+.chapter-header {
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ms-verse-sep);
+  text-align: left;
+}
+
+.chapter-title {
+  font-size: clamp(18px, 2.5vw, 22px);
+  font-weight: 700;
+  margin: 0;
+}
+
+.chapter-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.verse-item {
+  padding: 6px 8px;
+  border-radius: 3px;
+  border-bottom: 1px solid var(--ms-verse-sep);
+}
+
+.verse-item.is-selected {
+  background: var(--ms-verse-sel-bg);
+}
+
+.verse-item .verse-num {
+  color: var(--ms-verse-num-fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+/* Leitor de dicionário limpo com foto em largura total igual ao print de Addax */
+.dct-reader {
+  gap: 10px;
+}
+
+.dct-header-zone.is-collapsed {
+  display: none !important;
+}
+
+.dct-entry-card {
+  padding: 8px 4px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dct-entry-head {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ms-verse-sep);
+}
+
+.dct-entry-title {
+  color: var(--ms-active-green);
+  font-family: var(--font-ui);
+  font-size: clamp(19px, 2.5vw, 23px);
+}
+
+.dct-pic {
+  margin: 10px 0 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.dct-img {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+/* ===========================
+   BARRA INFERIOR EM DOCK DE ÍCONES
+   =========================== */
+.bottom-nav.ms-bottom-dock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 48px;
+  height: auto;
+  padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px));
+  background: var(--ms-bar-bg);
+  border-top: 1px solid var(--ms-bar-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.bottom-nav.ms-bottom-dock::-webkit-scrollbar {
+  display: none;
+}
+
+.ms-dock-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.ms-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ms-bar-fg);
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ms-dock-btn:active {
+  background: var(--ms-dropdown-hover);
+}
+
+.ms-dock-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ms-dock-btn--green {
+  color: var(--ms-arrow-green);
+}
+
+.ms-dock-btn--blue {
+  color: var(--ms-arrow-blue);
+}
+
+.ms-dock-btn.is-active {
+  background: var(--ms-dropdown-hover);
+  box-shadow: inset 0 -2px 0 var(--ms-arrow-blue);
+}
+
+.ms-dock-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.62;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+}
+
+.ms-dock-view-btn.is-active {
+  opacity: 1;
+  background: var(--ms-dropdown-hover);
+  box-shadow: inset 0 -2px 0 var(--ms-active-green);
+}
+
+.ms-dock-meta {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .ms-top-spinner {
+    max-width: 165px;
+    min-width: 82px;
+    font-size: 13px;
+  }
+
+  .ms-ref-btn {
+    padding: 0 5px;
+    font-size: 13.5px;
+    max-width: 112px;
+  }
+
+  .ms-quick-tab {
+    font-size: 12.5px;
+    padding: 0 7px;
+  }
+}
