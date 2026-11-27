@@ -42,6 +42,7 @@ const NAMED_ENTITIES = {
 };
 
 const RE_SELO_TAG = /<SELO[A-Za-z0-9_-]*(?:\s+(?:(?!>|<).)*)?>([\s\S]*?)<\/?SELO[A-Za-z0-9_-]*>/gi;
+const RE_SHORT_BIBLE_REF = /^(?:[123]\s*)?[A-Za-zÀ-ÿ]{2,6}\.?\s+\d+[:.]\d+(?:\s*[-–—]\s*\d+)?$/;
 
 function escapeHtml(str) {
   return String(str || '')
@@ -152,12 +153,23 @@ function applyPilcrowInitialBold(html) {
 function formatStandardInlineHtml(rawSegment) {
   let safe = escapeHtml(rawSegment);
 
-  // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt>)
+  // Referência embutida de módulos customizados (ex.: <VT>Gn 1:1<vt>, <NT>Mt 1:1<nt>, <OT>Gn 1:1<ot>)
   safe = safe.replace(
     /&lt;VT(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?VT&gt;/gi,
     (_, inner) => {
       const refText = stripEscapedTags(inner);
       return refText ? `<span class="v-ref-tag">${refText}</span>` : '';
+    }
+  );
+
+  safe = safe.replace(
+    /&lt;(NT|OT)(?:\s+(?:(?!&gt;|&lt;).)*)?&gt;([\s\S]*?)&lt;\/?\1&gt;/gi,
+    (full, _, inner) => {
+      const refText = stripEscapedTags(inner);
+      if (RE_SHORT_BIBLE_REF.test(refText)) {
+        return `<span class="v-ref-tag">${refText}</span>`;
+      }
+      return inner;
     }
   );
 
@@ -192,7 +204,7 @@ function formatStandardInlineHtml(rawSegment) {
     .replace(/&lt;sub&gt;/gi, '<sub>')
     .replace(/&lt;\/sub&gt;/gi, '</sub>');
 
-  // Remove qualquer tag customizada restante (ex.: <w*>, </w*>, <Q>, <E>, <C>, <H1>, <h>, <BLN4>, <OHB>)
+  // Remove qualquer tag customizada restante (ex.: <wt>, <w*>, </w*>, <Q>, <E>, <C>, <H1>, <h>, <BLN4>, <OHB>)
   safe = safe.replace(
     /&lt;\/?[a-zA-Z][a-zA-Z0-9_:*.-]*(?:[\s=](?:(?!&gt;|&lt;).)*)?\/?&gt;/g,
     ''
@@ -200,6 +212,7 @@ function formatStandardInlineHtml(rawSegment) {
 
   const cleaned = decodeCommonEntities(safe)
     .replace(/\n+/g, '<br>')
+    .replace(/(?:<br>\s*)+(<span class="v-ref-tag">)/g, ' $1')
     .replace(/(<br>\s*){3,}/g, '<br><br>')
     .replace(/^(?:<br>\s*)+/, '')
     .replace(/(<br>\s*)+$/, '')
