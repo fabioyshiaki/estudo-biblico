@@ -40,6 +40,20 @@ export function getFileNameFromPath(filePath) {
   return parts[parts.length - 1] || raw;
 }
 
+function deriveAbbreviation(mod, fileName) {
+  const explicitAbbr = String((mod && mod.abbr) || '').trim();
+  if (explicitAbbr) return explicitAbbr;
+
+  const base = String(fileName || '')
+    .replace(/\.(?:bbl|cmt|dct|bok|map|mybible|ont|nt|twm|twx|dctx|cmtx)\b.*$/i, '')
+    .replace(/\bbeta\s*\d*\b/gi, '')
+    .trim();
+
+  if (!base) return 'INT';
+  const cleaned = base.replace(/\s+/g, ' ').trim();
+  return cleaned.length <= 16 ? cleaned.toUpperCase() : cleaned.slice(0, 14).trim();
+}
+
 function extractRowsFromQueryResult(res) {
   if (Array.isArray(res)) return res;
   if (res && Array.isArray(res.rows)) return res.rows;
@@ -69,15 +83,23 @@ async function moduleHasInternalDictionary(mod) {
 
 /**
  * Vasculha todos os módulos de Bíblia e Comentário carregados e retorna
- * aqueles que possuem tabela `dictionary` interna, formatados como dicionários
- * exibindo o nome do arquivo de origem.
+ * aqueles que possuem tabela `dictionary` interna, usando o nome da abreviação
+ * para aparecerem junto com os outros dicionários.
  */
-export async function discoverInternalDictionaryModules() {
-  const state = store.getState ? store.getState() : {};
-  const bibles = Array.isArray(state.bibles) ? state.bibles : (store.getBibles ? store.getBibles() : []);
-  const commentaries = Array.isArray(state.commentaries)
-    ? state.commentaries
-    : (store.getCommentaries ? store.getCommentaries() : []);
+export async function discoverInternalDictionaryModules(sourceModules = null) {
+  let bibles = [];
+  let commentaries = [];
+
+  if (Array.isArray(sourceModules)) {
+    bibles = sourceModules.filter((m) => m && m.resourceKind === 'bible');
+    commentaries = sourceModules.filter((m) => m && m.resourceKind === 'commentary');
+  } else {
+    const state = store.getState ? store.getState() : {};
+    bibles = Array.isArray(state.bibles) ? state.bibles : (store.getBibles ? store.getBibles() : []);
+    commentaries = Array.isArray(state.commentaries)
+      ? state.commentaries
+      : (store.getCommentaries ? store.getCommentaries() : []);
+  }
 
   const candidates = [...bibles, ...commentaries];
   const seen = new Set();
@@ -104,17 +126,19 @@ export async function discoverInternalDictionaryModules() {
     for (const item of checks) {
       if (!item.hasDict) continue;
       const fileName = item.mod.fileName || getFileNameFromPath(item.mod.path);
-      const baseTitle = item.mod.title || item.mod.abbr || fileName;
+      const abbr = deriveAbbreviation(item.mod, fileName);
+      const title = item.mod.title || abbr;
+
       discovered.push({
         ...item.mod,
-        id: `internal_dict::${item.mod.path}`,
+        id: item.mod.id || `internal_dict::${item.mod.path}`,
         fileName,
         sourceFileName: fileName,
         isInternalDictionary: true,
         resourceKind: 'dictionary',
-        abbr: fileName,
-        title: `${baseTitle} [${fileName}]`,
-        description: `Dicionário interno de ${fileName}`
+        abbr,
+        title,
+        description: item.mod.description || title
       });
     }
   }
@@ -155,7 +179,7 @@ async function queryModuleDictionaryTable(modulePath, fsCode) {
 /**
  * Busca um código FS... (ex.: FS24B, FS184A, FS96C1) na tabela `dictionary`
  * do módulo de origem e, se não achar, vasculha os demais módulos com
- * dicionário interno (Bíblias e Comentários).
+ * dicionário interno.
  */
 export async function lookupFsInModule(modulePath, rawCode) {
   const code = normalizeFsCode(rawCode);
