@@ -90,7 +90,6 @@ let pendingScrollVerse = null;
 let suppressModeAutoLoad = false;
 let suppressModuleAutoLoad = false;
 let suppressLocationAutoLoad = false;
-let mergedDictionariesCache = [];
 const jumpHistory = [];
 
 function escapeHtml(str) {
@@ -113,25 +112,12 @@ function getPreferredModuleLabel(mod, fallback = '') {
   if (!mod) return fallback;
   const originFile = mod.sourceFileName || mod.fileName || getFileNameFromPath(mod.path);
   if (mod.isInternalDictionary) {
-    return originFile || mod.title || mod.abbr || fallback;
+    return mod.abbr || mod.title || originFile || fallback;
   }
   const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
   return sortBy === 'title'
     ? (mod.title || mod.abbr || originFile || fallback)
     : (mod.abbr || mod.title || originFile || fallback);
-}
-
-function getAvailableDictionaries() {
-  const extDicts = store.getDictionaries();
-  if (!mergedDictionariesCache.length) return extDicts;
-  const byPath = new Map(mergedDictionariesCache.map((m) => [m.path, m]));
-  const combined = [...extDicts];
-  for (const m of mergedDictionariesCache) {
-    if (!combined.some((x) => x.path === m.path)) {
-      combined.push(byPath.get(m.path));
-    }
-  }
-  return combined;
 }
 
 function applyVisualPrefs(prefs) {
@@ -187,9 +173,8 @@ function refreshQuickCommentaryTabs() {
 
 function refreshQuickDictionaryTabs() {
   const bar = document.getElementById('quick-dicts-bar');
-  const allDicts = getAvailableDictionaries();
   const active = store.getActiveDictionary();
-  renderQuickTabs(bar, 'dictionary', allDicts, active ? active.path : '', (path) => {
+  renderQuickTabs(bar, 'dictionary', store.getDictionaries(), active ? active.path : '', (path) => {
     recordRecentModule('dictionary', path);
     store.setActiveDictionary(path, { silent: true });
     setActiveDictionaryModule(path, {
@@ -293,8 +278,7 @@ function updateCommentaryChrome(meta = {}) {
 }
 
 function updateDictionaryChrome(meta = {}) {
-  const allDicts = getAvailableDictionaries();
-  const active = meta.activeModule || allDicts.find((m) => m.path === (store.getActiveDictionary() && store.getActiveDictionary().path)) || store.getActiveDictionary();
+  const active = meta.activeModule || store.getActiveDictionary();
   const dictLabel = document.getElementById('label-active-dict');
   const entryLabel = document.getElementById('label-active-entry');
   const topPrevEntry = document.getElementById('btn-top-prev-entry');
@@ -396,14 +380,34 @@ function rememberBibleScrollIfActive() {
   }
 }
 
-async function syncDictionariesFromStore() {
-  const extDicts = store.getDictionaries();
-  const internalDicts = await discoverInternalDictionaryModules().catch(() => []);
-  mergedDictionariesCache = [...extDicts, ...internalDicts];
-  syncDictionaryModules(mergedDictionariesCache);
+async function syncDictionariesFromStore(baseModules = null) {
+  const internalDicts = await discoverInternalDictionaryModules(baseModules).catch(() => []);
+
+  if (internalDicts.length && typeof store.setModulesOnly === 'function') {
+    const existing = Array.isArray(baseModules)
+      ? baseModules.filter((m) => !m || !m.isInternalDictionary)
+      : [
+          ...store.getBibles(),
+          ...store.getCommentaries(),
+          ...store.getDictionaries().filter((m) => !m || !m.isInternalDictionary)
+        ];
+
+    const existingDictPaths = new Set(
+      existing
+        .filter((m) => m && m.resourceKind === 'dictionary')
+        .map((m) => m.path)
+    );
+    const toInject = internalDicts.filter((m) => m && m.path && !existingDictPaths.has(m.path));
+    if (toInject.length) {
+      store.setModulesOnly([...existing, ...toInject]);
+    }
+  }
+
+  const allDicts = store.getDictionaries();
+  syncDictionaryModules(allDicts);
   const activeDict = store.getActiveDictionary();
   const dState = getDictionaryViewState();
-  if (activeDict && dState.activeModulePath !== activeDict.path && mergedDictionariesCache.some((m) => m.path === activeDict.path)) {
+  if (activeDict && dState.activeModulePath !== activeDict.path) {
     setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
   }
   updateDictionaryChrome({ activeModule: activeDict });
@@ -658,7 +662,7 @@ async function findBibleContainingBook(bookId, preferredModulePath = '') {
 
   const prioritized = allBibles.slice().sort((a, b) => {
     const aSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(a.abbr || '');
-    const bSkip = isOT ? /^nt\b/i.test(b.abbr || '') : /^at\b/i.test(b.abbr || '');
+    const bSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(b.abbr || '');
     return Number(aSkip) - Number(bSkip);
   });
 
@@ -890,7 +894,7 @@ async function goBackFromBibleJump() {
 }
 
 async function openTermInDictionary(term, { searchAll = false, moduleHint = '', sourceModulePath = '' } = {}) {
-  const dicts = getAvailableDictionaries();
+  const dicts = store.getDictionaries();
   if (!dicts.length && !sourceModulePath) {
     showToast('Adicione um dicionário (.dct.mybible) em Configurações → Fontes.');
     openSettingsModal({ initialTab: 'sources', initialKind: 'dictionary' });
@@ -928,7 +932,7 @@ async function openTermInDictionary(term, { searchAll = false, moduleHint = '', 
     recordRecentModule('dictionary', opened.modulePath);
     store.setActiveDictionary(opened.modulePath, { silent: true });
     updateDictionaryChrome({
-      activeModule: dicts.find((m) => m.path === opened.modulePath) || null,
+      activeModule: store.getDictionaries().find((m) => m.path === opened.modulePath) || null,
       entryWord: opened.word || term
     });
   }
@@ -967,11 +971,10 @@ async function syncPermissionAndData() {
     nativeBridge.listModules()
   ]);
 
-  store.setSourcesAndModules(
-    (srcRes && srcRes.sources) || [],
-    (modRes && modRes.modules) || []
-  );
-  await syncDictionariesFromStore();
+  const rawSources = (srcRes && srcRes.sources) || [];
+  const rawModules = (modRes && modRes.modules) || [];
+  store.setSourcesAndModules(rawSources, rawModules);
+  await syncDictionariesFromStore(rawModules);
 }
 
 function bindShellEvents() {
@@ -1192,7 +1195,7 @@ function bindStateEvents() {
 
   eventBus.on(EVENTS.PREFS_CHANGED, (prefs) => {
     applyVisualPrefs(prefs);
-    syncDictionaryModules(getAvailableDictionaries());
+    syncDictionaryModules(store.getDictionaries());
     refreshQuickBibleTabs();
     refreshQuickCommentaryTabs();
     updateDictionaryChrome(getDictionaryViewState());
@@ -1320,7 +1323,7 @@ async function bootstrap() {
       'Ambiente nativo': nativeBridge.isNative() ? 'Android (Capacitor)' : 'Navegador Web',
       'Permissão arquivos': st.hasStoragePermission ? 'Concedida' : 'Negada',
       'Modo ativo': store.getActiveMode(),
-      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getCommentaries().length} Comentário(s), ${getAvailableDictionaries().length} Dicionário(s)`,
+      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getCommentaries().length} Comentário(s), ${store.getDictionaries().length} Dicionário(s)`,
       'Bíblia ativa': bible ? `${getPreferredModuleLabel(bible)} (${bible.fileName || ''}) • ${formatReference(st.book, st.chapter, st.verse || 1)}` : 'Nenhuma',
       'Comentário ativo': cmt ? `${getPreferredModuleLabel(cmt)} (${cmt.fileName || ''})` : 'Nenhum',
       'Dicionário ativo': dict ? `${getPreferredModuleLabel(dict)} (${dict.fileName || ''}) • verbete: ${dState.currentEntry ? dState.currentEntry.word : 'nenhum'}` : 'Nenhum',
