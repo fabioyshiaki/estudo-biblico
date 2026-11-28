@@ -19,6 +19,8 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONObject;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,14 +34,18 @@ public class BibleCorePlugin extends Plugin {
     private static final int MAX_SQL_CONNECTIONS = 14;
 
     private ExecutorService executor;
+    private ExecutorService indexExecutor;
     private SqlReadOnlyPool sqlPool;
     private SourceRegistryDb registryDb;
+    private CommentaryIndexDb commentaryIndexDb;
 
     @Override
     public void load() {
         executor = Executors.newFixedThreadPool(4);
+        indexExecutor = Executors.newSingleThreadExecutor();
         sqlPool = new SqlReadOnlyPool(MAX_SQL_CONNECTIONS);
         registryDb = new SourceRegistryDb(getContext());
+        commentaryIndexDb = new CommentaryIndexDb(getContext());
     }
 
     @Override
@@ -59,8 +65,14 @@ public class BibleCorePlugin extends Plugin {
         if (executor != null) {
             executor.shutdownNow();
         }
+        if (indexExecutor != null) {
+            indexExecutor.shutdownNow();
+        }
         if (registryDb != null) {
             registryDb.close();
+        }
+        if (commentaryIndexDb != null) {
+            commentaryIndexDb.close();
         }
     }
 
@@ -218,6 +230,7 @@ public class BibleCorePlugin extends Plugin {
                         label
                 );
                 registryDb.replaceModulesForSource(sourceId, validModules);
+                scheduleCommentaryIndexSync(true);
 
                 JSObject ret = new JSObject();
                 ret.put("sourceId", sourceId);
@@ -245,6 +258,8 @@ public class BibleCorePlugin extends Plugin {
                 for (String p : paths) {
                     sqlPool.closePath(p);
                 }
+                scheduleCommentaryIndexSync(true);
+
                 JSObject ret = new JSObject();
                 ret.put("removed", true);
                 ret.put("sources", registryDb.listSources());
@@ -276,6 +291,9 @@ public class BibleCorePlugin extends Plugin {
             try {
                 JSObject ret = new JSObject();
                 ret.put("modules", registryDb.listModules(resourceKind));
+                if (resourceKind == null || "commentary".equals(resourceKind)) {
+                    scheduleCommentaryIndexSync(false);
+                }
                 call.resolve(ret);
             } catch (Exception e) {
                 call.reject("Erro ao listar módulos: " + e.getMessage());
@@ -309,6 +327,8 @@ public class BibleCorePlugin extends Plugin {
                     }
                     registryDb.replaceModulesForSource(sourceId, validModules);
                 }
+
+                scheduleCommentaryIndexSync(true);
 
                 JSObject ret = new JSObject();
                 ret.put("sources", registryDb.listSources());
@@ -379,12 +399,95 @@ public class BibleCorePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void syncCommentaryIndex(PluginCall call) {
+        if (!hasStorageAccess()) {
+            JSObject ret = new JSObject();
+            ret.put("ready", false);
+            ret.put("indexing", false);
+            ret.put("indexedCount", 0);
+            ret.put("totalCount", 0);
+            call.resolve(ret);
+            return;
+        }
+
+        indexExecutor.execute(() -> {
+            try {
+                List<CommentaryIndexDb.ModuleMeta> mods = loadCommentaryMetaList();
+                JSObject ret = commentaryIndexDb.syncModules(mods);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Erro ao indexar comentários: " + e.getMessage());
+            }
+        });
+    }
+
+    @PluginMethod
+    public void queryCommentaryCoverage(PluginCall call) {
+        int book = call.getInt("book", 1);
+        int chapter = call.getInt("chapter", 1);
+        int verse = call.getInt("verse", 1);
+
+        executor.execute(() -> {
+            try {
+                List<CommentaryIndexDb.ModuleMeta> mods = loadCommentaryMetaList();
+                boolean upToDate = commentaryIndexDb.isUpToDate(mods);
+
+                if (!upToDate && hasStorageAccess()) {
+                    scheduleCommentaryIndexSync(false);
+                }
+
+                JSArray matches = commentaryIndexDb.queryCoverage(book, chapter, verse);
+                JSObject ret = new JSObject();
+                ret.put("ready", upToDate);
+                ret.put("indexing", commentaryIndexDb.isIndexing());
+                ret.put("indexedCount", upToDate ? mods.size() : commentaryIndexDb.getIndexedCount());
+                ret.put("totalCount", mods.size());
+                ret.put("matches", matches);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Erro ao consultar índice de comentários: " + e.getMessage());
+            }
+        });
+    }
+
+    @PluginMethod
     public void closeAllModules(PluginCall call) {
         executor.execute(() -> {
             sqlPool.closeAll();
             JSObject ret = new JSObject();
             ret.put("closed", true);
             call.resolve(ret);
+        });
+    }
+
+    private List<CommentaryIndexDb.ModuleMeta> loadCommentaryMetaList() {
+        JSArray arr = registryDb.listModules("commentary");
+        List<CommentaryIndexDb.ModuleMeta> list = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            String path = o.optString("path", "");
+            if (path.isEmpty()) continue;
+            long size = o.optLong("fileSize", 0L);
+            long mod = o.optLong("lastModified", 0L);
+            list.add(new CommentaryIndexDb.ModuleMeta(path, size, mod));
+        }
+        return list;
+    }
+
+    private void scheduleCommentaryIndexSync(boolean forceQueue) {
+        if (commentaryIndexDb == null || indexExecutor == null || !hasStorageAccess()) {
+            return;
+        }
+        if (!forceQueue && commentaryIndexDb.isIndexing()) {
+            return;
+        }
+        indexExecutor.execute(() -> {
+            try {
+                List<CommentaryIndexDb.ModuleMeta> mods = loadCommentaryMetaList();
+                commentaryIndexDb.syncModules(mods);
+            } catch (Exception ignored) {
+            }
         });
     }
 
