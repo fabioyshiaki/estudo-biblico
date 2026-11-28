@@ -546,6 +546,75 @@ function sortPresenceMatches(list, origOrderMap) {
   });
 }
 
+function storePresenceCache(commentaries, book, chapter, verse, finalSorted) {
+  const key = buildPresenceCacheKey(commentaries, book, chapter, verse);
+  if (passagePresenceCache.size >= PRESENCE_CACHE_LIMIT) {
+    const oldestKey = passagePresenceCache.keys().next().value;
+    if (oldestKey !== undefined) passagePresenceCache.delete(oldestKey);
+  }
+  passagePresenceCache.set(
+    key,
+    finalSorted.map((it) => ({
+      path: it.module.path,
+      scopeKind: it.scopeKind,
+      badge: it.badge,
+      shortLabel: it.shortLabel,
+      label: it.label
+    }))
+  );
+}
+
+function hydrateNativeCoverageMatches(commentaries, rawMatches) {
+  const list = Array.isArray(commentaries) ? commentaries : [];
+  const rows = Array.isArray(rawMatches) ? rawMatches : [];
+  if (!list.length || !rows.length) return [];
+
+  const byPath = new Map(list.map((m) => [m.path, m]));
+  const origOrder = new Map(list.map((m, idx) => [m.path, idx]));
+  const hydrated = [];
+
+  for (const item of rows) {
+    const mod = byPath.get(item && item.path);
+    if (!mod) continue;
+    const meta = classifyEntry(
+      item.book,
+      item.chapter,
+      item.chapterEnd,
+      item.fromVerse,
+      item.toVerse
+    );
+    hydrated.push({
+      module: mod,
+      scopeKind: meta.scopeKind,
+      badge: meta.badge,
+      shortLabel: meta.shortLabel,
+      label: meta.label
+    });
+  }
+
+  return sortPresenceMatches(hydrated, origOrder);
+}
+
+function sleepAbortable(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal && signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
 export function getCachedCommentariesForPassage(commentaries, book, chapter, verse = 1) {
   const list = Array.isArray(commentaries) ? commentaries : [];
   if (!list.length) return [];
@@ -572,6 +641,52 @@ export function getCachedCommentariesForPassage(commentaries, book, chapter, ver
     .filter(Boolean);
 
   return sortPresenceMatches(hydrated, origOrder);
+}
+
+/**
+ * Consulta instantânea (~1-5ms) no índice global SQLite nativo (CommentaryIndexDb).
+ * Se o índice já estiver pronto, grava no cache em memória e devolve a lista completa.
+ */
+export async function queryNativeCommentariesForPassage(commentaries, book, chapter, verse = 1) {
+  const list = Array.isArray(commentaries) ? commentaries : [];
+  if (!list.length) {
+    return { supported: true, ready: true, indexing: false, indexedCount: 0, totalCount: 0, matches: [] };
+  }
+  if (!nativeBridge.isNative() || typeof nativeBridge.queryCommentaryCoverage !== 'function') {
+    return { supported: false, ready: false, indexing: false, indexedCount: 0, totalCount: list.length, matches: [] };
+  }
+
+  const p = normalizePassage(book, chapter, verse);
+  if (p.chapter <= 0) {
+    return { supported: true, ready: true, indexing: false, indexedCount: list.length, totalCount: list.length, matches: [] };
+  }
+
+  try {
+    const res = await nativeBridge.queryCommentaryCoverage(p.book, p.chapter, p.verse);
+    if (!res || !Array.isArray(res.matches)) {
+      return { supported: false, ready: false, indexing: false, indexedCount: 0, totalCount: list.length, matches: [] };
+    }
+
+    const hydrated = hydrateNativeCoverageMatches(list, res.matches);
+    const totalCount = Number(res.totalCount) || list.length;
+    const indexedCount = res.ready ? totalCount : Math.min(totalCount, Number(res.indexedCount) || 0);
+
+    if (res.ready) {
+      storePresenceCache(list, p.book, p.chapter, p.verse, hydrated);
+    }
+
+    return {
+      supported: true,
+      ready: Boolean(res.ready),
+      indexing: Boolean(res.indexing),
+      indexedCount,
+      totalCount,
+      matches: hydrated
+    };
+  } catch (err) {
+    appLogger.warn('CMT_INDEX', 'Índice nativo indisponível; usando varredura de contingência', err);
+    return { supported: false, ready: false, indexing: false, indexedCount: 0, totalCount: list.length, matches: [] };
+  }
 }
 
 async function runWithConcurrency(items, concurrency, workerFn, signal) {
@@ -609,6 +724,53 @@ export async function findCommentariesForPassage(commentaries, book, chapter, ve
     return cached;
   }
 
+  // 1. Caminho principal: índice nativo único (instantâneo quando pronto; acompanha a indexação única na 1ª vez)
+  const nativeFirst = await queryNativeCommentariesForPassage(list, p.book, p.chapter, p.verse);
+  if (signal && signal.aborted) return [];
+
+  if (nativeFirst.supported) {
+    if (nativeFirst.ready) {
+      if (onProgress) {
+        onProgress(nativeFirst.totalCount, nativeFirst.totalCount, nativeFirst.matches);
+      }
+      return nativeFirst.matches;
+    }
+
+    if (onProgress) {
+      onProgress(nativeFirst.indexedCount, nativeFirst.totalCount, nativeFirst.matches);
+    }
+
+    if (!nativeFirst.indexing && typeof nativeBridge.syncCommentaryIndex === 'function') {
+      nativeBridge.syncCommentaryIndex().catch(() => {});
+    }
+
+    let latest = nativeFirst;
+    for (let attempt = 0; attempt < 260; attempt++) {
+      await sleepAbortable(220, signal);
+      if (signal && signal.aborted) return [];
+
+      const poll = await queryNativeCommentariesForPassage(list, p.book, p.chapter, p.verse);
+      if (signal && signal.aborted) return [];
+      if (!poll.supported) break;
+
+      latest = poll;
+      if (onProgress) {
+        onProgress(poll.indexedCount, poll.totalCount, poll.matches);
+      }
+      if (poll.ready) {
+        return poll.matches;
+      }
+      if (!poll.indexing && attempt >= 4) {
+        break;
+      }
+    }
+
+    if (latest.ready) {
+      return latest.matches;
+    }
+  }
+
+  // 2. Fallback para navegador Web ou builds sem o índice nativo compilado
   const origOrder = new Map(list.map((m, idx) => [m.path, idx]));
   const prioritized = list.slice().sort((a, b) => {
     const aAct = a.path === options.activePath ? 1 : 0;
@@ -674,21 +836,7 @@ export async function findCommentariesForPassage(commentaries, book, chapter, ve
   const finalSorted = sortPresenceMatches(matches, origOrder);
 
   if (errorCount < prioritized.length) {
-    const key = buildPresenceCacheKey(list, p.book, p.chapter, p.verse);
-    if (passagePresenceCache.size >= PRESENCE_CACHE_LIMIT) {
-      const oldestKey = passagePresenceCache.keys().next().value;
-      if (oldestKey !== undefined) passagePresenceCache.delete(oldestKey);
-    }
-    passagePresenceCache.set(
-      key,
-      finalSorted.map((it) => ({
-        path: it.module.path,
-        scopeKind: it.scopeKind,
-        badge: it.badge,
-        shortLabel: it.shortLabel,
-        label: it.label
-      }))
-    );
+    storePresenceCache(list, p.book, p.chapter, p.verse, finalSorted);
   }
 
   return finalSorted;
