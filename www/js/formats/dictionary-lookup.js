@@ -4,6 +4,11 @@ import {
   buildLookupCandidates,
   normalizeDictSearchOptions
 } from './mysword-dictionary.js';
+import {
+  isAnyMorphCode,
+  isUgntMorphCode,
+  expandMorphologyLookupCandidates
+} from './morph-mapper.js';
 import { appLogger } from '../core/logger.js';
 
 const TERM_PRESENCE_CACHE_LIMIT = 40;
@@ -85,6 +90,13 @@ function normalizeAscii(str) {
     .toLowerCase();
 }
 
+function preserveOrNormalizeTerm(rawTerm) {
+  const raw = String(rawTerm || '').trim();
+  if (!raw) return '';
+  if (isUgntMorphCode(raw)) return raw.replace(/·/g, '.').toUpperCase();
+  return normalizeLookupTerm(raw);
+}
+
 export function clearDictionaryLookupCache() {
   termPresenceCache.clear();
 }
@@ -133,7 +145,7 @@ function sortPresenceMatches(list, origOrderMap) {
 }
 
 export function getCachedDictionariesWithTerm(dictionaries, rawTerm, options = {}) {
-  const clean = normalizeLookupTerm(rawTerm);
+  const clean = preserveOrNormalizeTerm(rawTerm);
   if (!clean) return null;
 
   const opts = normalizeDictSearchOptions(options);
@@ -163,10 +175,14 @@ export function getCachedDictionariesWithTerm(dictionaries, rawTerm, options = {
 }
 
 export function detectLookupKind(rawTerm) {
-  const clean = normalizeLookupTerm(rawTerm);
+  const raw = String(rawTerm || '').trim();
+  if (!raw) return 'term';
+  if (isAnyMorphCode(raw)) return 'morph';
+
+  const clean = normalizeLookupTerm(raw);
   if (!clean) return 'term';
   if (/^[GH]\s*0*\d+[a-z]?$/i.test(clean)) return 'strong';
-  if (/^(?:[A-Z]{1,4}-[A-Z0-9-]+|CONJ|PREP|ADV|PRT|INTJ|HEB|ARAM)$/.test(clean)) return 'morph';
+  if (isAnyMorphCode(clean)) return 'morph';
   if (/^\d{1,2}\.\d{1,3}$/.test(clean)) return 'louwnida';
   return 'term';
 }
@@ -175,14 +191,20 @@ export function scoreDictionaryForQuery(mod, rawTerm, options = {}) {
   const hay = normalizeAscii(
     `${mod.abbr || ''} ${mod.title || ''} ${mod.fileName || ''} ${mod.description || ''}`
   );
-  const clean = normalizeLookupTerm(rawTerm);
+  const clean = preserveOrNormalizeTerm(rawTerm);
   const kind = detectLookupKind(clean);
   const hint = normalizeAscii(options.moduleHint || '').trim();
 
   let score = 0;
 
-  if (hint && hay.includes(hint)) {
-    score += 120;
+  if (hint) {
+    if (hint === 'morph') {
+      if (/morph|morf|robinson|rmac|pars|gram/.test(hay)) {
+        score += 140;
+      }
+    } else if (hay.includes(hint)) {
+      score += 120;
+    }
   }
 
   if (options.activePath && mod.path === options.activePath) {
@@ -201,7 +223,8 @@ export function scoreDictionaryForQuery(mod, rawTerm, options = {}) {
     if (isHebrew && /hebr|bdb|gesenius|twot|\bat\b|antigo/.test(hay)) score += 30;
     if (isGreek && /greg|greek|thayer|mounce|bdag|\bnt\b|novo/.test(hay)) score += 30;
   } else if (kind === 'morph') {
-    if (/morph|morf|robinson|rmac|pars|gram/.test(hay)) score += 80;
+    if (/morph|morf|robinson|rmac|pars|gram/.test(hay)) score += 120;
+    if (/dicionario de morfologia/.test(hay)) score += 40;
   } else if (kind === 'louwnida') {
     if (/louw|nida|domain|dominio/.test(hay)) score += 85;
   } else {
@@ -282,7 +305,7 @@ async function runWithConcurrency(items, concurrency, workerFn, signal) {
 }
 
 export async function findDictionariesWithTerm(dictionaries, rawTerm, options = {}) {
-  const clean = normalizeLookupTerm(rawTerm);
+  const clean = preserveOrNormalizeTerm(rawTerm);
   const opts = normalizeDictSearchOptions(options);
   const targets = selectTargetDictionaries(dictionaries, opts);
   if (!clean || !targets.length) return [];
@@ -304,6 +327,10 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
     moduleHint: options.moduleHint || ''
   });
 
+  const morphTerms = isAnyMorphCode(clean)
+    ? expandMorphologyLookupCandidates(clean).slice(0, 6)
+    : [clean];
+
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 4, 6));
   const matches = [];
   let scanned = 0;
@@ -318,7 +345,12 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
       let added = false;
 
       try {
-        const hit = await myswordDictionaryAdapter.findQuickMatch(mod.path, clean, opts);
+        let hit = null;
+        for (const candidateTerm of morphTerms) {
+          if (signal && signal.aborted) return;
+          hit = await myswordDictionaryAdapter.findQuickMatch(mod.path, candidateTerm, opts);
+          if (hit) break;
+        }
         if (hit && (!signal || !signal.aborted)) {
           matches.push({
             module: mod,
@@ -359,7 +391,6 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
 
   const finalSorted = sortPresenceMatches(matches, origOrder);
 
-  // Só grava em cache se pelo menos a maioria dos módulos respondeu sem erro
   if (errorCount < ranked.length) {
     const cacheKey = buildPresenceCacheKey(targets, clean, opts);
     if (termPresenceCache.size >= TERM_PRESENCE_CACHE_LIMIT) {
@@ -381,31 +412,47 @@ export async function findDictionariesWithTerm(dictionaries, rawTerm, options = 
 
 export async function lookupExactAcrossDictionaries(dictionaries, rawTerm, options = {}) {
   const opts = normalizeDictSearchOptions(options);
-  const candidates = buildLookupCandidates(rawTerm, { accentSensitive: opts.accentSensitive });
-  if (!candidates.length) return null;
+  const rawClean = String(rawTerm || '').trim();
+  const isMorph = isAnyMorphCode(rawClean) || normalizeAscii(options.moduleHint || '') === 'morph';
+  const morphTerms = isMorph ? expandMorphologyLookupCandidates(rawClean) : [];
+
+  if (!morphTerms.length) {
+    const candidates = buildLookupCandidates(rawTerm, { accentSensitive: opts.accentSensitive });
+    if (!candidates.length) return null;
+  }
 
   const targets = selectTargetDictionaries(dictionaries, opts);
   const pool = targets.length ? targets : (Array.isArray(dictionaries) ? dictionaries : []);
-  const ranked = rankDictionariesForQuery(pool, rawTerm, options);
+  const ranked = rankDictionariesForQuery(pool, rawClean, options);
   const signal = options.signal || null;
+  const termsToTry = morphTerms.length ? morphTerms : [rawTerm];
 
   let errorCount = 0;
   let firstError = null;
 
   for (const mod of ranked) {
     if (signal && signal.aborted) return null;
-    try {
-      const entry = await myswordDictionaryAdapter.getEntry(mod.path, rawTerm, opts);
-      if (entry) {
-        return { module: mod, entry };
-      }
-    } catch (err) {
-      errorCount++;
-      if (!firstError) {
-        firstError = {
-          module: mod.fileName || mod.abbr || mod.path,
-          message: err && err.message ? err.message : String(err)
-        };
+    for (const candidateTerm of termsToTry) {
+      if (signal && signal.aborted) return null;
+      try {
+        const entry = await myswordDictionaryAdapter.getEntry(mod.path, candidateTerm, opts);
+        if (entry) {
+          return {
+            module: mod,
+            entry,
+            matchedCode: candidateTerm,
+            originalCode: rawClean
+          };
+        }
+      } catch (err) {
+        errorCount++;
+        if (!firstError) {
+          firstError = {
+            module: mod.fileName || mod.abbr || mod.path,
+            message: err && err.message ? err.message : String(err)
+          };
+        }
+        break;
       }
     }
   }
@@ -421,7 +468,7 @@ export async function lookupExactAcrossDictionaries(dictionaries, rawTerm, optio
 }
 
 export async function searchAcrossDictionaries(dictionaries, rawQuery, options = {}) {
-  const clean = normalizeLookupTerm(rawQuery);
+  const clean = preserveOrNormalizeTerm(rawQuery);
   if (!clean) return [];
 
   const opts = normalizeDictSearchOptions(options);
@@ -429,6 +476,10 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
   if (!targets.length) return [];
 
   const ranked = rankDictionariesForQuery(targets, clean, options);
+  const morphTerms = isAnyMorphCode(clean)
+    ? expandMorphologyLookupCandidates(clean).slice(0, 4)
+    : [clean];
+
   const perDictLimit = Math.max(1, Math.min(Number(options.perDictLimit) || 3, 12));
   const maxTotal = Math.max(10, Math.min(Number(options.maxTotal) || 60, 150));
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || 4, 6));
@@ -448,10 +499,15 @@ export async function searchAcrossDictionaries(dictionaries, rawQuery, options =
       if (collected.length >= maxTotal && !options.scanAllEvenFull) return;
 
       try {
-        const hits = await myswordDictionaryAdapter.searchEntries(mod.path, clean, {
-          ...opts,
-          limit: perDictLimit
-        });
+        let hits = [];
+        for (const qTerm of morphTerms) {
+          if (signal && signal.aborted) return;
+          hits = await myswordDictionaryAdapter.searchEntries(mod.path, qTerm, {
+            ...opts,
+            limit: perDictLimit
+          });
+          if (hits.length) break;
+        }
         for (const hit of hits) {
           collected.push({
             module: mod,
