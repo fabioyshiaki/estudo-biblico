@@ -25,12 +25,14 @@ const cmtState = {
   hasIntro: false,
   showingIntro: false,
   explicitSection: null, // { book, chapter, fromVerse, toVerse } | null
-  currentCursor: null    // { book, chapter, fromVerse }
+  currentCursor: null,   // { book, chapter, fromVerse }
+  renderedKey: ''
 };
 
 let renderSeq = 0;
 let imageRenderSeq = 0;
 let loadingTimer = null;
+let inFlightKey = '';
 
 let callbacks = {
   onOpenSources: () => {},
@@ -48,6 +50,13 @@ function clearPendingLoadingTimer() {
     window.clearTimeout(loadingTimer);
     loadingTimer = null;
   }
+}
+
+function buildRenderKey(modulePath, book, chapter, verse, showIntro, explicitSection) {
+  const expPart = explicitSection
+    ? `${explicitSection.book || 0}:${explicitSection.chapter || 0}:${explicitSection.fromVerse || 0}-${explicitSection.toVerse || 0}`
+    : '';
+  return `${modulePath || ''}|${book || 0}|${chapter || 0}|${verse || 0}|${showIntro ? '1' : '0'}|${expPart}`;
 }
 
 function escapeHtml(str) {
@@ -80,6 +89,14 @@ function getSourceLine(mod) {
   const primary = getPreferredLabel(mod, 'Comentário');
   const secondary = sortBy === 'title' ? (mod.abbr || '') : (mod.title || '');
   return secondary && secondary !== primary ? `${primary} • ${secondary}` : primary;
+}
+
+function centerActiveChipHorizontally(rootEl) {
+  const stripEl = rootEl ? rootEl.querySelector('#cmt-sections-strip') : null;
+  const activeChip = stripEl ? stripEl.querySelector('.cmt-section-chip.is-active') : null;
+  if (!stripEl || !activeChip) return;
+  const targetLeft = activeChip.offsetLeft - (stripEl.clientWidth / 2) + (activeChip.offsetWidth / 2);
+  stripEl.scrollLeft = Math.max(0, Math.round(targetLeft));
 }
 
 function openImageLightbox(src, altText) {
@@ -465,37 +482,39 @@ export function getCommentaryViewState() {
 export async function renderCommentaryView({
   resetScroll = true,
   explicitSection = null,
-  showIntro = false
+  showIntro = false,
+  force = false
 } = {}) {
   if (store.getActiveMode() !== 'commentary') {
     clearPendingLoadingTimer();
+    inFlightKey = '';
     return;
   }
 
-  const seq = ++renderSeq;
-  const imgSeq = ++imageRenderSeq;
   const container = document.getElementById('reader-content');
   const scrollBox = document.getElementById('reader-scroll');
   if (!container) return;
-
-  clearPendingLoadingTimer();
-  ensureCompanionStyles();
-  container.classList.remove('has-interlinear');
 
   const st = store.getState();
   const book = st.book || 1;
   const chapter = st.chapter || 1;
   const verse = st.verse || 1;
   const mod = store.getActiveCommentary();
+  const existingRoot = container.querySelector('.cmt-reader');
+  const hasExistingDom = Boolean(existingRoot);
 
   if (!mod) {
+    clearPendingLoadingTimer();
+    inFlightKey = '';
     cmtState.entries = [];
     cmtState.chapterSections = [];
     cmtState.hasIntro = false;
     cmtState.showingIntro = false;
     cmtState.explicitSection = null;
     cmtState.currentCursor = null;
+    cmtState.renderedKey = '';
 
+    container.classList.remove('has-interlinear');
     container.innerHTML =
       '<div class="empty-state">' +
         '<h2>Nenhum comentário carregado</h2>' +
@@ -511,29 +530,59 @@ export async function renderCommentaryView({
     return;
   }
 
-  cmtState.showingIntro = Boolean(showIntro);
-  cmtState.explicitSection = explicitSection ? { ...explicitSection } : null;
+  const effectiveShowIntro = Boolean(showIntro);
+  const effectiveExplicit = explicitSection ? { ...explicitSection } : null;
+  const targetKey = buildRenderKey(mod.path, book, chapter, verse, effectiveShowIntro, effectiveExplicit);
 
-  loadingTimer = window.setTimeout(() => {
-    loadingTimer = null;
-    if (seq !== renderSeq || store.getActiveMode() !== 'commentary') return;
-    container.innerHTML =
-      '<div class="empty-state">' +
-        `<p>Carregando comentário de ${escapeHtml(formatReference(book, chapter, verse))}...</p>` +
-      '</div>';
-  }, LOADING_DEBOUNCE_MS);
+  // Se a mesma passagem e o mesmo comentário já estão na tela, não recarrega nem mexe no scroll
+  if (!force && hasExistingDom && cmtState.renderedKey === targetKey) {
+    const subEl = existingRoot.querySelector('.cmt-context-sub');
+    if (subEl) {
+      subEl.textContent = getSourceLine(mod);
+    }
+    notifyMeta(mod, book, chapter, verse);
+    return;
+  }
+
+  // Se uma consulta idêntica já está em andamento, não reinicia o processo
+  if (!force && inFlightKey === targetKey) {
+    return;
+  }
+
+  const seq = ++renderSeq;
+  const imgSeq = ++imageRenderSeq;
+  const preservedScrollTop = !resetScroll && scrollBox ? scrollBox.scrollTop : 0;
+  inFlightKey = targetKey;
+
+  clearPendingLoadingTimer();
+  ensureCompanionStyles();
+  container.classList.remove('has-interlinear');
+
+  cmtState.showingIntro = effectiveShowIntro;
+  cmtState.explicitSection = effectiveExplicit;
+
+  if (resetScroll || !hasExistingDom) {
+    loadingTimer = window.setTimeout(() => {
+      loadingTimer = null;
+      if (seq !== renderSeq || store.getActiveMode() !== 'commentary') return;
+      container.innerHTML =
+        '<div class="empty-state">' +
+          `<p>Carregando comentário de ${escapeHtml(formatReference(book, chapter, verse))}...</p>` +
+        '</div>';
+    }, LOADING_DEBOUNCE_MS);
+  }
 
   try {
     const [entriesRaw, sections, hasIntro] = await Promise.all([
-      showIntro
+      effectiveShowIntro
         ? myswordCommentaryAdapter.getBookIntro(mod.path, book).then((r) => (r ? [r] : []))
-        : explicitSection
+        : effectiveExplicit
           ? myswordCommentaryAdapter.getSectionByRange(
               mod.path,
-              explicitSection.book,
-              explicitSection.chapter,
-              explicitSection.fromVerse,
-              explicitSection.toVerse
+              effectiveExplicit.book,
+              effectiveExplicit.chapter,
+              effectiveExplicit.fromVerse,
+              effectiveExplicit.toVerse
             )
           : myswordCommentaryAdapter.getEntriesForPassage(mod.path, book, chapter, verse),
       myswordCommentaryAdapter.getChapterSections(mod.path, book, chapter).catch(() => []),
@@ -542,11 +591,13 @@ export async function renderCommentaryView({
 
     if (seq !== renderSeq || store.getActiveMode() !== 'commentary') return;
     clearPendingLoadingTimer();
+    inFlightKey = '';
 
     const entries = Array.isArray(entriesRaw) ? entriesRaw : [];
     cmtState.entries = entries;
     cmtState.chapterSections = Array.isArray(sections) ? sections : [];
     cmtState.hasIntro = Boolean(hasIntro);
+    cmtState.renderedKey = targetKey;
 
     if (entries.length) {
       const last = entries[entries.length - 1];
@@ -573,11 +624,7 @@ export async function renderCommentaryView({
     const rootEl = container.querySelector('.cmt-reader');
     if (rootEl) {
       bindCommentaryEvents(rootEl, mod, book, chapter, verse);
-
-      const activeChip = rootEl.querySelector('.cmt-section-chip.is-active');
-      if (activeChip && typeof activeChip.scrollIntoView === 'function') {
-        activeChip.scrollIntoView({ behavior: 'auto', inline: 'center', block: 'nearest' });
-      }
+      centerActiveChipHorizontally(rootEl);
 
       if (entries.some((e) => e.hasImages)) {
         hydrateCommentaryImages(rootEl, mod.path, entries, imgSeq);
@@ -585,12 +632,15 @@ export async function renderCommentaryView({
     }
 
     notifyMeta(mod, book, chapter, verse);
-    if (resetScroll && scrollBox) {
-      scrollBox.scrollTop = 0;
+    if (scrollBox) {
+      scrollBox.scrollTop = resetScroll ? 0 : preservedScrollTop;
     }
   } catch (err) {
     if (seq !== renderSeq || store.getActiveMode() !== 'commentary') return;
     clearPendingLoadingTimer();
+    inFlightKey = '';
+    cmtState.renderedKey = '';
+
     const msg = err && err.message ? err.message : 'Erro ao consultar comentário.';
     appLogger.error('CMT_LOAD', `Falha ao abrir comentário (${getPreferredLabel(mod)}) em ${formatReference(book, chapter, verse)}: ${msg}`, err);
 
