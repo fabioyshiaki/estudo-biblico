@@ -101,6 +101,25 @@ function createWebFallback() {
       }
       return { rows: mockVerses };
     },
+    async syncCommentaryIndex() {
+      return {
+        ready: false,
+        indexing: false,
+        indexedCount: 0,
+        totalCount: 0,
+        newlyIndexed: 0,
+        elapsedMs: 0
+      };
+    },
+    async queryCommentaryCoverage() {
+      return {
+        ready: false,
+        indexing: false,
+        indexedCount: 0,
+        totalCount: 0,
+        matches: []
+      };
+    },
     async closeAllModules() {
       return { closed: true };
     }
@@ -217,6 +236,23 @@ export const nativeBridge = {
         sql,
         params: strParams
       })
+    );
+  },
+
+  syncCommentaryIndex() {
+    return runLogged('INDEX', 'syncCommentaryIndex', '', () =>
+      pluginOrFallback().syncCommentaryIndex()
+    );
+  },
+
+  queryCommentaryCoverage(book, chapter, verse = 1) {
+    const payload = {
+      book: Math.max(1, Number(book) || 1),
+      chapter: Math.max(1, Number(chapter) || 1),
+      verse: Math.max(1, Number(verse) || 1)
+    };
+    return runLogged('INDEX', 'queryCommentaryCoverage', payload, () =>
+      pluginOrFallback().queryCommentaryCoverage(payload)
     );
   },
 
