@@ -48,6 +48,13 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function extractRows(res) {
+  if (Array.isArray(res)) return res;
+  if (res && Array.isArray(res.rows)) return res.rows;
+  if (res && Array.isArray(res.results)) return res.results;
+  return [];
+}
+
 function getModuleOriginLabel(mod, fallbackPath = '') {
   if (mod) {
     return mod.abbr || mod.title || mod.sourceFileName || mod.fileName || getFileNameFromPath(mod.path) || '';
@@ -110,26 +117,36 @@ function formatFsFallbackHtml(fsCode, sourceModulePath) {
   `;
 }
 
+function mapInternalRow(row, modulePath, fallbackWord = '') {
+  if (!row) return null;
+  const word = String(row.word || row.WORD || fallbackWord).trim();
+  const html = String(row.data || row.DATA || row.content || row.html || '').trim();
+  if (!word && !html) return null;
+  return {
+    word: word || fallbackWord,
+    html,
+    modulePath,
+    sourceFileName: getFileNameFromPath(modulePath)
+  };
+}
+
 async function queryInternalEntry(modulePath, rawWord, delta = 0) {
   const cleanWord = String(rawWord || '').trim();
   const fsCode = normalizeFsCode(cleanWord);
 
   if (delta !== 0) {
+    if (!cleanWord) {
+      const sqlFirst = 'SELECT word, data FROM dictionary ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 1';
+      const rowsFirst = extractRows(await nativeBridge.queryModule(modulePath, sqlFirst, []));
+      return rowsFirst.length > 0 ? mapInternalRow(rowsFirst[0], modulePath) : null;
+    }
+
     const curWord = cleanWord.toUpperCase();
     const sql = delta > 0
-      ? 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) > ? ORDER BY relativeorder ASC, rowid ASC LIMIT 1'
-      : 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) < ? ORDER BY relativeorder DESC, rowid DESC LIMIT 1';
-    const res = await nativeBridge.queryModule(modulePath, sql, [curWord]);
-    const rows = Array.isArray(res) ? res : (Array.isArray(res && res.rows) ? res.rows : []);
-    if (rows.length > 0) {
-      return {
-        word: String(rows[0].word || rows[0].WORD || '').trim(),
-        html: String(rows[0].data || rows[0].DATA || '').trim(),
-        modulePath,
-        sourceFileName: getFileNameFromPath(modulePath)
-      };
-    }
-    return null;
+      ? 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) > ? ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 1'
+      : 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) < ? ORDER BY UPPER(TRIM(word)) DESC, word DESC LIMIT 1';
+    const rows = extractRows(await nativeBridge.queryModule(modulePath, sql, [curWord]));
+    return rows.length > 0 ? mapInternalRow(rows[0], modulePath) : null;
   }
 
   if (fsCode) {
@@ -137,36 +154,19 @@ async function queryInternalEntry(modulePath, rawWord, delta = 0) {
   }
 
   if (!cleanWord) {
-    const sqlFirst = 'SELECT word, data FROM dictionary ORDER BY relativeorder ASC, rowid ASC LIMIT 1';
-    const resFirst = await nativeBridge.queryModule(modulePath, sqlFirst, []);
-    const rowsFirst = Array.isArray(resFirst) ? resFirst : (Array.isArray(resFirst && resFirst.rows) ? resFirst.rows : []);
-    if (rowsFirst.length > 0) {
-      return {
-        word: String(rowsFirst[0].word || rowsFirst[0].WORD || '').trim(),
-        html: String(rowsFirst[0].data || rowsFirst[0].DATA || '').trim(),
-        modulePath,
-        sourceFileName: getFileNameFromPath(modulePath)
-      };
-    }
-    return null;
+    const sqlFirst = 'SELECT word, data FROM dictionary ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 1';
+    const rowsFirst = extractRows(await nativeBridge.queryModule(modulePath, sqlFirst, []));
+    return rowsFirst.length > 0 ? mapInternalRow(rowsFirst[0], modulePath) : null;
   }
 
+  const upperWord = cleanWord.toUpperCase();
   const sql =
     'SELECT word, data FROM dictionary ' +
     'WHERE UPPER(TRIM(word)) = ? OR UPPER(TRIM(word)) LIKE ? ' +
-    'ORDER BY CASE WHEN UPPER(TRIM(word)) = ? THEN 0 ELSE 1 END, relativeorder ASC, rowid ASC LIMIT 1';
-  const params = [cleanWord.toUpperCase(), `${cleanWord.toUpperCase()}%`, cleanWord.toUpperCase()];
-  const res = await nativeBridge.queryModule(modulePath, sql, params);
-  const rows = Array.isArray(res) ? res : (Array.isArray(res && res.rows) ? res.rows : []);
-  if (rows.length > 0) {
-    return {
-      word: String(rows[0].word || rows[0].WORD || cleanWord).trim(),
-      html: String(rows[0].data || rows[0].DATA || '').trim(),
-      modulePath,
-      sourceFileName: getFileNameFromPath(modulePath)
-    };
-  }
-  return null;
+    'ORDER BY CASE WHEN UPPER(TRIM(word)) = ? THEN 0 ELSE 1 END, LENGTH(word) ASC, UPPER(TRIM(word)) ASC, word ASC LIMIT 1';
+  const params = [upperWord, `${upperWord}%`, upperWord];
+  const rows = extractRows(await nativeBridge.queryModule(modulePath, sql, params));
+  return rows.length > 0 ? mapInternalRow(rows[0], modulePath, cleanWord) : null;
 }
 
 function renderEntry() {
@@ -298,6 +298,7 @@ export async function openDictionaryEntry(
       if (isInternalDictModule(modObj)) {
         try {
           entry = await queryInternalEntry(modulePath, term, 0);
+          if (seq !== renderSeq) return null;
         } catch (err) {
           appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no dicionário interno`, err);
         }
@@ -390,15 +391,19 @@ export async function stepDictionaryEntry(delta) {
 
   const curWord = currentEntry ? currentEntry.word : currentQuery;
   if (isInternalDictModule(active)) {
-    const nextInternal = await queryInternalEntry(active.path, curWord, Number(delta) || 1);
-    if (nextInternal) {
-      currentEntry = nextInternal;
-      currentQuery = nextInternal.word || currentQuery;
-      if (store.getActiveMode() === 'dictionary') {
-        renderEntry();
-      } else {
-        emitMetaChange();
+    try {
+      const nextInternal = await queryInternalEntry(active.path, curWord, Number(delta) || 1);
+      if (nextInternal) {
+        currentEntry = nextInternal;
+        currentQuery = nextInternal.word || currentQuery;
+        if (store.getActiveMode() === 'dictionary') {
+          renderEntry();
+        } else {
+          emitMetaChange();
+        }
       }
+    } catch (err) {
+      appLogger.warn('DICT_STEP', 'Falha ao navegar no dicionário interno', err);
     }
     return;
   }
@@ -452,12 +457,16 @@ export async function loadFirstOrCurrentEntry() {
   }
 
   if (isInternalDictModule(active)) {
-    const firstInternal = await queryInternalEntry(active.path, '', 0);
-    if (firstInternal) {
-      currentEntry = firstInternal;
-      currentQuery = firstInternal.word || '';
-      renderEntry();
-      return;
+    try {
+      const firstInternal = await queryInternalEntry(active.path, '', 0);
+      if (firstInternal) {
+        currentEntry = firstInternal;
+        currentQuery = firstInternal.word || '';
+        renderEntry();
+        return;
+      }
+    } catch (err) {
+      appLogger.warn('DICT_FIRST', 'Falha ao abrir primeiro verbete do dicionário interno', err);
     }
   }
 
@@ -574,12 +583,12 @@ export async function openActiveDictionaryTerms() {
     try {
       const cleanQ = String(q || '').trim();
       if (isInternalDictModule(active)) {
+        const upperQ = cleanQ.toUpperCase();
         const sql = cleanQ
-          ? 'SELECT word FROM dictionary WHERE UPPER(TRIM(word)) LIKE ? ORDER BY relativeorder ASC, rowid ASC LIMIT 120'
-          : 'SELECT word FROM dictionary ORDER BY relativeorder ASC, rowid ASC LIMIT 120';
-        const params = cleanQ ? [`%${cleanQ.toUpperCase()}%`] : [];
-        const res = await nativeBridge.queryModule(active.path, sql, params);
-        const rows = Array.isArray(res) ? res : (Array.isArray(res && res.rows) ? res.rows : []);
+          ? 'SELECT word FROM dictionary WHERE UPPER(TRIM(word)) LIKE ? ORDER BY CASE WHEN UPPER(TRIM(word)) LIKE ? THEN 0 ELSE 1 END, LENGTH(word) ASC, UPPER(TRIM(word)) ASC, word ASC LIMIT 120'
+          : 'SELECT word FROM dictionary ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 120';
+        const params = cleanQ ? [`%${upperQ}%`, `${upperQ}%`] : [];
+        const rows = extractRows(await nativeBridge.queryModule(active.path, sql, params));
         if (!resultsBox) return;
         if (!rows.length) {
           resultsBox.innerHTML = '<div style="padding:8px;color:var(--text-muted);">Nenhum termo encontrado.</div>';
