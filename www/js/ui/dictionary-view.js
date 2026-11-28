@@ -50,7 +50,7 @@ function escapeHtml(str) {
 
 function getModuleOriginLabel(mod, fallbackPath = '') {
   if (mod) {
-    return mod.sourceFileName || mod.fileName || getFileNameFromPath(mod.path) || mod.title || mod.abbr || '';
+    return mod.abbr || mod.title || mod.sourceFileName || mod.fileName || getFileNameFromPath(mod.path) || '';
   }
   return getFileNameFromPath(fallbackPath);
 }
