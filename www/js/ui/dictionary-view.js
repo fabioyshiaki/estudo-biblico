@@ -14,6 +14,13 @@ import {
   extractFsCodeFromElement,
   getFileNameFromPath
 } from '../formats/fs-internal-lookup.js';
+import {
+  isUgntMorphCode,
+  isBhsMorphCode,
+  isAnyMorphCode,
+  expandMorphologyLookupCandidates,
+  buildUgntMorphFallbackHtml
+} from '../formats/morph-mapper.js';
 import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
 import { ensureCompanionStyles } from '../formats/companion-dicts.js';
 import { openModalShell, closeModal } from './nav-modal.js';
@@ -399,8 +406,13 @@ function renderEntry({ resetScroll = true } = {}) {
 
   const scrollBox = document.getElementById('reader-scroll');
   const entryPath = currentEntry.modulePath || (active ? active.path : '');
-  const matchedMod = modulesList.find((m) => m.path === entryPath) || active;
-  const modLabel = getModuleOriginLabel(matchedMod, entryPath);
+  const matchedMod = entryPath ? (modulesList.find((m) => m.path === entryPath) || active) : null;
+  const modLabel = currentEntry.isSyntheticMorph
+    ? (currentEntry.sourceFileName || 'Decodificador morfológico (UGNT)')
+    : getModuleOriginLabel(matchedMod, entryPath);
+  const mappedLine = currentEntry.mappedFromCode
+    ? `<div class="dict-entry-mapped" style="font-size:0.82em;opacity:0.72;margin-top:2px;">Código do módulo: <code>${escapeHtml(currentEntry.mappedFromCode)}</code> &rarr; <strong>${escapeHtml(currentEntry.word || '')}</strong></div>`
+    : '';
   const dirAttr = currentEntry.isRtl ? ' dir="rtl"' : '';
   const imgSeq = ++imageRenderSeq;
 
@@ -409,13 +421,14 @@ function renderEntry({ resetScroll = true } = {}) {
       <header class="dict-entry-header">
         <span class="dict-entry-mod">${escapeHtml(modLabel)}</span>
         <h1 class="dict-entry-word">${escapeHtml(currentEntry.word || '')}</h1>
+        ${mappedLine}
       </header>
       <div class="dict-entry-body"${dirAttr}>${currentEntry.html || ''}</div>
     </article>
   `;
 
   const cardEl = container.querySelector('.dict-entry-card');
-  if (cardEl && entryPath) {
+  if (cardEl && entryPath && !currentEntry.isSyntheticMorph) {
     hydrateDictionaryImages(cardEl, entryPath, currentEntry, imgSeq);
   }
 
@@ -445,9 +458,21 @@ export async function openDictionaryEntry(
 
   const rawStr = String(rawTerm || '').trim();
   const fsCode = normalizeFsCode(rawStr);
-  const wordCandidate = matchedWord || rawStr;
-  const term = fsCode || normalizeLookupTerm(wordCandidate);
+  const wordCandidate = String(matchedWord || rawStr).trim();
+  const isUgnt = !fsCode && isUgntMorphCode(wordCandidate);
+  const isBhs = !fsCode && isBhsMorphCode(wordCandidate);
+  const isMorph = !fsCode && (isAnyMorphCode(wordCandidate) || String(moduleHint || '').trim().toLowerCase() === 'morph');
+
+  const term = fsCode
+    ? fsCode
+    : isUgnt
+      ? wordCandidate.replace(/^<WT/i, '').replace(/>$/i, '').replace(/·/g, '.').toUpperCase()
+      : isBhs
+        ? wordCandidate.replace(/^<WT/i, '').replace(/>$/i, '')
+        : normalizeLookupTerm(wordCandidate);
   if (!term) return null;
+
+  const effectiveModuleHint = moduleHint || (isMorph ? 'morph' : '');
 
   if (clearFilter) {
     currentFilterTerm = '';
@@ -513,11 +538,11 @@ export async function openDictionaryEntry(
     }
   }
 
-  // 2. Consulta o módulo alvo ou os dicionários configurados no aplicativo
+  // 2. Consulta o módulo alvo ou os dicionários configurados no aplicativo (com mapeamento morfológico)
   if (!entry && modulesList.length > 0) {
     const lookupOpts = {
       ...currentSearchOptions,
-      moduleHint,
+      moduleHint: effectiveModuleHint,
       activePath: modulePath || (active ? active.path : '')
     };
 
@@ -531,18 +556,26 @@ export async function openDictionaryEntry(
           appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no dicionário interno`, err);
         }
       } else {
-        try {
-          const directEntry = await myswordDictionaryAdapter.getEntry(modulePath, term, lookupOpts);
+        const directTerms = isMorph ? expandMorphologyLookupCandidates(term) : [term];
+        for (const candidateTerm of directTerms) {
           if (seq !== renderSeq) return null;
-          if (directEntry) {
-            entry = {
-              ...directEntry,
-              modulePath,
-              sourceFileName: getModuleOriginLabel(modObj, modulePath)
-            };
+          try {
+            const directEntry = await myswordDictionaryAdapter.getEntry(modulePath, candidateTerm, lookupOpts);
+            if (seq !== renderSeq) return null;
+            if (directEntry) {
+              const entryWord = String(directEntry.word || candidateTerm).trim();
+              entry = {
+                ...directEntry,
+                modulePath,
+                sourceFileName: getModuleOriginLabel(modObj, modulePath),
+                mappedFromCode: entryWord.toUpperCase() !== term.toUpperCase() ? term : ''
+              };
+              break;
+            }
+          } catch (err) {
+            appLogger.warn('DICT_ENTRY', `Falha ao abrir "${candidateTerm}" no módulo selecionado`, err);
+            break;
           }
-        } catch (err) {
-          appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no módulo selecionado`, err);
         }
       }
     }
@@ -554,10 +587,12 @@ export async function openDictionaryEntry(
 
       if (lookupRes && lookupRes.entry) {
         const foundPath = (lookupRes.module && lookupRes.module.path) || '';
+        const entryWord = String(lookupRes.entry.word || lookupRes.matchedCode || term).trim();
         entry = {
           ...lookupRes.entry,
           modulePath: foundPath,
-          sourceFileName: getModuleOriginLabel(lookupRes.module, foundPath)
+          sourceFileName: getModuleOriginLabel(lookupRes.module, foundPath),
+          mappedFromCode: entryWord.toUpperCase() !== term.toUpperCase() ? term : ''
         };
         if (foundPath) {
           activeModulePath = foundPath;
@@ -569,7 +604,7 @@ export async function openDictionaryEntry(
 
   clearPendingLoadingTimer();
 
-  // 3. Fallback informativo caso seja código FS sem entrada no banco (quando não é troca silenciosa)
+  // 3A. Fallback informativo caso seja código FS sem entrada no banco
   if (!entry && fsCode && !silentNotFound) {
     entry = {
       word: fsCode,
@@ -580,12 +615,33 @@ export async function openDictionaryEntry(
     };
   }
 
+  // 3B. Fallback analítico em português caso seja código UGNT raro ausente nos dicionários .dct
+  if (!entry && isUgnt && !silentNotFound) {
+    const morphHtml = buildUgntMorphFallbackHtml(term, expandMorphologyLookupCandidates(term));
+    if (morphHtml) {
+      entry = {
+        word: term,
+        html: morphHtml,
+        raw: '',
+        modulePath: '',
+        sourceFileName: 'Decodificador morfológico (UGNT)',
+        isSyntheticMorph: true
+      };
+    }
+  }
+
   if (!entry) {
     if (!silentNotFound) {
+      const searchedAll = Boolean(fallbackAll && !modulePath);
+      const targetName = getModuleOriginLabel(targetMod, modulePath || activeModulePath) || 'módulo selecionado';
+      const notFoundMsg = searchedAll
+        ? `Não foi encontrado verbete para "${term}" nos dicionários carregados.`
+        : `Não foi encontrado verbete para "${term}" em ${targetName}.`;
+
       if (store.getActiveMode() === 'dictionary') {
         renderEmpty({
           title: 'Verbete não encontrado',
-          message: `Não foi encontrado verbete para "${term}" no módulo selecionado.`,
+          message: notFoundMsg,
           showSourcesButton: false
         });
       } else {
@@ -595,6 +651,8 @@ export async function openDictionaryEntry(
     }
     return null;
   }
+
+  currentQuery = entry.word || term;
 
   if (
     pushHistory &&
@@ -622,7 +680,7 @@ export async function stepDictionaryEntry(delta) {
   const active = getActiveModule();
   if (!active) return;
 
-  const curWord = currentEntry ? currentEntry.word : currentQuery;
+  const curWord = currentEntry && !currentEntry.isSyntheticMorph ? currentEntry.word : currentQuery;
   try {
     const nextEntry = await fetchAdjacentEntryForModule(active, curWord, Number(delta) || 1);
     if (nextEntry) {
@@ -653,7 +711,7 @@ export async function loadFirstOrCurrentEntry() {
     return;
   }
 
-  if (currentEntry && currentEntry.modulePath === active.path) {
+  if (currentEntry && (currentEntry.modulePath === active.path || currentEntry.isSyntheticMorph)) {
     renderEntry({ resetScroll: false });
     return;
   }
