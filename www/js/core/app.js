@@ -14,7 +14,11 @@ import { clearBibleSearchCache } from '../formats/bible-search.js';
 import { clearUnifiedDictSearchCache } from '../formats/dictionary-search.js';
 import { clearCommentarySearchCache } from '../formats/commentary-search.js';
 import { clearMapServiceCache } from '../formats/map-service.js';
-import { clearFsLookupCache } from '../formats/fs-internal-lookup.js';
+import {
+  clearFsLookupCache,
+  discoverInternalDictionaryModules,
+  getFileNameFromPath
+} from '../formats/fs-internal-lookup.js';
 import {
   myswordCommentaryAdapter,
   clearCommentaryLookupCache
@@ -86,6 +90,7 @@ let pendingScrollVerse = null;
 let suppressModeAutoLoad = false;
 let suppressModuleAutoLoad = false;
 let suppressLocationAutoLoad = false;
+let mergedDictionariesCache = [];
 const jumpHistory = [];
 
 function escapeHtml(str) {
@@ -106,10 +111,27 @@ function formatCompactRef(bookId, chapter, verse = 1) {
 
 function getPreferredModuleLabel(mod, fallback = '') {
   if (!mod) return fallback;
+  const originFile = mod.sourceFileName || mod.fileName || getFileNameFromPath(mod.path);
+  if (mod.isInternalDictionary) {
+    return originFile || mod.title || mod.abbr || fallback;
+  }
   const sortBy = store.getPrefs().bibleSortBy === 'title' ? 'title' : 'abbr';
   return sortBy === 'title'
-    ? (mod.title || mod.abbr || mod.fileName || fallback)
-    : (mod.abbr || mod.title || mod.fileName || fallback);
+    ? (mod.title || mod.abbr || originFile || fallback)
+    : (mod.abbr || mod.title || originFile || fallback);
+}
+
+function getAvailableDictionaries() {
+  const extDicts = store.getDictionaries();
+  if (!mergedDictionariesCache.length) return extDicts;
+  const byPath = new Map(mergedDictionariesCache.map((m) => [m.path, m]));
+  const combined = [...extDicts];
+  for (const m of mergedDictionariesCache) {
+    if (!combined.some((x) => x.path === m.path)) {
+      combined.push(byPath.get(m.path));
+    }
+  }
+  return combined;
 }
 
 function applyVisualPrefs(prefs) {
@@ -165,8 +187,9 @@ function refreshQuickCommentaryTabs() {
 
 function refreshQuickDictionaryTabs() {
   const bar = document.getElementById('quick-dicts-bar');
+  const allDicts = getAvailableDictionaries();
   const active = store.getActiveDictionary();
-  renderQuickTabs(bar, 'dictionary', store.getDictionaries(), active ? active.path : '', (path) => {
+  renderQuickTabs(bar, 'dictionary', allDicts, active ? active.path : '', (path) => {
     recordRecentModule('dictionary', path);
     store.setActiveDictionary(path, { silent: true });
     setActiveDictionaryModule(path, {
@@ -270,7 +293,8 @@ function updateCommentaryChrome(meta = {}) {
 }
 
 function updateDictionaryChrome(meta = {}) {
-  const active = meta.activeModule || store.getActiveDictionary();
+  const allDicts = getAvailableDictionaries();
+  const active = meta.activeModule || allDicts.find((m) => m.path === (store.getActiveDictionary() && store.getActiveDictionary().path)) || store.getActiveDictionary();
   const dictLabel = document.getElementById('label-active-dict');
   const entryLabel = document.getElementById('label-active-entry');
   const topPrevEntry = document.getElementById('btn-top-prev-entry');
@@ -372,12 +396,14 @@ function rememberBibleScrollIfActive() {
   }
 }
 
-function syncDictionariesFromStore() {
-  const dicts = store.getDictionaries();
-  syncDictionaryModules(dicts);
+async function syncDictionariesFromStore() {
+  const extDicts = store.getDictionaries();
+  const internalDicts = await discoverInternalDictionaryModules().catch(() => []);
+  mergedDictionariesCache = [...extDicts, ...internalDicts];
+  syncDictionaryModules(mergedDictionariesCache);
   const activeDict = store.getActiveDictionary();
   const dState = getDictionaryViewState();
-  if (activeDict && dState.activeModulePath !== activeDict.path) {
+  if (activeDict && dState.activeModulePath !== activeDict.path && mergedDictionariesCache.some((m) => m.path === activeDict.path)) {
     setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
   }
   updateDictionaryChrome({ activeModule: activeDict });
@@ -864,7 +890,7 @@ async function goBackFromBibleJump() {
 }
 
 async function openTermInDictionary(term, { searchAll = false, moduleHint = '', sourceModulePath = '' } = {}) {
-  const dicts = store.getDictionaries();
+  const dicts = getAvailableDictionaries();
   if (!dicts.length && !sourceModulePath) {
     showToast('Adicione um dicionário (.dct.mybible) em Configurações → Fontes.');
     openSettingsModal({ initialTab: 'sources', initialKind: 'dictionary' });
@@ -891,12 +917,21 @@ async function openTermInDictionary(term, { searchAll = false, moduleHint = '', 
 
   syncModeChrome();
 
-  await openDictionaryEntry(term, {
+  const opened = await openDictionaryEntry(term, {
     moduleHint,
     sourceModulePath,
     pushHistory: true,
     fallbackAll: true
   });
+
+  if (opened && opened.modulePath) {
+    recordRecentModule('dictionary', opened.modulePath);
+    store.setActiveDictionary(opened.modulePath, { silent: true });
+    updateDictionaryChrome({
+      activeModule: dicts.find((m) => m.path === opened.modulePath) || null,
+      entryWord: opened.word || term
+    });
+  }
 }
 
 async function renderActiveMode({ resetScroll = false } = {}) {
@@ -936,7 +971,7 @@ async function syncPermissionAndData() {
     (srcRes && srcRes.sources) || [],
     (modRes && modRes.modules) || []
   );
-  syncDictionariesFromStore();
+  await syncDictionariesFromStore();
 }
 
 function bindShellEvents() {
@@ -1157,7 +1192,7 @@ function bindStateEvents() {
 
   eventBus.on(EVENTS.PREFS_CHANGED, (prefs) => {
     applyVisualPrefs(prefs);
-    syncDictionaryModules(store.getDictionaries());
+    syncDictionaryModules(getAvailableDictionaries());
     refreshQuickBibleTabs();
     refreshQuickCommentaryTabs();
     updateDictionaryChrome(getDictionaryViewState());
@@ -1173,7 +1208,7 @@ function bindStateEvents() {
     }
   });
 
-  eventBus.on(EVENTS.SOURCES_UPDATED, () => {
+  eventBus.on(EVENTS.SOURCES_UPDATED, async () => {
     clearCompanionCache();
     clearMediaIndexCache();
     clearDictionaryLookupCache();
@@ -1185,7 +1220,7 @@ function bindStateEvents() {
     clearBibleSearchSession();
     myswordCommentaryAdapter.clearCache();
     clearCommentaryLookupCache();
-    syncDictionariesFromStore();
+    await syncDictionariesFromStore();
     refreshQuickBibleTabs();
     refreshQuickCommentaryTabs();
 
@@ -1285,7 +1320,7 @@ async function bootstrap() {
       'Ambiente nativo': nativeBridge.isNative() ? 'Android (Capacitor)' : 'Navegador Web',
       'Permissão arquivos': st.hasStoragePermission ? 'Concedida' : 'Negada',
       'Modo ativo': store.getActiveMode(),
-      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getCommentaries().length} Comentário(s), ${store.getDictionaries().length} Dicionário(s)`,
+      'Módulos carregados': `${store.getBibles().length} Bíblia(s), ${store.getCommentaries().length} Comentário(s), ${getAvailableDictionaries().length} Dicionário(s)`,
       'Bíblia ativa': bible ? `${getPreferredModuleLabel(bible)} (${bible.fileName || ''}) • ${formatReference(st.book, st.chapter, st.verse || 1)}` : 'Nenhuma',
       'Comentário ativo': cmt ? `${getPreferredModuleLabel(cmt)} (${cmt.fileName || ''})` : 'Nenhum',
       'Dicionário ativo': dict ? `${getPreferredModuleLabel(dict)} (${dict.fileName || ''}) • verbete: ${dState.currentEntry ? dState.currentEntry.word : 'nenhum'}` : 'Nenhum',
