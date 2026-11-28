@@ -1,4 +1,5 @@
 import { store } from '../core/store.js';
+import { nativeBridge } from '../bridge/native-bridge.js';
 import { getAdapterForModule } from '../formats/format-registry.js';
 import {
   myswordDictionaryAdapter,
@@ -8,7 +9,8 @@ import {
 import { lookupExactAcrossDictionaries } from '../formats/dictionary-lookup.js';
 import {
   lookupFsInModule,
-  normalizeFsCode
+  normalizeFsCode,
+  getFileNameFromPath
 } from '../formats/fs-internal-lookup.js';
 import { openModalShell, closeModal } from './nav-modal.js';
 import { appLogger } from '../core/logger.js';
@@ -46,6 +48,13 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function getModuleOriginLabel(mod, fallbackPath = '') {
+  if (mod) {
+    return mod.sourceFileName || mod.fileName || getFileNameFromPath(mod.path) || mod.title || mod.abbr || '';
+  }
+  return getFileNameFromPath(fallbackPath);
+}
+
 function getActiveModule() {
   if (!modulesList.length) return null;
   if (activeModulePath) {
@@ -58,6 +67,10 @@ function getActiveModule() {
     if (foundStored) return foundStored;
   }
   return modulesList[0];
+}
+
+function isInternalDictModule(mod) {
+  return Boolean(mod && (mod.isInternalDictionary || mod.resourceKind !== 'dictionary'));
 }
 
 function emitMetaChange() {
@@ -90,11 +103,70 @@ function renderEmpty({ title, message, showSourcesButton = true }) {
 }
 
 function formatFsFallbackHtml(fsCode, sourceModulePath) {
-  const modName = sourceModulePath ? sourceModulePath.split('/').pop() : 'módulo atual';
+  const modName = getFileNameFromPath(sourceModulePath) || 'módulo atual';
   return `
     <p><strong>Código de estudo:</strong> ${escapeHtml(fsCode)}</p>
-    <p>Este código figura no texto do módulo (<strong>${escapeHtml(modName)}</strong>) e não possui verbete completo na tabela <code>dictionary</code> interna nem nos dicionários externos carregados.</p>
+    <p>Este código figura no texto do módulo (<strong>${escapeHtml(modName)}</strong>) e não possui verbete completo na tabela <code>dictionary</code> interna nem nos dicionários carregados.</p>
   `;
+}
+
+async function queryInternalEntry(modulePath, rawWord, delta = 0) {
+  const cleanWord = String(rawWord || '').trim();
+  const fsCode = normalizeFsCode(cleanWord);
+
+  if (delta !== 0) {
+    const curWord = cleanWord.toUpperCase();
+    const sql = delta > 0
+      ? 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) > ? ORDER BY relativeorder ASC, rowid ASC LIMIT 1'
+      : 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) < ? ORDER BY relativeorder DESC, rowid DESC LIMIT 1';
+    const res = await nativeBridge.queryModule(modulePath, sql, [curWord]);
+    const rows = Array.isArray(res) ? res : (Array.isArray(res && res.rows) ? res.rows : []);
+    if (rows.length > 0) {
+      return {
+        word: String(rows[0].word || rows[0].WORD || '').trim(),
+        html: String(rows[0].data || rows[0].DATA || '').trim(),
+        modulePath,
+        sourceFileName: getFileNameFromPath(modulePath)
+      };
+    }
+    return null;
+  }
+
+  if (fsCode) {
+    return lookupFsInModule(modulePath, fsCode);
+  }
+
+  if (!cleanWord) {
+    const sqlFirst = 'SELECT word, data FROM dictionary ORDER BY relativeorder ASC, rowid ASC LIMIT 1';
+    const resFirst = await nativeBridge.queryModule(modulePath, sqlFirst, []);
+    const rowsFirst = Array.isArray(resFirst) ? resFirst : (Array.isArray(resFirst && resFirst.rows) ? resFirst.rows : []);
+    if (rowsFirst.length > 0) {
+      return {
+        word: String(rowsFirst[0].word || rowsFirst[0].WORD || '').trim(),
+        html: String(rowsFirst[0].data || rowsFirst[0].DATA || '').trim(),
+        modulePath,
+        sourceFileName: getFileNameFromPath(modulePath)
+      };
+    }
+    return null;
+  }
+
+  const sql =
+    'SELECT word, data FROM dictionary ' +
+    'WHERE UPPER(TRIM(word)) = ? OR UPPER(TRIM(word)) LIKE ? ' +
+    'ORDER BY CASE WHEN UPPER(TRIM(word)) = ? THEN 0 ELSE 1 END, relativeorder ASC, rowid ASC LIMIT 1';
+  const params = [cleanWord.toUpperCase(), `${cleanWord.toUpperCase()}%`, cleanWord.toUpperCase()];
+  const res = await nativeBridge.queryModule(modulePath, sql, params);
+  const rows = Array.isArray(res) ? res : (Array.isArray(res && res.rows) ? res.rows : []);
+  if (rows.length > 0) {
+    return {
+      word: String(rows[0].word || rows[0].WORD || cleanWord).trim(),
+      html: String(rows[0].data || rows[0].DATA || '').trim(),
+      modulePath,
+      sourceFileName: getFileNameFromPath(modulePath)
+    };
+  }
+  return null;
 }
 
 function renderEntry() {
@@ -106,7 +178,7 @@ function renderEntry() {
   if (!active && !currentEntry) {
     renderEmpty({
       title: 'Nenhum dicionário disponível',
-      message: 'Adicione ficheiros .dct.mybible ou módulos com dicionário em Configurações → Fontes.',
+      message: 'Adicione arquivos .dct.mybible ou módulos com dicionário interno em Configurações → Fontes.',
       showSourcesButton: true
     });
     emitMetaChange();
@@ -114,9 +186,10 @@ function renderEntry() {
   }
 
   if (!currentEntry) {
+    const activeName = getModuleOriginLabel(active, activeModulePath);
     renderEmpty({
       title: 'Dicionário pronto',
-      message: `Módulo selecionado: ${active ? (active.title || active.abbr) : 'Dicionário'}. Use a barra superior ou a pesquisa para abrir um verbete ou código FS.`,
+      message: `Módulo selecionado: ${activeName || 'Dicionário'}. Use a barra superior ou a pesquisa para abrir um verbete ou código FS.`,
       showSourcesButton: false
     });
     emitMetaChange();
@@ -124,7 +197,9 @@ function renderEntry() {
   }
 
   const scrollBox = document.getElementById('reader-scroll');
-  const modLabel = active ? (active.title || active.abbr || active.fileName) : 'Módulo interno';
+  const entryPath = currentEntry.modulePath || (active ? active.path : '');
+  const matchedMod = modulesList.find((m) => m.path === entryPath) || active;
+  const modLabel = getModuleOriginLabel(matchedMod, entryPath);
 
   container.innerHTML = `
     <article class="dict-entry-card">
@@ -182,24 +257,31 @@ export async function openDictionaryEntry(
 
   if (store.getActiveMode() === 'dictionary') {
     renderEmpty({
-      title: 'A consultar verbete...',
-      message: `A procurar "${term}"...`,
+      title: 'Consultando verbete...',
+      message: `Buscando "${term}"...`,
       showSourcesButton: false
     });
   }
 
   let entry = null;
 
-  // 1. Se for código FS..., consulta primeiro a tabela `dictionary` interna do próprio módulo
+  // 1. Se for código FS..., consulta a tabela `dictionary` interna do módulo de origem e demais módulos internos
   if (fsCode) {
     const internalHit = await lookupFsInModule(sourceModulePath || activeModulePath, fsCode);
     if (seq !== renderSeq) return null;
     if (internalHit) {
+      const hitPath = internalHit.modulePath || sourceModulePath || activeModulePath;
+      const originFile = internalHit.sourceFileName || getFileNameFromPath(hitPath);
       entry = {
         word: internalHit.word || fsCode,
         html: internalHit.html,
-        modulePath: internalHit.modulePath || activeModulePath
+        modulePath: hitPath,
+        sourceFileName: originFile
       };
+      if (hitPath) {
+        activeModulePath = hitPath;
+        store.setActiveDictionary(hitPath, { silent: true });
+      }
     }
   }
 
@@ -212,26 +294,45 @@ export async function openDictionaryEntry(
     };
 
     if (modulePath) {
-      try {
-        const directEntry = await myswordDictionaryAdapter.getEntry(modulePath, term, lookupOpts);
-        if (seq !== renderSeq) return null;
-        if (directEntry) {
-          entry = directEntry;
+      const modObj = modulesList.find((m) => m.path === modulePath);
+      if (isInternalDictModule(modObj)) {
+        try {
+          entry = await queryInternalEntry(modulePath, term, 0);
+        } catch (err) {
+          appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no dicionário interno`, err);
         }
-      } catch (err) {
-        appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no módulo selecionado`, err);
+      } else {
+        try {
+          const directEntry = await myswordDictionaryAdapter.getEntry(modulePath, term, lookupOpts);
+          if (seq !== renderSeq) return null;
+          if (directEntry) {
+            entry = {
+              ...directEntry,
+              modulePath,
+              sourceFileName: getModuleOriginLabel(modObj, modulePath)
+            };
+          }
+        } catch (err) {
+          appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no módulo selecionado`, err);
+        }
       }
     }
 
-    if (!entry && (fallbackAll || !modulePath || directWord)) {
-      const lookupRes = await lookupExactAcrossDictionaries(modulesList, term, lookupOpts);
+    if (!entry && !fsCode && (fallbackAll || !modulePath || directWord)) {
+      const externalDicts = modulesList.filter((m) => !isInternalDictModule(m));
+      const lookupRes = await lookupExactAcrossDictionaries(externalDicts, term, lookupOpts);
       if (seq !== renderSeq) return null;
 
       if (lookupRes && lookupRes.entry) {
-        entry = lookupRes.entry;
-        if (lookupRes.module && lookupRes.module.path) {
-          activeModulePath = lookupRes.module.path;
-          store.setActiveDictionary(lookupRes.module.path, { silent: true });
+        const foundPath = (lookupRes.module && lookupRes.module.path) || '';
+        entry = {
+          ...lookupRes.entry,
+          modulePath: foundPath,
+          sourceFileName: getModuleOriginLabel(lookupRes.module, foundPath)
+        };
+        if (foundPath) {
+          activeModulePath = foundPath;
+          store.setActiveDictionary(foundPath, { silent: true });
         }
       }
     }
@@ -242,7 +343,8 @@ export async function openDictionaryEntry(
     entry = {
       word: fsCode,
       html: formatFsFallbackHtml(fsCode, sourceModulePath),
-      modulePath: activeModulePath
+      modulePath: sourceModulePath || activeModulePath,
+      sourceFileName: getFileNameFromPath(sourceModulePath || activeModulePath)
     };
   }
 
@@ -286,13 +388,31 @@ export async function stepDictionaryEntry(delta) {
   const active = getActiveModule();
   if (!active) return;
 
+  const curWord = currentEntry ? currentEntry.word : currentQuery;
+  if (isInternalDictModule(active)) {
+    const nextInternal = await queryInternalEntry(active.path, curWord, Number(delta) || 1);
+    if (nextInternal) {
+      currentEntry = nextInternal;
+      currentQuery = nextInternal.word || currentQuery;
+      if (store.getActiveMode() === 'dictionary') {
+        renderEntry();
+      } else {
+        emitMetaChange();
+      }
+    }
+    return;
+  }
+
   const adapter = getAdapterForModule(active);
   if (!adapter || typeof adapter.getAdjacentEntry !== 'function') return;
 
-  const curWord = currentEntry ? currentEntry.word : currentQuery;
   const nextEntry = await adapter.getAdjacentEntry(active.path, curWord, Number(delta) || 1);
   if (nextEntry) {
-    currentEntry = nextEntry;
+    currentEntry = {
+      ...nextEntry,
+      modulePath: active.path,
+      sourceFileName: getModuleOriginLabel(active, active.path)
+    };
     currentQuery = nextEntry.word || currentQuery;
     if (store.getActiveMode() === 'dictionary') {
       renderEntry();
@@ -307,7 +427,7 @@ export async function loadFirstOrCurrentEntry() {
   if (!active) {
     renderEmpty({
       title: 'Nenhum dicionário disponível',
-      message: 'Adicione ficheiros .dct.mybible ou módulos com dicionário em Configurações → Fontes.',
+      message: 'Adicione arquivos .dct.mybible ou módulos com dicionário interno em Configurações → Fontes.',
       showSourcesButton: true
     });
     emitMetaChange();
@@ -323,6 +443,7 @@ export async function loadFirstOrCurrentEntry() {
   if (targetTerm) {
     await openDictionaryEntry(targetTerm, {
       modulePath: active.path,
+      sourceModulePath: isInternalDictModule(active) ? active.path : '',
       pushHistory: false,
       fallbackAll: false,
       directWord: true
@@ -330,11 +451,25 @@ export async function loadFirstOrCurrentEntry() {
     return;
   }
 
+  if (isInternalDictModule(active)) {
+    const firstInternal = await queryInternalEntry(active.path, '', 0);
+    if (firstInternal) {
+      currentEntry = firstInternal;
+      currentQuery = firstInternal.word || '';
+      renderEntry();
+      return;
+    }
+  }
+
   const adapter = getAdapterForModule(active);
   if (adapter && typeof adapter.getFirstEntry === 'function') {
     const first = await adapter.getFirstEntry(active.path);
     if (first) {
-      currentEntry = first;
+      currentEntry = {
+        ...first,
+        modulePath: active.path,
+        sourceFileName: getModuleOriginLabel(active, active.path)
+      };
       currentQuery = first.word || '';
       renderEntry();
       return;
@@ -343,7 +478,7 @@ export async function loadFirstOrCurrentEntry() {
 
   renderEmpty({
     title: 'Dicionário pronto',
-    message: `Dicionário ativo: ${active.title || active.abbr || active.fileName}.`,
+    message: `Dicionário ativo: ${getModuleOriginLabel(active, active.path)}.`,
     showSourcesButton: false
   });
   emitMetaChange();
@@ -359,10 +494,12 @@ export async function setActiveDictionaryModule(
   if (clearFilter) currentFilterTerm = '';
   currentEntry = null;
 
+  const modObj = modulesList.find((m) => m.path === modulePath);
   const termToOpen = matchedWord || (keepTerm ? (currentQuery || currentFilterTerm) : '');
   if (termToOpen) {
     await openDictionaryEntry(termToOpen, {
       modulePath,
+      sourceModulePath: isInternalDictModule(modObj) ? modulePath : '',
       matchedWord,
       keepFilterTerm,
       pushHistory,
@@ -419,13 +556,14 @@ export async function openActiveDictionaryTerms() {
     return;
   }
 
-  const modal = openModalShell({ title: `Termos — ${active.title || active.abbr || active.fileName}` });
+  const originLabel = getModuleOriginLabel(active, active.path);
+  const modal = openModalShell({ title: `Termos — ${originLabel}` });
   if (!modal || !modal.body) return;
 
   modal.body.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;">
       <input type="search" class="map-text-input" id="dict-terms-filter" placeholder="Filtrar termos..." autocomplete="off" />
-      <div id="dict-terms-results" class="map-index-list">A carregar termos...</div>
+      <div id="dict-terms-results" class="map-index-list">Carregando termos...</div>
     </div>
   `;
 
@@ -434,8 +572,27 @@ export async function openActiveDictionaryTerms() {
 
   const loadList = async (q = '') => {
     try {
-      const cleanQ = String(q || '').trim() || 'a';
-      const items = await myswordDictionaryAdapter.searchEntries(active.path, cleanQ, {
+      const cleanQ = String(q || '').trim();
+      if (isInternalDictModule(active)) {
+        const sql = cleanQ
+          ? 'SELECT word FROM dictionary WHERE UPPER(TRIM(word)) LIKE ? ORDER BY relativeorder ASC, rowid ASC LIMIT 120'
+          : 'SELECT word FROM dictionary ORDER BY relativeorder ASC, rowid ASC LIMIT 120';
+        const params = cleanQ ? [`%${cleanQ.toUpperCase()}%`] : [];
+        const res = await nativeBridge.queryModule(active.path, sql, params);
+        const rows = Array.isArray(res) ? res : (Array.isArray(res && res.rows) ? res.rows : []);
+        if (!resultsBox) return;
+        if (!rows.length) {
+          resultsBox.innerHTML = '<div style="padding:8px;color:var(--text-muted);">Nenhum termo encontrado.</div>';
+          return;
+        }
+        resultsBox.innerHTML = rows.map((r) => {
+          const wordStr = String(r.word || r.WORD || '').trim();
+          return `<button type="button" class="map-index-item" data-dict-word="${escapeHtml(wordStr)}"><span>${escapeHtml(wordStr)}</span></button>`;
+        }).join('');
+        return;
+      }
+
+      const items = await myswordDictionaryAdapter.searchEntries(active.path, cleanQ || 'a', {
         ...currentSearchOptions,
         limit: 120
       });
@@ -464,6 +621,7 @@ export async function openActiveDictionaryTerms() {
     }
     await openDictionaryEntry(word, {
       modulePath: active.path,
+      sourceModulePath: isInternalDictModule(active) ? active.path : '',
       pushHistory: true,
       fallbackAll: false,
       directWord: true
