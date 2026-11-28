@@ -12,7 +12,8 @@ import {
 } from '../formats/dictionary-lookup.js';
 import {
   findCommentariesForPassage,
-  getCachedCommentariesForPassage
+  getCachedCommentariesForPassage,
+  queryNativeCommentariesForPassage
 } from '../formats/mysword-commentary.js';
 
 const RECENT_STORAGE_KEY = 'estudo_biblico_recent_mods_v1';
@@ -20,6 +21,7 @@ const MAX_RECENT = 14;
 
 let recentMap = loadRecents();
 let activePopoverCleanup = null;
+let dropdownOpenSeq = 0;
 
 function normalizeKind(kind) {
   if (kind === 'dictionary' || kind === 'commentary') return kind;
@@ -173,6 +175,7 @@ export function renderQuickTabs(containerEl, kind, modules, activePath, onSelect
 }
 
 export function closeShellPopover() {
+  dropdownOpenSeq++;
   if (typeof activePopoverCleanup === 'function') {
     try {
       activePopoverCleanup();
@@ -404,7 +407,7 @@ export function openViewsDropdown({
   });
 }
 
-export function openModuleDropdown({
+export async function openModuleDropdown({
   kind = 'bible',
   anchorEl,
   filterTerm = '',
@@ -413,6 +416,7 @@ export function openModuleDropdown({
   onSelect,
   onOpenSources
 } = {}) {
+  const openSeq = ++dropdownOpenSeq;
   const normKind = normalizeKind(kind);
   const isDict = normKind === 'dictionary';
   const isCmt = normKind === 'commentary';
@@ -433,8 +437,6 @@ export function openModuleDropdown({
   const pVerse = hasPassageFilter ? (Number(passage.verse) || 1) : 1;
   const passageLabel = hasPassageFilter ? formatReference(pBook, pChapter, pVerse) : '';
 
-  const pop = createAnchoredPopover({ anchorEl, align: 'left', width: 340, maxHeightRatio: 0.86 });
-
   const getAll = () => {
     if (isDict) return store.getDictionaries();
     if (isCmt) return store.getCommentaries();
@@ -451,14 +453,15 @@ export function openModuleDropdown({
 
   const initialList = getAll();
   if (!initialList.length) {
-    pop.panel.innerHTML = `
+    const emptyPop = createAnchoredPopover({ anchorEl, align: 'left', width: 340, maxHeightRatio: 0.86 });
+    emptyPop.panel.innerHTML = `
       <div class="ms-popover-empty">
         <p style="margin:0 0 10px;">Nenhum ${isDict ? 'dicionário' : (isCmt ? 'comentário' : 'módulo bíblico')} registrado.</p>
         <button type="button" class="primary-btn" id="ms-pop-go-sources">Configurar Fontes</button>
       </div>
     `;
-    pop.panel.querySelector('#ms-pop-go-sources')?.addEventListener('click', () => {
-      pop.close();
+    emptyPop.panel.querySelector('#ms-pop-go-sources')?.addEventListener('click', () => {
+      emptyPop.close();
       if (onOpenSources) onOpenSources();
     });
     return;
@@ -471,6 +474,7 @@ export function openModuleDropdown({
   let scanDone = 0;
   let scanTotal = initialList.length;
   let isScanning = false;
+  let nativeIndexBuilding = false;
   let matchedEntries = [];
 
   if (filterEnabled && isDict) {
@@ -494,9 +498,30 @@ export function openModuleDropdown({
       scanDone = scanTotal;
       isScanning = false;
     } else if (scanTotal > 0) {
-      isScanning = true;
+      // Consulta instantânea (~1–5ms) no índice global SQLite antes de exibir o menu,
+      // para que a lista já abra completa e sem efeito de carregamento progressivo.
+      const nativeRes = await queryNativeCommentariesForPassage(initialList, pBook, pChapter, pVerse);
+      if (openSeq !== dropdownOpenSeq) return;
+
+      if (nativeRes && nativeRes.supported) {
+        scanTotal = nativeRes.totalCount || initialList.length;
+        matchedEntries = nativeRes.matches || [];
+        if (nativeRes.ready) {
+          scanDone = scanTotal;
+          isScanning = false;
+          nativeIndexBuilding = false;
+        } else {
+          scanDone = nativeRes.indexedCount || 0;
+          isScanning = true;
+          nativeIndexBuilding = true;
+        }
+      } else {
+        isScanning = true;
+      }
     }
   }
+
+  const pop = createAnchoredPopover({ anchorEl, align: 'left', width: 340, maxHeightRatio: 0.86 });
 
   pop.panel.innerHTML = `
     <div class="ms-popover-search">
@@ -591,7 +616,9 @@ export function openModuleDropdown({
       if (filterEnabled) {
         const targetLabel = isCmt ? passageLabel : `"${cleanFilter}"`;
         if (isScanning) {
-          metaEl.textContent = `Verificando ${scanDone}/${scanTotal} • ${freshMatches.length} em ${targetLabel}`;
+          metaEl.textContent = nativeIndexBuilding
+            ? `Indexando comentários (${scanDone}/${scanTotal}) • ${freshMatches.length} em ${targetLabel}`
+            : `Verificando ${scanDone}/${scanTotal} • ${freshMatches.length} em ${targetLabel}`;
         } else {
           const hiddenCount = Math.max(0, all.length - freshMatches.length);
           metaEl.textContent = isCmt
@@ -609,9 +636,11 @@ export function openModuleDropdown({
 
     if (!filtered.length) {
       if (filterEnabled && isScanning) {
-        const scanningMsg = isCmt
-          ? `Verificando comentários em ${escapeHtml(passageLabel)} (${scanDone}/${scanTotal})...`
-          : `Procurando "${escapeHtml(cleanFilter)}" (${scanDone}/${scanTotal})...`;
+        const scanningMsg = nativeIndexBuilding
+          ? `Indexando comentários pela 1ª vez (${scanDone}/${scanTotal})... Depois disso, a lista abrirá instantaneamente em qualquer versículo.`
+          : (isCmt
+              ? `Verificando comentários em ${escapeHtml(passageLabel)} (${scanDone}/${scanTotal})...`
+              : `Procurando "${escapeHtml(cleanFilter)}" (${scanDone}/${scanTotal})...`);
         listEl.innerHTML = `<div class="ms-popover-empty">${scanningMsg}</div>`;
         return;
       }
@@ -714,6 +743,7 @@ export function openModuleDropdown({
       .then((finalList) => {
         if (signal.aborted) return;
         isScanning = false;
+        nativeIndexBuilding = false;
         scanDone = scanTotal;
         matchedEntries = finalList;
         renderRows();
@@ -722,6 +752,7 @@ export function openModuleDropdown({
       .catch(() => {
         if (signal.aborted) return;
         isScanning = false;
+        nativeIndexBuilding = false;
         renderRows();
       });
   }
@@ -762,7 +793,9 @@ export function openModuleDropdown({
           favBtn.dataset.popFavNext === '1'
         );
         if (res && Array.isArray(res.modules)) {
-          store.setModulesOnly(res.modules);
+          const internalDicts = store.getDictionaries().filter((m) => m && m.isInternalDictionary);
+          const merged = internalDicts.length ? [...res.modules, ...internalDicts] : res.modules;
+          store.setModulesOnly(merged);
         }
         renderRows();
       } catch (err) {
