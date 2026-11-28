@@ -31,17 +31,11 @@ export function extractFsCodeFromElement(el) {
   return '';
 }
 
-function getSqlCapablePlugins() {
-  const list = [];
-  if (nativeBridge && typeof nativeBridge === 'object') {
-    list.push(nativeBridge);
-  }
-  if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins) {
-    const p = window.Capacitor.Plugins;
-    if (p.BibleCore && !list.includes(p.BibleCore)) list.push(p.BibleCore);
-    if (p.MapReader && !list.includes(p.MapReader)) list.push(p.MapReader);
-  }
-  return list;
+function extractRowsFromQueryResult(res) {
+  if (Array.isArray(res)) return res;
+  if (res && Array.isArray(res.rows)) return res.rows;
+  if (res && Array.isArray(res.results)) return res.results;
+  return [];
 }
 
 async function queryModuleDictionaryTable(modulePath, fsCode) {
@@ -53,44 +47,20 @@ async function queryModuleDictionaryTable(modulePath, fsCode) {
     'ORDER BY CASE WHEN UPPER(TRIM(word)) = ? THEN 0 ELSE 1 END, relativeorder ASC, rowid ASC LIMIT 1';
   const params = [fsCode, `${fsCode}%`, fsCode];
 
-  for (const target of getSqlCapablePlugins()) {
-    const fnNames = ['query', 'rawQuery', 'executeSql', 'execSql', 'select'];
-    for (const fnName of fnNames) {
-      if (typeof target[fnName] !== 'function') continue;
-      try {
-        const res = await target[fnName]({
-          path: modulePath,
-          modulePath,
-          sql,
-          query: sql,
-          params,
-          args: params
-        });
+  const res = await nativeBridge.queryModule(modulePath, sql, params);
+  const rows = extractRowsFromQueryResult(res);
 
-        const rows = Array.isArray(res)
-          ? res
-          : Array.isArray(res && res.rows)
-            ? res.rows
-            : Array.isArray(res && res.results)
-              ? res.results
-              : [];
-
-        if (rows.length > 0) {
-          const row = rows[0];
-          const word = String(row.word || row.WORD || fsCode).trim();
-          const html = String(row.data || row.DATA || row.content || row.html || '').trim();
-          if (html) {
-            return {
-              word,
-              html,
-              source: 'module-dictionary',
-              modulePath
-            };
-          }
-        }
-      } catch (err) {
-        // Tenta próximo método/plugin disponível
-      }
+  if (rows.length > 0) {
+    const row = rows[0];
+    const word = String(row.word || row.WORD || fsCode).trim();
+    const html = String(row.data || row.DATA || row.content || row.html || '').trim();
+    if (html) {
+      return {
+        word,
+        html,
+        source: 'module-dictionary',
+        modulePath
+      };
     }
   }
 
