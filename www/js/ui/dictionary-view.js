@@ -1,14 +1,11 @@
 import { store } from '../core/store.js';
-import { eventBus, EVENTS } from '../core/events.js';
 import { getAdapterForModule } from '../formats/format-registry.js';
 import {
+  myswordDictionaryAdapter,
   normalizeLookupTerm,
   normalizeDictSearchOptions
 } from '../formats/mysword-dictionary.js';
-import {
-  lookupDictionaryEntry,
-  searchDictionaryTerms
-} from '../formats/dictionary-lookup.js';
+import { lookupExactAcrossDictionaries } from '../formats/dictionary-lookup.js';
 import {
   lookupFsInModule,
   normalizeFsCode
@@ -109,7 +106,7 @@ function renderEntry() {
   if (!active && !currentEntry) {
     renderEmpty({
       title: 'Nenhum dicionário disponível',
-      message: 'Adicione arquivos .dct.mybible ou módulos com dicionário interno em Configurações → Fontes.',
+      message: 'Adicione ficheiros .dct.mybible ou módulos com dicionário em Configurações → Fontes.',
       showSourcesButton: true
     });
     emitMetaChange();
@@ -162,7 +159,8 @@ export async function openDictionaryEntry(
   const seq = ++renderSeq;
   const rawStr = String(rawTerm || '').trim();
   const fsCode = normalizeFsCode(rawStr);
-  const term = fsCode || normalizeLookupTerm(rawStr);
+  const wordCandidate = matchedWord || rawStr;
+  const term = fsCode || normalizeLookupTerm(wordCandidate);
   if (!term) return null;
 
   if (clearFilter) {
@@ -184,15 +182,15 @@ export async function openDictionaryEntry(
 
   if (store.getActiveMode() === 'dictionary') {
     renderEmpty({
-      title: 'Consultando verbete...',
-      message: `Buscando "${term}"...`,
+      title: 'A consultar verbete...',
+      message: `A procurar "${term}"...`,
       showSourcesButton: false
     });
   }
 
   let entry = null;
 
-  // 1. Se for código FS..., tenta primeiro na tabela `dictionary` interna do próprio módulo
+  // 1. Se for código FS..., consulta primeiro a tabela `dictionary` interna do próprio módulo
   if (fsCode) {
     const internalHit = await lookupFsInModule(sourceModulePath || activeModulePath, fsCode);
     if (seq !== renderSeq) return null;
@@ -205,22 +203,36 @@ export async function openDictionaryEntry(
     }
   }
 
-  // 2. Consulta dicionários configurados no aplicativo
+  // 2. Consulta o módulo alvo ou os dicionários configurados no aplicativo
   if (!entry && modulesList.length > 0) {
-    const lookupRes = await lookupDictionaryEntry(modulesList, term, {
-      preferredModulePath: modulePath || (active ? active.path : ''),
+    const lookupOpts = {
+      ...currentSearchOptions,
       moduleHint,
-      matchedWord,
-      fallbackAll,
-      directWord
-    });
-    if (seq !== renderSeq) return null;
+      activePath: modulePath || (active ? active.path : '')
+    };
 
-    if (lookupRes && lookupRes.entry) {
-      entry = lookupRes.entry;
-      if (lookupRes.module && lookupRes.module.path) {
-        activeModulePath = lookupRes.module.path;
-        store.setActiveDictionary(lookupRes.module.path, { silent: true });
+    if (modulePath) {
+      try {
+        const directEntry = await myswordDictionaryAdapter.getEntry(modulePath, term, lookupOpts);
+        if (seq !== renderSeq) return null;
+        if (directEntry) {
+          entry = directEntry;
+        }
+      } catch (err) {
+        appLogger.warn('DICT_ENTRY', `Falha ao abrir "${term}" no módulo selecionado`, err);
+      }
+    }
+
+    if (!entry && (fallbackAll || !modulePath || directWord)) {
+      const lookupRes = await lookupExactAcrossDictionaries(modulesList, term, lookupOpts);
+      if (seq !== renderSeq) return null;
+
+      if (lookupRes && lookupRes.entry) {
+        entry = lookupRes.entry;
+        if (lookupRes.module && lookupRes.module.path) {
+          activeModulePath = lookupRes.module.path;
+          store.setActiveDictionary(lookupRes.module.path, { silent: true });
+        }
       }
     }
   }
@@ -295,7 +307,7 @@ export async function loadFirstOrCurrentEntry() {
   if (!active) {
     renderEmpty({
       title: 'Nenhum dicionário disponível',
-      message: 'Adicione arquivos .dct.mybible ou módulos com dicionário em Configurações → Fontes.',
+      message: 'Adicione ficheiros .dct.mybible ou módulos com dicionário em Configurações → Fontes.',
       showSourcesButton: true
     });
     emitMetaChange();
@@ -413,7 +425,7 @@ export async function openActiveDictionaryTerms() {
   modal.body.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;">
       <input type="search" class="map-text-input" id="dict-terms-filter" placeholder="Filtrar termos..." autocomplete="off" />
-      <div id="dict-terms-results" class="map-index-list">Carregando termos...</div>
+      <div id="dict-terms-results" class="map-index-list">A carregar termos...</div>
     </div>
   `;
 
@@ -422,14 +434,18 @@ export async function openActiveDictionaryTerms() {
 
   const loadList = async (q = '') => {
     try {
-      const items = await searchDictionaryTerms(active.path, q, { limit: 120 });
+      const cleanQ = String(q || '').trim() || 'a';
+      const items = await myswordDictionaryAdapter.searchEntries(active.path, cleanQ, {
+        ...currentSearchOptions,
+        limit: 120
+      });
       if (!resultsBox) return;
       if (!Array.isArray(items) || !items.length) {
         resultsBox.innerHTML = '<div style="padding:8px;color:var(--text-muted);">Nenhum termo encontrado.</div>';
         return;
       }
-      resultsBox.innerHTML = items.map((w) => {
-        const wordStr = typeof w === 'string' ? w : (w.word || '');
+      resultsBox.innerHTML = items.map((it) => {
+        const wordStr = typeof it === 'string' ? it : (it.word || '');
         return `<button type="button" class="map-index-item" data-dict-word="${escapeHtml(wordStr)}"><span>${escapeHtml(wordStr)}</span></button>`;
       }).join('');
     } catch (err) {
