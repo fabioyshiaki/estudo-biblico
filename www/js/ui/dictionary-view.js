@@ -1,4 +1,5 @@
 import { store } from '../core/store.js';
+import { parseBibleReference } from '../core/bible-refs.js';
 import { nativeBridge } from '../bridge/native-bridge.js';
 import { getAdapterForModule } from '../formats/format-registry.js';
 import {
@@ -10,10 +11,15 @@ import { lookupExactAcrossDictionaries } from '../formats/dictionary-lookup.js';
 import {
   lookupFsInModule,
   normalizeFsCode,
+  extractFsCodeFromElement,
   getFileNameFromPath
 } from '../formats/fs-internal-lookup.js';
+import { resolveDictionaryImageUrl } from '../formats/media-cache.js';
+import { ensureCompanionStyles } from '../formats/companion-dicts.js';
 import { openModalShell, closeModal } from './nav-modal.js';
 import { appLogger } from '../core/logger.js';
+
+const LOADING_DEBOUNCE_MS = 160;
 
 let callbacks = {
   onOpenSources: () => {},
@@ -32,6 +38,9 @@ let currentFilterTerm = '';
 let currentSearchOptions = normalizeDictSearchOptions();
 let entryHistory = [];
 let renderSeq = 0;
+let imageRenderSeq = 0;
+let loadingTimer = null;
+let readerEventsBound = false;
 
 let selectionBarEl = null;
 let selectionHandlers = {
@@ -39,6 +48,13 @@ let selectionHandlers = {
   onLookupAll: null
 };
 let currentSelectedText = '';
+
+function clearPendingLoadingTimer() {
+  if (loadingTimer !== null) {
+    window.clearTimeout(loadingTimer);
+    loadingTimer = null;
+  }
+}
 
 function escapeHtml(str) {
   return String(str || '')
@@ -93,7 +109,106 @@ function emitMetaChange() {
   });
 }
 
+function openImageLightbox(src, altText) {
+  if (typeof document === 'undefined' || !src) return;
+
+  const existing = document.getElementById('dct-lightbox');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'dct-lightbox';
+  overlay.className = 'dct-lightbox';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', altText || 'Imagem ampliada');
+
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = altText || '';
+  overlay.appendChild(img);
+
+  const close = () => {
+    overlay.remove();
+    window.removeEventListener('keydown', onKey);
+  };
+
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') close();
+  };
+
+  overlay.addEventListener('click', close);
+  window.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
+}
+
+function showImageErrorHint(picEl, rawSrc, reason) {
+  if (!picEl) return;
+  picEl.innerHTML =
+    '<figcaption class="dct-info" style="margin:4px 6px;text-align:left;">' +
+      `Imagem não carregada (${escapeHtml(rawSrc)}): ${escapeHtml(reason || 'erro desconhecido')}` +
+    '</figcaption>';
+}
+
+async function hydrateDictionaryImages(rootEl, modulePath, entry, seq) {
+  if (!rootEl || !modulePath) return;
+  const imgs = Array.from(rootEl.querySelectorAll('img[data-dct-img-src]'));
+  if (!imgs.length) return;
+
+  const modName = getFileNameFromPath(modulePath) || modulePath;
+  const contextRaw = (entry && (entry.raw || entry.html)) || '';
+
+  for (const img of imgs) {
+    if (seq !== imageRenderSeq) return;
+    const rawSrc = img.getAttribute('data-dct-img-src') || '';
+    const fallbackUrl = img.getAttribute('data-dct-img-fallback') || '';
+    const picEl = img.closest('.dct-pic');
+
+    try {
+      const res = await resolveDictionaryImageUrl(modulePath, rawSrc, {
+        contextRaw,
+        fallbackUrl
+      });
+      if (seq !== imageRenderSeq) return;
+
+      const resolvedUrl = typeof res === 'string'
+        ? res
+        : (res && res.url ? res.url : '');
+      const errReason = res && typeof res === 'object' && res.error
+        ? res.error
+        : 'não encontrada';
+
+      if (!resolvedUrl) {
+        img.classList.remove('is-loading');
+        appLogger.warn('DICT_IMG', `Imagem não carregada (${rawSrc}) em ${modName}: ${errReason}`, {
+          module: modName,
+          src: rawSrc,
+          fallbackUrl
+        });
+        showImageErrorHint(picEl, rawSrc, errReason);
+        continue;
+      }
+
+      img.onload = () => img.classList.remove('is-loading');
+      img.onerror = () => {
+        img.classList.remove('is-loading');
+        showImageErrorHint(picEl, rawSrc, 'falha ao decodificar no WebView');
+      };
+      img.src = resolvedUrl;
+      if (img.complete && img.naturalWidth > 0) {
+        img.classList.remove('is-loading');
+      }
+    } catch (err) {
+      if (seq !== imageRenderSeq) return;
+      const reason = err && err.message ? err.message : 'erro inesperado';
+      img.classList.remove('is-loading');
+      appLogger.error('DICT_IMG', `Exceção ao carregar imagem (${rawSrc}) em ${modName}: ${reason}`, err);
+      showImageErrorHint(picEl, rawSrc, reason);
+    }
+  }
+}
+
 function renderEmpty({ title, message, showSourcesButton = true }) {
+  clearPendingLoadingTimer();
   const container = document.getElementById('reader-content');
   if (!container) return;
   container.classList.remove('has-interlinear');
@@ -125,6 +240,7 @@ function mapInternalRow(row, modulePath, fallbackWord = '') {
   return {
     word: word || fallbackWord,
     html,
+    raw: html,
     modulePath,
     sourceFileName: getFileNameFromPath(modulePath)
   };
@@ -132,7 +248,6 @@ function mapInternalRow(row, modulePath, fallbackWord = '') {
 
 async function queryInternalEntry(modulePath, rawWord, delta = 0) {
   const cleanWord = String(rawWord || '').trim();
-  const fsCode = normalizeFsCode(cleanWord);
 
   if (delta !== 0) {
     if (!cleanWord) {
@@ -147,10 +262,6 @@ async function queryInternalEntry(modulePath, rawWord, delta = 0) {
       : 'SELECT word, data FROM dictionary WHERE UPPER(TRIM(word)) < ? ORDER BY UPPER(TRIM(word)) DESC, word DESC LIMIT 1';
     const rows = extractRows(await nativeBridge.queryModule(modulePath, sql, [curWord]));
     return rows.length > 0 ? mapInternalRow(rows[0], modulePath) : null;
-  }
-
-  if (fsCode) {
-    return lookupFsInModule(modulePath, fsCode);
   }
 
   if (!cleanWord) {
@@ -169,9 +280,99 @@ async function queryInternalEntry(modulePath, rawWord, delta = 0) {
   return rows.length > 0 ? mapInternalRow(rows[0], modulePath, cleanWord) : null;
 }
 
-function renderEntry() {
+async function fetchFirstEntryForModule(mod) {
+  if (!mod || !mod.path) return null;
+
+  if (isInternalDictModule(mod)) {
+    return queryInternalEntry(mod.path, '', 0);
+  }
+
+  const adapter = getAdapterForModule(mod) || myswordDictionaryAdapter;
+  if (adapter && typeof adapter.getFirstEntry === 'function') {
+    const first = await adapter.getFirstEntry(mod.path);
+    if (first) {
+      return {
+        ...first,
+        modulePath: mod.path,
+        sourceFileName: getModuleOriginLabel(mod, mod.path)
+      };
+    }
+  }
+
+  try {
+    const sql = 'SELECT word FROM dictionary ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 1';
+    const rows = extractRows(await nativeBridge.queryModule(mod.path, sql, []));
+    const firstWord = rows.length > 0 ? String(rows[0].word || rows[0].WORD || '').trim() : '';
+    if (firstWord) {
+      const entry = await myswordDictionaryAdapter.getEntry(mod.path, firstWord, currentSearchOptions);
+      if (entry) {
+        return {
+          ...entry,
+          modulePath: mod.path,
+          sourceFileName: getModuleOriginLabel(mod, mod.path)
+        };
+      }
+    }
+  } catch (err) {
+    appLogger.warn('DICT_FIRST', `Falha no fallback do primeiro verbete em ${getModuleOriginLabel(mod, mod.path)}`, err);
+  }
+
+  return null;
+}
+
+async function fetchAdjacentEntryForModule(mod, curWord, delta) {
+  if (!mod || !mod.path) return null;
+  const step = Number(delta) || 1;
+
+  if (isInternalDictModule(mod)) {
+    return queryInternalEntry(mod.path, curWord, step);
+  }
+
+  const adapter = getAdapterForModule(mod) || myswordDictionaryAdapter;
+  if (adapter && typeof adapter.getAdjacentEntry === 'function') {
+    const adj = await adapter.getAdjacentEntry(mod.path, curWord, step);
+    if (adj) {
+      return {
+        ...adj,
+        modulePath: mod.path,
+        sourceFileName: getModuleOriginLabel(mod, mod.path)
+      };
+    }
+  }
+
+  try {
+    const clean = String(curWord || '').trim();
+    const sql = clean
+      ? (step > 0
+          ? 'SELECT word FROM dictionary WHERE UPPER(TRIM(word)) > ? ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 1'
+          : 'SELECT word FROM dictionary WHERE UPPER(TRIM(word)) < ? ORDER BY UPPER(TRIM(word)) DESC, word DESC LIMIT 1')
+      : 'SELECT word FROM dictionary ORDER BY UPPER(TRIM(word)) ASC, word ASC LIMIT 1';
+    const params = clean ? [clean.toUpperCase()] : [];
+    const rows = extractRows(await nativeBridge.queryModule(mod.path, sql, params));
+    const nextWord = rows.length > 0 ? String(rows[0].word || rows[0].WORD || '').trim() : '';
+    if (nextWord) {
+      const entry = await myswordDictionaryAdapter.getEntry(mod.path, nextWord, currentSearchOptions);
+      if (entry) {
+        return {
+          ...entry,
+          modulePath: mod.path,
+          sourceFileName: getModuleOriginLabel(mod, mod.path)
+        };
+      }
+    }
+  } catch (err) {
+    appLogger.warn('DICT_STEP', `Falha ao navegar verbete em ${getModuleOriginLabel(mod, mod.path)}`, err);
+  }
+
+  return null;
+}
+
+function renderEntry({ resetScroll = true } = {}) {
+  clearPendingLoadingTimer();
   const container = document.getElementById('reader-content');
   if (!container) return;
+
+  ensureCompanionStyles();
   container.classList.remove('has-interlinear');
 
   const active = getActiveModule();
@@ -200,6 +401,8 @@ function renderEntry() {
   const entryPath = currentEntry.modulePath || (active ? active.path : '');
   const matchedMod = modulesList.find((m) => m.path === entryPath) || active;
   const modLabel = getModuleOriginLabel(matchedMod, entryPath);
+  const dirAttr = currentEntry.isRtl ? ' dir="rtl"' : '';
+  const imgSeq = ++imageRenderSeq;
 
   container.innerHTML = `
     <article class="dict-entry-card">
@@ -207,11 +410,16 @@ function renderEntry() {
         <span class="dict-entry-mod">${escapeHtml(modLabel)}</span>
         <h1 class="dict-entry-word">${escapeHtml(currentEntry.word || '')}</h1>
       </header>
-      <div class="dict-entry-body">${currentEntry.html || ''}</div>
+      <div class="dict-entry-body"${dirAttr}>${currentEntry.html || ''}</div>
     </article>
   `;
 
-  if (scrollBox) {
+  const cardEl = container.querySelector('.dict-entry-card');
+  if (cardEl && entryPath) {
+    hydrateDictionaryImages(cardEl, entryPath, currentEntry, imgSeq);
+  }
+
+  if (resetScroll && scrollBox) {
     scrollBox.scrollTo({ top: 0, behavior: 'auto' });
   }
   emitMetaChange();
@@ -228,10 +436,13 @@ export async function openDictionaryEntry(
     pushHistory = true,
     fallbackAll = true,
     directWord = false,
-    sourceModulePath = ''
+    sourceModulePath = '',
+    silentNotFound = false
   } = {}
 ) {
   const seq = ++renderSeq;
+  clearPendingLoadingTimer();
+
   const rawStr = String(rawTerm || '').trim();
   const fsCode = normalizeFsCode(rawStr);
   const wordCandidate = matchedWord || rawStr;
@@ -255,32 +466,49 @@ export async function openDictionaryEntry(
     store.setActiveDictionary(targetMod.path, { silent: true });
   }
 
-  if (store.getActiveMode() === 'dictionary') {
-    renderEmpty({
-      title: 'Consultando verbete...',
-      message: `Buscando "${term}"...`,
-      showSourcesButton: false
-    });
+  if (store.getActiveMode() === 'dictionary' && !silentNotFound) {
+    loadingTimer = window.setTimeout(() => {
+      loadingTimer = null;
+      if (seq !== renderSeq || store.getActiveMode() !== 'dictionary') return;
+      renderEmpty({
+        title: 'Consultando verbete...',
+        message: `Buscando "${term}"...`,
+        showSourcesButton: false
+      });
+    }, LOADING_DEBOUNCE_MS);
   }
 
   let entry = null;
 
-  // 1. Se for código FS..., consulta a tabela `dictionary` interna do módulo de origem e demais módulos internos
+  // 1. Se for código FS..., consulta a tabela `dictionary` interna respeitando modulePath quando fallbackAll=false
   if (fsCode) {
-    const internalHit = await lookupFsInModule(sourceModulePath || activeModulePath, fsCode);
-    if (seq !== renderSeq) return null;
-    if (internalHit) {
-      const hitPath = internalHit.modulePath || sourceModulePath || activeModulePath;
-      const originFile = internalHit.sourceFileName || getFileNameFromPath(hitPath);
-      entry = {
-        word: internalHit.word || fsCode,
-        html: internalHit.html,
-        modulePath: hitPath,
-        sourceFileName: originFile
-      };
-      if (hitPath) {
-        activeModulePath = hitPath;
-        store.setActiveDictionary(hitPath, { silent: true });
+    if (modulePath && !fallbackAll) {
+      const modObj = modulesList.find((m) => m.path === modulePath);
+      if (isInternalDictModule(modObj)) {
+        try {
+          entry = await queryInternalEntry(modulePath, fsCode, 0);
+          if (seq !== renderSeq) return null;
+        } catch (err) {
+          appLogger.warn('DICT_ENTRY', `Falha ao abrir "${fsCode}" no dicionário interno`, err);
+        }
+      }
+    } else {
+      const internalHit = await lookupFsInModule(sourceModulePath || activeModulePath, fsCode);
+      if (seq !== renderSeq) return null;
+      if (internalHit) {
+        const hitPath = internalHit.modulePath || sourceModulePath || activeModulePath;
+        const originFile = internalHit.sourceFileName || getFileNameFromPath(hitPath);
+        entry = {
+          word: internalHit.word || fsCode,
+          html: internalHit.html,
+          raw: internalHit.html,
+          modulePath: hitPath,
+          sourceFileName: originFile
+        };
+        if (hitPath) {
+          activeModulePath = hitPath;
+          store.setActiveDictionary(hitPath, { silent: true });
+        }
       }
     }
   }
@@ -319,7 +547,7 @@ export async function openDictionaryEntry(
       }
     }
 
-    if (!entry && !fsCode && (fallbackAll || !modulePath || directWord)) {
+    if (!entry && !fsCode && (fallbackAll || !modulePath)) {
       const externalDicts = modulesList.filter((m) => !isInternalDictModule(m));
       const lookupRes = await lookupExactAcrossDictionaries(externalDicts, term, lookupOpts);
       if (seq !== renderSeq) return null;
@@ -339,27 +567,32 @@ export async function openDictionaryEntry(
     }
   }
 
-  // 3. Fallback informativo caso seja código FS sem entrada no banco
-  if (!entry && fsCode) {
+  clearPendingLoadingTimer();
+
+  // 3. Fallback informativo caso seja código FS sem entrada no banco (quando não é troca silenciosa)
+  if (!entry && fsCode && !silentNotFound) {
     entry = {
       word: fsCode,
-      html: formatFsFallbackHtml(fsCode, sourceModulePath),
-      modulePath: sourceModulePath || activeModulePath,
-      sourceFileName: getFileNameFromPath(sourceModulePath || activeModulePath)
+      html: formatFsFallbackHtml(fsCode, sourceModulePath || modulePath || activeModulePath),
+      raw: '',
+      modulePath: sourceModulePath || modulePath || activeModulePath,
+      sourceFileName: getFileNameFromPath(sourceModulePath || modulePath || activeModulePath)
     };
   }
 
   if (!entry) {
-    if (store.getActiveMode() === 'dictionary') {
-      renderEmpty({
-        title: 'Verbete não encontrado',
-        message: `Não foi encontrado verbete para "${term}" no módulo selecionado.`,
-        showSourcesButton: false
-      });
-    } else {
-      callbacks.onToast(`Verbete "${term}" não encontrado.`);
+    if (!silentNotFound) {
+      if (store.getActiveMode() === 'dictionary') {
+        renderEmpty({
+          title: 'Verbete não encontrado',
+          message: `Não foi encontrado verbete para "${term}" no módulo selecionado.`,
+          showSourcesButton: false
+        });
+      } else {
+        callbacks.onToast(`Verbete "${term}" não encontrado.`);
+      }
+      emitMetaChange();
     }
-    emitMetaChange();
     return null;
   }
 
@@ -378,7 +611,7 @@ export async function openDictionaryEntry(
 
   currentEntry = entry;
   if (store.getActiveMode() === 'dictionary') {
-    renderEntry();
+    renderEntry({ resetScroll: true });
   } else {
     emitMetaChange();
   }
@@ -390,40 +623,21 @@ export async function stepDictionaryEntry(delta) {
   if (!active) return;
 
   const curWord = currentEntry ? currentEntry.word : currentQuery;
-  if (isInternalDictModule(active)) {
-    try {
-      const nextInternal = await queryInternalEntry(active.path, curWord, Number(delta) || 1);
-      if (nextInternal) {
-        currentEntry = nextInternal;
-        currentQuery = nextInternal.word || currentQuery;
-        if (store.getActiveMode() === 'dictionary') {
-          renderEntry();
-        } else {
-          emitMetaChange();
-        }
+  try {
+    const nextEntry = await fetchAdjacentEntryForModule(active, curWord, Number(delta) || 1);
+    if (nextEntry) {
+      currentEntry = nextEntry;
+      currentQuery = nextEntry.word || currentQuery;
+      if (store.getActiveMode() === 'dictionary') {
+        renderEntry({ resetScroll: true });
+      } else {
+        emitMetaChange();
       }
-    } catch (err) {
-      appLogger.warn('DICT_STEP', 'Falha ao navegar no dicionário interno', err);
-    }
-    return;
-  }
-
-  const adapter = getAdapterForModule(active);
-  if (!adapter || typeof adapter.getAdjacentEntry !== 'function') return;
-
-  const nextEntry = await adapter.getAdjacentEntry(active.path, curWord, Number(delta) || 1);
-  if (nextEntry) {
-    currentEntry = {
-      ...nextEntry,
-      modulePath: active.path,
-      sourceFileName: getModuleOriginLabel(active, active.path)
-    };
-    currentQuery = nextEntry.word || currentQuery;
-    if (store.getActiveMode() === 'dictionary') {
-      renderEntry();
     } else {
-      emitMetaChange();
+      callbacks.onToast(Number(delta) < 0 ? 'Já está no primeiro verbete.' : 'Já está no último verbete.');
     }
+  } catch (err) {
+    appLogger.warn('DICT_STEP', 'Falha ao navegar entre verbetes do dicionário', err);
   }
 }
 
@@ -440,49 +654,33 @@ export async function loadFirstOrCurrentEntry() {
   }
 
   if (currentEntry && currentEntry.modulePath === active.path) {
-    renderEntry();
+    renderEntry({ resetScroll: false });
     return;
   }
 
   const targetTerm = currentQuery || currentFilterTerm || '';
   if (targetTerm) {
-    await openDictionaryEntry(targetTerm, {
+    const found = await openDictionaryEntry(targetTerm, {
       modulePath: active.path,
       sourceModulePath: isInternalDictModule(active) ? active.path : '',
       pushHistory: false,
       fallbackAll: false,
-      directWord: true
+      directWord: true,
+      silentNotFound: true
     });
-    return;
+    if (found) return;
   }
 
-  if (isInternalDictModule(active)) {
-    try {
-      const firstInternal = await queryInternalEntry(active.path, '', 0);
-      if (firstInternal) {
-        currentEntry = firstInternal;
-        currentQuery = firstInternal.word || '';
-        renderEntry();
-        return;
-      }
-    } catch (err) {
-      appLogger.warn('DICT_FIRST', 'Falha ao abrir primeiro verbete do dicionário interno', err);
-    }
-  }
-
-  const adapter = getAdapterForModule(active);
-  if (adapter && typeof adapter.getFirstEntry === 'function') {
-    const first = await adapter.getFirstEntry(active.path);
+  try {
+    const first = await fetchFirstEntryForModule(active);
     if (first) {
-      currentEntry = {
-        ...first,
-        modulePath: active.path,
-        sourceFileName: getModuleOriginLabel(active, active.path)
-      };
+      currentEntry = first;
       currentQuery = first.word || '';
-      renderEntry();
+      renderEntry({ resetScroll: true });
       return;
     }
+  } catch (err) {
+    appLogger.warn('DICT_FIRST', 'Falha ao carregar primeiro verbete do dicionário', err);
   }
 
   renderEmpty({
@@ -495,7 +693,14 @@ export async function loadFirstOrCurrentEntry() {
 
 export async function setActiveDictionaryModule(
   modulePath,
-  { matchedWord = '', keepTerm = true, clearFilter = false, pushHistory = true, render = true } = {}
+  {
+    matchedWord = '',
+    keepTerm = true,
+    keepFilterTerm = false,
+    clearFilter = false,
+    pushHistory = true,
+    render = true
+  } = {}
 ) {
   if (!modulePath) return;
   activeModulePath = modulePath;
@@ -503,18 +708,35 @@ export async function setActiveDictionaryModule(
   if (clearFilter) currentFilterTerm = '';
   currentEntry = null;
 
-  const modObj = modulesList.find((m) => m.path === modulePath);
+  const modObj = modulesList.find((m) => m.path === modulePath) || { path: modulePath };
   const termToOpen = matchedWord || (keepTerm ? (currentQuery || currentFilterTerm) : '');
+
   if (termToOpen) {
-    await openDictionaryEntry(termToOpen, {
+    const opened = await openDictionaryEntry(termToOpen, {
       modulePath,
       sourceModulePath: isInternalDictModule(modObj) ? modulePath : '',
       matchedWord,
       keepFilterTerm,
       pushHistory,
       fallbackAll: false,
-      directWord: Boolean(matchedWord)
+      directWord: Boolean(matchedWord),
+      silentNotFound: !matchedWord
     });
+
+    if (opened) return;
+
+    // Se o usuário trocou de dicionário e o termo anterior não existe no novo dicionário,
+    // abre diretamente o início do novo dicionário sem ficar travado.
+    if (!matchedWord) {
+      currentQuery = '';
+      if (render && store.getActiveMode() === 'dictionary') {
+        callbacks.onToast(`"${termToOpen}" não existe em ${getModuleOriginLabel(modObj, modulePath)}.`);
+        await loadFirstOrCurrentEntry();
+      } else {
+        emitMetaChange();
+      }
+      return;
+    }
     return;
   }
 
@@ -542,8 +764,8 @@ export function syncDictionaryModules(dicts) {
   emitMetaChange();
 }
 
-export function renderDictionaryView() {
-  renderEntry();
+export function renderDictionaryView({ resetScroll = true } = {}) {
+  renderEntry({ resetScroll });
 }
 
 export function getDictionaryViewState() {
@@ -709,7 +931,177 @@ export function initSelectionLookupBar(opts = {}) {
   });
 }
 
+function bindReaderEvents() {
+  if (readerEventsBound) return;
+  const container = document.getElementById('reader-content');
+  if (!container) return;
+  readerEventsBound = true;
+
+  container.addEventListener('click', (ev) => {
+    if (store.getActiveMode() !== 'dictionary') return;
+
+    const imgEl = ev.target.closest('img.dct-img');
+    if (imgEl && !imgEl.classList.contains('is-loading') && (imgEl.currentSrc || imgEl.src)) {
+      ev.stopPropagation();
+      openImageLightbox(imgEl.currentSrc || imgEl.src, imgEl.alt || (currentEntry ? currentEntry.word : ''));
+      return;
+    }
+
+    const fnBtn = ev.target.closest('.v-fn-btn');
+    if (fnBtn && currentEntry && Array.isArray(currentEntry.footnotes)) {
+      ev.stopPropagation();
+      const fnIdx = Number(fnBtn.getAttribute('data-fn-idx'));
+      const noteText = currentEntry.footnotes[fnIdx];
+      if (noteText) {
+        callbacks.onOpenFootnote(currentEntry.word || 'Nota', noteText);
+      }
+      return;
+    }
+
+    const bibleLink = ev.target.closest('[data-bible-ref]');
+    if (bibleLink) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const attrRaw = bibleLink.getAttribute('data-bible-ref') || '';
+      const textRaw = (bibleLink.textContent || '').trim();
+      const parsed =
+        parseBibleReference(attrRaw, { allowChapterOnly: true }) ||
+        parseBibleReference(textRaw, { allowChapterOnly: false, allowNumeric: false });
+      if (parsed) {
+        callbacks.onNavigateBible(parsed);
+      } else {
+        callbacks.onToast(`Referência não reconhecida: ${attrRaw || textRaw}`);
+      }
+      return;
+    }
+
+    const dctLink = ev.target.closest('[data-dct-lookup]');
+    if (dctLink) {
+      const term = (dctLink.getAttribute('data-dct-lookup') || '').trim();
+      const modHint = (dctLink.getAttribute('data-dct-module') || '').trim();
+      const labelTxt = (dctLink.textContent || '').trim();
+
+      const isExplicitBible = /^#?(?:rx|b|v)[\s.:_-]*(?:\d|[A-Za-zÀ-ÿ])|^tw:\/\/bible|^bible:/i.test(term);
+      const bibleTarget = isExplicitBible
+        ? parseBibleReference(term, { allowChapterOnly: true })
+        : (!modHint
+          ? (parseBibleReference(term, { allowChapterOnly: false, allowNumeric: false })
+            || parseBibleReference(labelTxt, { allowChapterOnly: false, allowNumeric: false }))
+          : null);
+
+      if (bibleTarget) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        callbacks.onNavigateBible(bibleTarget);
+        return;
+      }
+
+      if (term) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const active = getActiveModule();
+        openDictionaryEntry(term, {
+          moduleHint: modHint,
+          sourceModulePath: active ? active.path : '',
+          pushHistory: true,
+          fallbackAll: true
+        });
+      }
+      return;
+    }
+
+    const fsTag = ev.target.closest('[data-fs], [data-fl], [data-figure], fl');
+    if (fsTag) {
+      const code = extractFsCodeFromElement(fsTag);
+      if (code) {
+        ev.stopPropagation();
+        const active = getActiveModule();
+        openDictionaryEntry(code, {
+          moduleHint: 'fs',
+          sourceModulePath: active ? active.path : '',
+          pushHistory: true,
+          fallbackAll: true
+        });
+        return;
+      }
+    }
+
+    const strongEl = ev.target.closest('[data-strong]');
+    if (strongEl && strongEl.dataset.strong) {
+      ev.stopPropagation();
+      openDictionaryEntry(strongEl.dataset.strong, {
+        moduleHint: 'strong',
+        pushHistory: true,
+        fallbackAll: true
+      });
+      return;
+    }
+
+    const morphEl = ev.target.closest('[data-morph]');
+    if (morphEl && morphEl.dataset.morph) {
+      ev.stopPropagation();
+      openDictionaryEntry(morphEl.dataset.morph, {
+        moduleHint: 'morph',
+        pushHistory: true,
+        fallbackAll: true
+      });
+      return;
+    }
+
+    const lnEl = ev.target.closest('[data-ln]');
+    if (lnEl && lnEl.dataset.ln) {
+      const firstDomain = String(lnEl.dataset.ln).split(',')[0].trim();
+      if (firstDomain) {
+        ev.stopPropagation();
+        openDictionaryEntry(firstDomain, {
+          moduleHint: 'louw',
+          pushHistory: true,
+          fallbackAll: true
+        });
+      }
+      return;
+    }
+
+    const bdbEl = ev.target.closest('[data-bdb]');
+    if (bdbEl && bdbEl.dataset.bdb) {
+      ev.stopPropagation();
+      openDictionaryEntry(bdbEl.dataset.bdb, {
+        moduleHint: 'bdb',
+        pushHistory: true,
+        fallbackAll: true
+      });
+      return;
+    }
+
+    const twotEl = ev.target.closest('[data-twot]');
+    if (twotEl && twotEl.dataset.twot) {
+      ev.stopPropagation();
+      openDictionaryEntry(twotEl.dataset.twot, {
+        moduleHint: 'twot',
+        pushHistory: true,
+        fallbackAll: true
+      });
+      return;
+    }
+
+    const gkEl = ev.target.closest('[data-gk], [data-hgk]');
+    if (gkEl) {
+      const code = gkEl.dataset.gk || gkEl.dataset.hgk || '';
+      if (code) {
+        ev.stopPropagation();
+        openDictionaryEntry(code, {
+          moduleHint: 'gk',
+          pushHistory: true,
+          fallbackAll: true
+        });
+      }
+    }
+  });
+}
+
 export function initDictionaryView(opts = {}) {
   callbacks = { ...callbacks, ...opts };
+  ensureCompanionStyles();
+  bindReaderEvents();
   syncDictionaryModules(store.getDictionaries());
 }
