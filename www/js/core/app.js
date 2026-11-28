@@ -90,6 +90,8 @@ let pendingScrollVerse = null;
 let suppressModeAutoLoad = false;
 let suppressModuleAutoLoad = false;
 let suppressLocationAutoLoad = false;
+let suppressSourcesUpdated = false;
+let isSyncingInternalDicts = false;
 const jumpHistory = [];
 
 function escapeHtml(str) {
@@ -381,36 +383,55 @@ function rememberBibleScrollIfActive() {
 }
 
 async function syncDictionariesFromStore(baseModules = null) {
-  const internalDicts = await discoverInternalDictionaryModules(baseModules).catch(() => []);
+  if (isSyncingInternalDicts) return;
+  isSyncingInternalDicts = true;
 
-  if (internalDicts.length && typeof store.setModulesOnly === 'function') {
-    const existing = Array.isArray(baseModules)
-      ? baseModules.filter((m) => !m || !m.isInternalDictionary)
-      : [
-          ...store.getBibles(),
-          ...store.getCommentaries(),
-          ...store.getDictionaries().filter((m) => !m || !m.isInternalDictionary)
-        ];
+  try {
+    const internalDicts = await discoverInternalDictionaryModules(baseModules).catch(() => []);
 
-    const existingDictPaths = new Set(
-      existing
-        .filter((m) => m && m.resourceKind === 'dictionary')
-        .map((m) => m.path)
-    );
-    const toInject = internalDicts.filter((m) => m && m.path && !existingDictPaths.has(m.path));
-    if (toInject.length) {
-      store.setModulesOnly([...existing, ...toInject]);
+    if (internalDicts.length && typeof store.setModulesOnly === 'function') {
+      const currentDicts = store.getDictionaries();
+      const currentDictPaths = new Set(currentDicts.map((m) => m.path));
+      const missingInternal = internalDicts.filter((m) => m && m.path && !currentDictPaths.has(m.path));
+
+      if (missingInternal.length) {
+        const baseList = Array.isArray(baseModules)
+          ? baseModules.filter((m) => m && !m.isInternalDictionary)
+          : [
+              ...store.getBibles(),
+              ...store.getCommentaries(),
+              ...currentDicts.filter((m) => m && !m.isInternalDictionary)
+            ];
+
+        const externalDictPaths = new Set(
+          baseList
+            .filter((m) => m && m.resourceKind === 'dictionary')
+            .map((m) => m.path)
+        );
+        const toInject = internalDicts.filter((m) => m && m.path && !externalDictPaths.has(m.path));
+
+        if (toInject.length) {
+          suppressSourcesUpdated = true;
+          try {
+            store.setModulesOnly([...baseList, ...toInject]);
+          } finally {
+            suppressSourcesUpdated = false;
+          }
+        }
+      }
     }
-  }
 
-  const allDicts = store.getDictionaries();
-  syncDictionaryModules(allDicts);
-  const activeDict = store.getActiveDictionary();
-  const dState = getDictionaryViewState();
-  if (activeDict && dState.activeModulePath !== activeDict.path) {
-    setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
+    const allDicts = store.getDictionaries();
+    syncDictionaryModules(allDicts);
+    const activeDict = store.getActiveDictionary();
+    const dState = getDictionaryViewState();
+    if (activeDict && dState.activeModulePath !== activeDict.path) {
+      setActiveDictionaryModule(activeDict.path, { keepTerm: false, render: false });
+    }
+    updateDictionaryChrome({ activeModule: activeDict });
+  } finally {
+    isSyncingInternalDicts = false;
   }
-  updateDictionaryChrome({ activeModule: activeDict });
 }
 
 function openMapsDialog(markerInfo = null) {
@@ -662,7 +683,7 @@ async function findBibleContainingBook(bookId, preferredModulePath = '') {
 
   const prioritized = allBibles.slice().sort((a, b) => {
     const aSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(a.abbr || '');
-    const bSkip = isOT ? /^nt\b/i.test(a.abbr || '') : /^at\b/i.test(b.abbr || '');
+    const bSkip = isOT ? /^nt\b/i.test(b.abbr || '') : /^at\b/i.test(b.abbr || '');
     return Number(aSkip) - Number(bSkip);
   });
 
@@ -948,7 +969,7 @@ async function renderActiveMode({ resetScroll = false } = {}) {
   }
 
   if (mode === 'commentary') {
-    await renderCommentaryView({ resetScroll: true });
+    await renderCommentaryView({ resetScroll });
     return;
   }
 
@@ -973,7 +994,14 @@ async function syncPermissionAndData() {
 
   const rawSources = (srcRes && srcRes.sources) || [];
   const rawModules = (modRes && modRes.modules) || [];
-  store.setSourcesAndModules(rawSources, rawModules);
+
+  suppressSourcesUpdated = true;
+  try {
+    store.setSourcesAndModules(rawSources, rawModules);
+  } finally {
+    suppressSourcesUpdated = false;
+  }
+
   await syncDictionariesFromStore(rawModules);
 }
 
@@ -1205,13 +1233,15 @@ function bindStateEvents() {
     if (mode === 'dictionary') {
       renderDictionaryView({ resetScroll: false });
     } else if (mode === 'commentary') {
-      renderCommentaryView({ resetScroll: false });
+      renderCommentaryView({ resetScroll: false, force: false });
     } else {
       renderReader({ resetScroll: false });
     }
   });
 
   eventBus.on(EVENTS.SOURCES_UPDATED, async () => {
+    if (suppressSourcesUpdated) return;
+
     clearCompanionCache();
     clearMediaIndexCache();
     clearDictionaryLookupCache();
@@ -1236,7 +1266,7 @@ function bindStateEvents() {
         loadFirstOrCurrentEntry();
       }
     } else if (mode === 'commentary') {
-      renderCommentaryView({ resetScroll: false });
+      renderCommentaryView({ resetScroll: false, force: false });
     } else {
       renderReader({ resetScroll: false });
     }
