@@ -152,7 +152,7 @@ async function queryModuleDictionaryTable(modulePath, fsCode) {
   const sql =
     'SELECT word, data FROM dictionary ' +
     'WHERE UPPER(TRIM(word)) = ? OR UPPER(TRIM(word)) LIKE ? ' +
-    'ORDER BY CASE WHEN UPPER(TRIM(word)) = ? THEN 0 ELSE 1 END, relativeorder ASC, rowid ASC LIMIT 1';
+    'ORDER BY CASE WHEN UPPER(TRIM(word)) = ? THEN 0 ELSE 1 END, LENGTH(word) ASC, word ASC LIMIT 1';
   const params = [fsCode, `${fsCode}%`, fsCode];
 
   const res = await nativeBridge.queryModule(modulePath, sql, params);
